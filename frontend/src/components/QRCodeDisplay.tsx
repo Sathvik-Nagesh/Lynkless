@@ -135,18 +135,6 @@ export default function QRCodeDisplay({
                   alt="Connection QR Code"
                   className="w-56 h-56 rounded-lg"
                 />
-                {/* Scanning animation overlay */}
-                <motion.div
-                  className="absolute inset-3 rounded-lg overflow-hidden pointer-events-none"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                >
-                  <motion.div
-                    className="h-1 bg-gradient-to-r from-transparent via-cyan-500 to-transparent"
-                    animate={{ y: [0, 220, 0] }}
-                    transition={{ duration: 3, repeat: Infinity, ease: 'linear' }}
-                  />
-                </motion.div>
               </motion.div>
             ) : (
               <div className="w-56 h-56 bg-gray-800 rounded-xl flex items-center justify-center">

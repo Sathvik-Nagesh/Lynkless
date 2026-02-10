@@ -90,6 +90,13 @@ export default function Home() {
     sendConnectionRequest(userId);
   }, [peerStates, sendConnectionRequest]);
 
+  // Auto-close QR code when incoming connection request arrives
+  useEffect(() => {
+    if (incomingRequests.length > 0 && showQRCode) {
+      setShowQRCode(false);
+    }
+  }, [incomingRequests.length, showQRCode]);
+
   // Handle connection acceptance - now initiate WebRTC
   const handleAcceptRequest = useCallback(async (fromId: string) => {
     acceptConnectionRequest(fromId);
