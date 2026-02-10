@@ -245,7 +245,7 @@ class WebRTCManager {
       this.notifyDataReceived(peerId, event.data);
     };
 
-    channel.onerror = (error) => {
+    channel.onerror = () => {
       // Data channel errors are often empty objects, ignore them if channel is working
       if (channel.readyState === 'open' || channel.readyState === 'connecting') {
         // Channel is fine, ignore spurious error
@@ -265,6 +265,14 @@ class WebRTCManager {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Get the buffered amount for a peer's data channel
+   */
+  getBufferedAmount(peerId: string): number {
+    const peer = this.peers.get(peerId);
+    return peer?.dataChannel?.bufferedAmount ?? 0;
   }
 
   /**

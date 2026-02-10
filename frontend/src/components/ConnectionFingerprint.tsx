@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface ConnectionFingerprintProps {
@@ -16,15 +16,17 @@ export default function ConnectionFingerprint({
 }: ConnectionFingerprintProps) {
   const [showVerify, setShowVerify] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [prevConnection, setPrevConnection] = useState({ isConnected, fingerprint });
 
-  // Auto-show verification prompt when connected
-  useEffect(() => {
+  // Auto-show verification prompt when connection status changes
+  if (isConnected !== prevConnection.isConnected || fingerprint !== prevConnection.fingerprint) {
+    setPrevConnection({ isConnected, fingerprint });
     if (isConnected && fingerprint) {
       setShowVerify(true);
     } else {
       setShowVerify(false);
     }
-  }, [isConnected, fingerprint]);
+  }
 
   const handleCopy = async () => {
     if (fingerprint) {
