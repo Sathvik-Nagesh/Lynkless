@@ -134,9 +134,9 @@ export default function Onboarding() {
 
               {/* Progress dots */}
               <div className="flex justify-center gap-2 mt-8 mb-6">
-                {steps.map((_, index) => (
+                {steps.map((step, index) => (
                   <div
-                    key={index}
+                    key={`step-${index}-${step.title}`}
                     className={`w-2 h-2 rounded-full transition-all ${
                       index === currentStep
                         ? 'bg-[#3B82F6] w-8'
