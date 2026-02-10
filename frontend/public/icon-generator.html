@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lynkless Icon Generator</title>
+    <style>
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+        background: #0f172a;
+        color: white;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        margin: 0;
+        padding: 20px;
+      }
+      .preview {
+        display: flex;
+        gap: 30px;
+        margin: 30px 0;
+      }
+      canvas {
+        border: 2px solid #334155;
+        border-radius: 20px;
+      }
+      button {
+        background: linear-gradient(135deg, #3b82f6, #2563eb);
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        border-radius: 8px;
+        font-size: 16px;
+        cursor: pointer;
+        margin: 5px;
+      }
+      button:hover {
+        opacity: 0.9;
+      }
+      h1 {
+        margin-bottom: 10px;
+      }
+      p {
+        color: #94a3b8;
+        margin-top: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Lynkless PWA Icon Generator</h1>
+    <p>Click download buttons to save icons for your PWA</p>
+
+    <div class="preview">
+      <div>
+        <canvas id="icon192"></canvas>
+        <br /><button onclick="download(192)">Download 192x192</button>
+      </div>
+      <div>
+        <canvas id="icon512"></canvas>
+        <br /><button onclick="download(512)">Download 512x512</button>
+      </div>
+    </div>
+
+    <script>
+      function drawIcon(canvas, size) {
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d");
+
+        // Background gradient
+        const bgGradient = ctx.createLinearGradient(0, 0, size, size);
+        bgGradient.addColorStop(0, "#3B82F6");
+        bgGradient.addColorStop(1, "#2563EB");
+        ctx.fillStyle = bgGradient;
+        ctx.fillRect(0, 0, size, size);
+
+        // Draw connection nodes and lines
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+        ctx.fillStyle = "white";
+        ctx.lineWidth = size * 0.04;
+
+        const center = size / 2;
+        const nodeRadius = size * 0.12;
+        const offset = size * 0.25;
+
+        // Left node
+        ctx.beginPath();
+        ctx.arc(center - offset, center, nodeRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Right node
+        ctx.beginPath();
+        ctx.arc(center + offset, center, nodeRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Connection line with arrow
+        ctx.beginPath();
+        ctx.moveTo(center - offset + nodeRadius, center);
+        ctx.lineTo(center + offset - nodeRadius, center);
+        ctx.stroke();
+
+        // Arrow
+        const arrowSize = size * 0.08;
+        const arrowX = center + offset - nodeRadius;
+        ctx.beginPath();
+        ctx.moveTo(arrowX, center);
+        ctx.lineTo(arrowX - arrowSize, center - arrowSize / 2);
+        ctx.lineTo(arrowX - arrowSize, center + arrowSize / 2);
+        ctx.closePath();
+        ctx.fill();
+
+        // Lightning bolt in center
+        ctx.fillStyle = "#FCD34D";
+        const lx = center;
+        const ly = center - size * 0.15;
+        const lsize = size * 0.15;
+        ctx.beginPath();
+        ctx.moveTo(lx, ly);
+        ctx.lineTo(lx - lsize / 3, ly + lsize / 2);
+        ctx.lineTo(lx + lsize / 6, ly + lsize / 2);
+        ctx.lineTo(lx - lsize / 6, ly + lsize);
+        ctx.lineTo(lx + lsize / 3, ly + lsize / 3);
+        ctx.lineTo(lx - lsize / 6, ly + lsize / 3);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      function download(size) {
+        const canvas = document.getElementById(`icon${size}`);
+        canvas.toBlob((blob) => {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `icon-${size}.png`;
+          a.click();
+          URL.revokeObjectURL(url);
+        });
+      }
+
+      // Generate icons on load
+      drawIcon(document.getElementById("icon192"), 192);
+      drawIcon(document.getElementById("icon512"), 512);
+    </script>
+  </body>
+</html>

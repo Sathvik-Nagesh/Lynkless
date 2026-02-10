@@ -1,0 +1,180 @@
+'use client';
+
+import { useState, useEffect, useRef } from 'react';
+import { motion } from 'framer-motion';
+import QRCode from 'qrcode';
+
+interface QRCodeDisplayProps {
+  clientId: string | null;
+  signalingUrl: string;
+  onClose: () => void;
+}
+
+interface QRPayload {
+  peerId: string;
+  serverUrl: string;
+  sessionToken: string;
+  timestamp: number;
+}
+
+export default function QRCodeDisplay({
+  clientId,
+  signalingUrl,
+  onClose,
+}: QRCodeDisplayProps) {
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const sessionToken = useRef(crypto.randomUUID().slice(0, 8));
+
+  useEffect(() => {
+    if (!clientId) return;
+
+    const generateQR = async () => {
+      const payload: QRPayload = {
+        peerId: clientId,
+        serverUrl: signalingUrl,
+        sessionToken: sessionToken.current,
+        timestamp: Date.now(),
+      };
+
+      const payloadString = JSON.stringify(payload);
+      
+      try {
+        const dataUrl = await QRCode.toDataURL(payloadString, {
+          width: 256,
+          margin: 2,
+          color: {
+            dark: '#00f0ff',
+            light: '#0a0a0f',
+          },
+          errorCorrectionLevel: 'M',
+        });
+        setQrDataUrl(dataUrl);
+      } catch (error) {
+        console.error('Failed to generate QR code:', error);
+      }
+    };
+
+    generateQR();
+  }, [clientId, signalingUrl]);
+
+  const handleCopyId = async () => {
+    if (clientId) {
+      await navigator.clipboard.writeText(clientId);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const shortId = clientId?.replace('client_', '').toUpperCase().slice(0, 6);
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      {/* Backdrop */}
+      <motion.div
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        onClick={onClose}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+      />
+
+      {/* Modal */}
+      <motion.div
+        className="relative bg-gray-900/95 backdrop-blur-md rounded-2xl border border-cyan-500/30 p-6 max-w-sm w-full shadow-2xl"
+        initial={{ scale: 0.9, opacity: 0, y: 20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.9, opacity: 0, y: 20 }}
+      >
+        {/* Glow effect */}
+        <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-cyan-500/10 to-purple-500/10 pointer-events-none" />
+
+        {/* Content */}
+        <div className="relative">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xl font-bold text-white">Connect via QR</h3>
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-white transition-colors p-1"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* QR Code */}
+          <div className="flex justify-center mb-4">
+            {qrDataUrl ? (
+              <motion.div
+                className="relative p-3 bg-gray-800 rounded-xl border border-gray-700"
+                initial={{ scale: 0.8 }}
+                animate={{ scale: 1 }}
+                transition={{ type: 'spring' }}
+              >
+                <img
+                  src={qrDataUrl}
+                  alt="Connection QR Code"
+                  className="w-56 h-56 rounded-lg"
+                />
+                {/* Scanning animation overlay */}
+                <motion.div
+                  className="absolute inset-3 rounded-lg overflow-hidden pointer-events-none"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                >
+                  <motion.div
+                    className="h-1 bg-gradient-to-r from-transparent via-cyan-500 to-transparent"
+                    animate={{ y: [0, 220, 0] }}
+                    transition={{ duration: 3, repeat: Infinity, ease: 'linear' }}
+                  />
+                </motion.div>
+              </motion.div>
+            ) : (
+              <div className="w-56 h-56 bg-gray-800 rounded-xl flex items-center justify-center">
+                <div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+            )}
+          </div>
+
+          {/* Peer ID */}
+          <div className="text-center mb-4">
+            <p className="text-gray-400 text-sm mb-2">Your Peer ID</p>
+            <div className="flex items-center justify-center gap-2">
+              <code className="px-4 py-2 bg-gray-800 rounded-lg font-mono text-cyan-400 text-lg tracking-wider border border-gray-700">
+                {shortId || '...'}
+              </code>
+              <motion.button
+                onClick={handleCopyId}
+                className="p-2 text-gray-400 hover:text-white bg-gray-800 rounded-lg border border-gray-700 transition-colors"
+                whileTap={{ scale: 0.9 }}
+              >
+                {copied ? (
+                  <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                )}
+              </motion.button>
+            </div>
+          </div>
+
+          {/* Instructions */}
+          <div className="p-3 bg-gray-800/50 rounded-xl border border-gray-700/50">
+            <p className="text-gray-400 text-sm text-center">
+              📱 Scan this QR code with another device to instantly connect
+            </p>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
