@@ -21,6 +21,8 @@ import { useWebRTC } from '@/hooks/useWebRTC';
 import { getPeerName, getEmojiForPeer } from '@/lib/utils/nameGenerator';
 import { getSounds } from '@/lib/utils/sounds';
 import { getConnectionMonitor, type PeerStats } from '@/lib/utils/connectionMonitor';
+import { useToast } from '@/components/ToastProvider';
+import Link from 'next/link';
 
 const SIGNALING_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || 'ws://localhost:8080';
 
@@ -34,6 +36,7 @@ export default function Home() {
   const [peerStats, setPeerStats] = useState<Map<string, PeerStats>>(new Map());
   const sounds = useRef(getSounds());
   const connectionMonitor = useRef(getConnectionMonitor());
+  const { showToast } = useToast();
 
   const {
     clientId,
@@ -61,6 +64,8 @@ export default function Home() {
     sendFile,
     sendMessage,
     cancelTransfer,
+    pauseTransfer,
+    resumeTransfer,
     disconnectFromPeer,
     getFingerprint,
   } = useWebRTC(clientId);
@@ -113,6 +118,7 @@ export default function Home() {
   const handleAcceptRequest = useCallback(async (fromId: string) => {
     acceptConnectionRequest(fromId);
     sounds.current.playConnected();
+    showToast(`Connected to ${getPeerName(fromId)}`, 'success');
     
     // The accepter initiates the WebRTC connection
     const user = roomState.users.find(u => u.id === fromId);
@@ -121,7 +127,7 @@ export default function Home() {
     
     await connectToPeer(fromId, isNearby);
     setSelectedPeer(fromId);
-  }, [acceptConnectionRequest, roomState.users, nearbyPeers, connectToPeer]);
+  }, [acceptConnectionRequest, roomState.users, nearbyPeers, connectToPeer, showToast]);
 
   // Handle file drop - show preview modal
   const handleFileDrop = useCallback((files: File[]) => {
@@ -151,9 +157,11 @@ export default function Home() {
       }
       console.log(`[File Drop] Sent ${pendingFiles.length} file(s) to ${connectedPeers.length} peer(s)`);
       sounds.current.playTransferComplete();
+      showToast(`Sent ${pendingFiles.length} file(s) to ${connectedPeers.length} peer(s)`, 'success');
     } catch (err) {
       console.error('Failed to send files:', err);
       sounds.current.playError();
+      showToast('Failed to send files. Please try again.', 'error');
     }
     
     setPendingFiles([]);
@@ -231,6 +239,23 @@ export default function Home() {
     }
   }, [clientId, sendConnectionRequest]);
 
+  // Show errors as toast notifications
+  useEffect(() => {
+    if (error) {
+      showToast(error, 'error');
+    }
+  }, [error, showToast]);
+
+  // Toast when room is created/joined
+  useEffect(() => {
+    if (roomState.code && roomState.isCreator) {
+      showToast(`Room ${roomState.code} created! Share the code.`, 'success');
+    } else if (roomState.code && !roomState.isCreator) {
+      showToast(`Joined room ${roomState.code}`, 'info');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomState.code]);
+
   // Count connected peers
   const connectedPeersCount = peers.filter(p => p.state === 'connected').length;
 
@@ -300,24 +325,31 @@ export default function Home() {
       </AnimatePresence>
 
       {/* Header */}
-      <header className="max-w-6xl mx-auto mb-10">
+      <header className="max-w-6xl mx-auto mb-6 md:mb-10">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
           >
-            <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">
+            <h1 className="text-2xl md:text-4xl font-semibold tracking-tight">
               <span className="gradient-text">Lynkless</span>
             </h1>
-            <p className="text-[#64748B] text-sm mt-1">
+            <p className="text-[#64748B] text-xs md:text-sm mt-1">
               Your files don&apos;t belong in the cloud.
             </p>
           </motion.div>
 
           <motion.div
+            className="flex items-center gap-3"
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
           >
+            <Link
+              href="/about"
+              className="text-xs text-[#64748B] hover:text-[#22D3EE] transition-colors px-3 py-1.5 rounded-lg hover:bg-[#1C2433]"
+            >
+              About
+            </Link>
             <ConnectionStatus
               isSignalingConnected={isConnected}
               roomCode={roomState.code}
@@ -329,9 +361,9 @@ export default function Home() {
 
       {/* Main content */}
       <div className="max-w-6xl mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-8">
           {/* Left column - Radar and Room Controls */}
-          <div className="space-y-6">
+          <div className="space-y-4 md:space-y-6">
             {/* Room Controls */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -602,6 +634,8 @@ export default function Home() {
                         key={transfer.fileId}
                         transfer={transfer}
                         onCancel={cancelTransfer}
+                        onPause={pauseTransfer}
+                        onResume={resumeTransfer}
                       />
                     ))}
                   </motion.div>

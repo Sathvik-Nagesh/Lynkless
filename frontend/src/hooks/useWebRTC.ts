@@ -34,6 +34,8 @@ interface UseWebRTCReturn {
   sendFile: (file: File, peerId: string) => Promise<string>;
   sendMessage: (content: string) => void;
   cancelTransfer: (fileId: string) => void;
+  pauseTransfer: (fileId: string) => void;
+  resumeTransfer: (fileId: string) => void;
   disconnectFromPeer: (peerId: string) => void;
   disconnectAll: () => void;
   getFingerprint: (peerId: string) => string | undefined;
@@ -147,6 +149,14 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
     fileTransferRef.current.cancelTransfer(fileId);
   }, []);
 
+  const pauseTransfer = useCallback((fileId: string) => {
+    fileTransferRef.current.pauseTransfer(fileId);
+  }, []);
+
+  const resumeTransfer = useCallback((fileId: string) => {
+    fileTransferRef.current.resumeTransfer(fileId);
+  }, []);
+
   const disconnectFromPeer = useCallback((peerId: string) => {
     webrtcRef.current.closePeerConnection(peerId);
   }, []);
@@ -171,6 +181,8 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
     sendFile,
     sendMessage,
     cancelTransfer,
+    pauseTransfer,
+    resumeTransfer,
     disconnectFromPeer,
     disconnectAll,
     getFingerprint,
