@@ -22,9 +22,9 @@ function generateUUID(): string {
 }
 
 // Constants
-const CHUNK_SIZE = 256 * 1024; // 256KB chunks (larger = fewer round trips = faster)
+const CHUNK_SIZE = 128 * 1024; // 128KB chunks (safe after base64 = ~170KB, under 256KB DC limit)
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB limit
-const MAX_BUFFERED_AMOUNT = 1024 * 1024; // 1MB buffer threshold before backpressure
+const MAX_BUFFERED_AMOUNT = 512 * 1024; // 512KB buffer threshold before backpressure
 const PROGRESS_UPDATE_INTERVAL = 10; // Update UI every N chunks (reduces render overhead)
 
 export interface FileMetadata {
@@ -147,7 +147,7 @@ class FileTransferManager {
    * Monitor connection state for resume capability
    */
   private setupConnectionMonitor(): void {
-    this.stateCleanupHandler = this.webrtc.onStateChange((peerId, state) => {
+    this.stateCleanupHandler = this.webrtc.onStateChange((peerId, state, _isNearby) => {
       if (state === 'disconnected' || state === 'failed') {
         // Mark transfers as paused for potential resume
         this.outgoingTransfers.forEach((transfer, fileId) => {
@@ -628,13 +628,17 @@ class FileTransferManager {
           }
           const base64 = btoa(binary);
 
-          // Send chunk
-          this.webrtc.sendToPeer(peerId, JSON.stringify({
+          // Send chunk - check for send failure
+          const sendSuccess = this.webrtc.sendToPeer(peerId, JSON.stringify({
             type: 'file-chunk',
             fileId,
             chunkIndex,
             data: base64,
           }));
+
+          if (!sendSuccess) {
+            throw new Error(`Failed to send chunk ${chunkIndex} — DataChannel may be closed`);
+          }
 
           if (currentTransfer) {
             currentTransfer.lastChunkIndex = chunkIndex;

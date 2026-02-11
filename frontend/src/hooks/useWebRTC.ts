@@ -62,16 +62,16 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
     const fileTransfer = fileTransferRef.current;
     const chat = chatRef.current;
 
-    // Handle state changes
-    const unsubState = webrtc.onStateChange((peerId, state) => {
+    // Handle state changes (now includes isNearby)
+    const unsubState = webrtc.onStateChange((peerId, state, isNearby) => {
       setPeers((prev) => {
         const existing = prev.find((p) => p.id === peerId);
         if (existing) {
           return prev.map((p) =>
-            p.id === peerId ? { ...p, state } : p
+            p.id === peerId ? { ...p, state, isNearby: isNearby || p.isNearby } : p
           );
         }
-        return [...prev, { id: peerId, state, isNearby: false }];
+        return [...prev, { id: peerId, state, isNearby }];
       });
 
       // Remove disconnected peers

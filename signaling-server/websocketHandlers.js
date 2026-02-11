@@ -502,6 +502,7 @@ function handleOffer(ws, { targetId, offer }) {
       type: 'offer',
       fromId: ws.clientId,
       offer,
+      isNearby: ws.clientIp === targetWs.clientIp,
     });
   } else {
     sendToClient(ws, {
@@ -521,6 +522,7 @@ function handleAnswer(ws, { targetId, answer }) {
       type: 'answer',
       fromId: ws.clientId,
       answer,
+      isNearby: ws.clientIp === targetWs.clientIp,
     });
   } else {
     sendToClient(ws, {

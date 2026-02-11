@@ -29,7 +29,7 @@ export interface PeerConnection {
 }
 
 export type DataHandler = (peerId: string, data: ArrayBuffer | string) => void;
-export type StateChangeHandler = (peerId: string, state: ConnectionState) => void;
+export type StateChangeHandler = (peerId: string, state: ConnectionState, isNearby: boolean) => void;
 export type FingerprintHandler = (peerId: string, fingerprint: string) => void;
 
 class WebRTCManager {
@@ -48,10 +48,18 @@ class WebRTCManager {
     this.cleanupHandler = this.signaling.on((message: SignalingMessage) => {
       switch (message.type) {
         case 'offer':
-          this.handleOffer(message.fromId as string, message.offer as RTCSessionDescriptionInit);
+          this.handleOffer(
+            message.fromId as string, 
+            message.offer as RTCSessionDescriptionInit,
+            (message.isNearby as boolean) ?? false
+          );
           break;
         case 'answer':
-          this.handleAnswer(message.fromId as string, message.answer as RTCSessionDescriptionInit);
+          this.handleAnswer(
+            message.fromId as string, 
+            message.answer as RTCSessionDescriptionInit,
+            (message.isNearby as boolean) ?? false
+          );
           break;
         case 'ice-candidate':
           this.handleIceCandidate(message.fromId as string, message.candidate as RTCIceCandidateInit);
@@ -95,10 +103,10 @@ class WebRTCManager {
   /**
    * Handle incoming offer from a peer
    */
-  private async handleOffer(fromId: string, offer: RTCSessionDescriptionInit): Promise<void> {
-    console.log('[WebRTC] Received offer from:', fromId);
+  private async handleOffer(fromId: string, offer: RTCSessionDescriptionInit, isNearby: boolean = false): Promise<void> {
+    console.log('[WebRTC] Received offer from:', fromId, isNearby ? '(nearby)' : '(remote)');
 
-    const peerConnection = this.createPeerConnection(fromId, false);
+    const peerConnection = this.createPeerConnection(fromId, isNearby);
     
     // Store remote SDP
     peerConnection.remoteSdp = offer.sdp;
@@ -127,10 +135,13 @@ class WebRTCManager {
   /**
    * Handle incoming answer from a peer
    */
-  private async handleAnswer(fromId: string, answer: RTCSessionDescriptionInit): Promise<void> {
+  private async handleAnswer(fromId: string, answer: RTCSessionDescriptionInit, isNearby: boolean = false): Promise<void> {
     console.log('[WebRTC] Received answer from:', fromId);
     const peer = this.peers.get(fromId);
     if (peer) {
+      // Update isNearby from signaling server's IP comparison
+      if (isNearby) peer.isNearby = true;
+      
       await peer.connection.setRemoteDescription(answer);
       
       // Store remote SDP and generate fingerprint
@@ -206,7 +217,7 @@ class WebRTCManager {
     connection.onconnectionstatechange = () => {
       const state = this.mapConnectionState(connection.connectionState);
       peerConnection.state = state;
-      this.notifyStateChange(peerId, state);
+      this.notifyStateChange(peerId, state, peerConnection.isNearby);
 
       if (state === 'failed' || state === 'disconnected') {
         console.log('[WebRTC] Connection to', peerId, 'is', state);
@@ -228,7 +239,7 @@ class WebRTCManager {
       const peer = this.peers.get(peerId);
       if (peer) {
         peer.state = 'connected';
-        this.notifyStateChange(peerId, 'connected');
+        this.notifyStateChange(peerId, 'connected', peer.isNearby);
       }
     };
 
@@ -237,7 +248,7 @@ class WebRTCManager {
       const peer = this.peers.get(peerId);
       if (peer) {
         peer.state = 'disconnected';
-        this.notifyStateChange(peerId, 'disconnected');
+        this.notifyStateChange(peerId, 'disconnected', peer.isNearby);
       }
     };
 
@@ -261,8 +272,13 @@ class WebRTCManager {
   sendToPeer(peerId: string, data: ArrayBuffer | string): boolean {
     const peer = this.peers.get(peerId);
     if (peer?.dataChannel?.readyState === 'open') {
-      peer.dataChannel.send(data as ArrayBuffer);
-      return true;
+      try {
+        peer.dataChannel.send(data as ArrayBuffer);
+        return true;
+      } catch (error) {
+        console.error('[WebRTC] Failed to send data to', peerId, ':', error);
+        return false;
+      }
     }
     return false;
   }
@@ -334,6 +350,14 @@ class WebRTCManager {
   }
 
   /**
+   * Check if a peer is nearby (same network)
+   */
+  isPeerNearby(peerId: string): boolean {
+    const peer = this.peers.get(peerId);
+    return peer?.isNearby ?? false;
+  }
+
+  /**
    * Get fingerprint for a peer
    */
   getFingerprint(peerId: string): string | undefined {
@@ -368,8 +392,8 @@ class WebRTCManager {
     this.dataHandlers.forEach((handler) => handler(peerId, data));
   }
 
-  private notifyStateChange(peerId: string, state: ConnectionState): void {
-    this.stateHandlers.forEach((handler) => handler(peerId, state));
+  private notifyStateChange(peerId: string, state: ConnectionState, isNearby: boolean = false): void {
+    this.stateHandlers.forEach((handler) => handler(peerId, state, isNearby));
   }
 
   private mapConnectionState(state: RTCPeerConnectionState): ConnectionState {

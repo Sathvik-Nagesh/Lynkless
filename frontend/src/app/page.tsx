@@ -100,9 +100,18 @@ export default function Home() {
       return;
     }
 
+    // If NOT in a room, prevent connecting to multiple peers
+    if (!roomState.code) {
+      const connectedPeers = peers.filter(p => p.state === 'connected');
+      if (connectedPeers.length > 0) {
+        showToast('Disconnect from current peer first, or create a room for multi-device connections', 'info');
+        return;
+      }
+    }
+
     // Send connection request
     sendConnectionRequest(userId);
-  }, [peerStates, sendConnectionRequest]);
+  }, [peerStates, sendConnectionRequest, roomState.code, peers, showToast]);
 
   // Auto-close QR code when incoming connection request arrives
   useEffect(() => {
@@ -116,6 +125,16 @@ export default function Home() {
 
   // Handle connection acceptance - now initiate WebRTC
   const handleAcceptRequest = useCallback(async (fromId: string) => {
+    // If NOT in a room, prevent accepting if already connected to someone
+    if (!roomState.code) {
+      const connectedPeers = peers.filter(p => p.state === 'connected');
+      if (connectedPeers.length > 0) {
+        rejectConnectionRequest(fromId);
+        showToast('Already connected to a peer. Disconnect first or use a room for multi-device.', 'info');
+        return;
+      }
+    }
+
     acceptConnectionRequest(fromId);
     sounds.current.playConnected();
     showToast(`Connected to ${getPeerName(fromId)}`, 'success');
@@ -127,7 +146,7 @@ export default function Home() {
     
     await connectToPeer(fromId, isNearby);
     setSelectedPeer(fromId);
-  }, [acceptConnectionRequest, roomState.users, nearbyPeers, connectToPeer, showToast]);
+  }, [acceptConnectionRequest, rejectConnectionRequest, roomState.code, roomState.users, nearbyPeers, peers, connectToPeer, showToast]);
 
   // Handle file drop - show preview modal
   const handleFileDrop = useCallback((files: File[]) => {
