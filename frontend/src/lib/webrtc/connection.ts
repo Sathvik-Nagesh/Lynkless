@@ -287,6 +287,14 @@ class WebRTCManager {
   }
 
   /**
+   * Get the DataChannel for a peer (used for buffer-aware sending)
+   */
+  getDataChannel(peerId: string): RTCDataChannel | null {
+    const peer = this.peers.get(peerId);
+    return peer?.dataChannel || null;
+  }
+
+  /**
    * Close connection to a specific peer
    */
   closePeerConnection(peerId: string): void {

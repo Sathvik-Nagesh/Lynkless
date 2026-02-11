@@ -22,8 +22,10 @@ function generateUUID(): string {
 }
 
 // Constants
-const CHUNK_SIZE = 64 * 1024; // 64KB chunks
+const CHUNK_SIZE = 256 * 1024; // 256KB chunks (larger = fewer round trips = faster)
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB limit
+const MAX_BUFFERED_AMOUNT = 1024 * 1024; // 1MB buffer threshold before backpressure
+const PROGRESS_UPDATE_INTERVAL = 10; // Update UI every N chunks (reduces render overhead)
 
 export interface FileMetadata {
   id: string;
@@ -500,6 +502,43 @@ class FileTransferManager {
   }
 
   /**
+   * Wait for the DataChannel buffer to drain below threshold.
+   * This implements proper backpressure instead of arbitrary setTimeout delays.
+   * Result: transfers run at maximum DataChannel throughput speed.
+   */
+  private async waitForBufferDrain(peerId: string): Promise<void> {
+    // Access the data channel via the clean public API
+    const dc = this.webrtc.getDataChannel(peerId);
+    if (!dc || dc.bufferedAmount <= MAX_BUFFERED_AMOUNT) return;
+
+    // Wait until bufferedAmount drops below threshold
+    return new Promise<void>((resolve) => {
+      const checkBuffer = () => {
+        if (!dc || dc.readyState !== 'open') {
+          resolve();
+          return;
+        }
+        if (dc.bufferedAmount <= MAX_BUFFERED_AMOUNT) {
+          resolve();
+        } else {
+          // Use bufferedAmountLowThreshold event if supported
+          if (dc.bufferedAmountLowThreshold !== undefined) {
+            dc.bufferedAmountLowThreshold = MAX_BUFFERED_AMOUNT;
+            dc.onbufferedamountlow = () => {
+              dc.onbufferedamountlow = null;
+              resolve();
+            };
+          } else {
+            // Fallback: poll every 10ms
+            setTimeout(checkBuffer, 10);
+          }
+        }
+      };
+      checkBuffer();
+    });
+  }
+
+  /**
    * Send a file to a specific peer
    */
   async sendFile(file: File, peerId: string): Promise<string> {
@@ -603,26 +642,29 @@ class FileTransferManager {
           chunkIndex++;
           transferredSize += chunk.length;
 
-          // Update progress
-          const elapsed = (Date.now() - startTime) / 1000;
-          const speed = transferredSize / elapsed;
-          const remainingBytes = file.size - transferredSize;
-          const remainingTime = speed > 0 ? remainingBytes / speed : 0;
+          // Update progress periodically (not every chunk — reduces UI thrashing)
+          if (chunkIndex % PROGRESS_UPDATE_INTERVAL === 0 || transferredSize >= file.size) {
+            const elapsed = (Date.now() - startTime) / 1000;
+            const speed = elapsed > 0 ? transferredSize / elapsed : 0;
+            const remainingBytes = file.size - transferredSize;
+            const remainingTime = speed > 0 ? remainingBytes / speed : 0;
 
-          this.notifyProgress({
-            fileId,
-            fileName: file.name,
-            totalSize: file.size,
-            transferredSize,
-            progress: (transferredSize / file.size) * 100,
-            speed,
-            remainingTime,
-            status: 'transferring',
-            resumable: true,
-          });
+            this.notifyProgress({
+              fileId,
+              fileName: file.name,
+              totalSize: file.size,
+              transferredSize,
+              progress: (transferredSize / file.size) * 100,
+              speed,
+              remainingTime,
+              status: 'transferring',
+              resumable: true,
+            });
+          }
 
-          // Small delay to prevent overwhelming the channel
-          await new Promise((resolve) => setTimeout(resolve, 1));
+          // Backpressure: wait for the DataChannel buffer to drain
+          // instead of arbitrary setTimeout — HUGE speed improvement
+          await this.waitForBufferDrain(peerId);
         }
       }
 
