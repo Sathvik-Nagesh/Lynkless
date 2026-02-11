@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, memo } from 'react';
 import { motion } from 'framer-motion';
 import { PeerConnectionState } from '@/hooks/useSignaling';
 import { getPeerName, getEmojiForPeer } from '@/lib/utils/nameGenerator';
@@ -24,7 +24,7 @@ interface RadarProps {
 
 type NodeState = 'idle' | 'request-sent' | 'request-received' | 'connected' | 'rejected';
 
-export default function Radar({ 
+const Radar = memo(function Radar({
   users, 
   nearbyPeers, 
   peerStates, 
@@ -395,4 +395,6 @@ export default function Radar({
       </div>
     </div>
   );
-}
+});
+
+export default Radar;

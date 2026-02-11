@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import { motion } from 'framer-motion';
 import { TransferProgress as TransferProgressType } from '@/lib/webrtc/fileTransfer';
 
@@ -10,7 +11,7 @@ interface TransferProgressProps {
   onResume?: (fileId: string) => void;
 }
 
-export default function TransferProgress({ transfer, onCancel, onPause, onResume }: TransferProgressProps) {
+const TransferProgress = memo(function TransferProgress({ transfer, onCancel, onPause, onResume }: TransferProgressProps) {
   const formatSize = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -197,4 +198,6 @@ export default function TransferProgress({ transfer, onCancel, onPause, onResume
       )}
     </motion.div>
   );
-}
+});
+
+export default TransferProgress;

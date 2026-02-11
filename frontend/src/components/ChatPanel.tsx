@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChatMessage } from '@/lib/webrtc/chat';
 import { getPeerName, getEmojiForPeer } from '@/lib/utils/nameGenerator';
@@ -12,7 +12,7 @@ interface ChatPanelProps {
   connectedPeers?: { id: string; name?: string }[];
 }
 
-export default function ChatPanel({ messages, onSendMessage, disabled, connectedPeers = [] }: ChatPanelProps) {
+const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, connectedPeers = [] }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [isExpanded, setIsExpanded] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -304,4 +304,6 @@ export default function ChatPanel({ messages, onSendMessage, disabled, connected
       </AnimatePresence>
     </div>
   );
-}
+});
+
+export default ChatPanel;
