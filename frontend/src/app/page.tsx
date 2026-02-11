@@ -101,14 +101,18 @@ export default function Home() {
 
   // Auto-close QR code when incoming connection request arrives
   useEffect(() => {
-    if (incomingRequests.length > 0 && showQRCode) {
-      setShowQRCode(false);
+    if (incomingRequests.length > 0) {
+      sounds.current.playRequestReceived();
+      if (showQRCode) {
+        setShowQRCode(false);
+      }
     }
   }, [incomingRequests.length, showQRCode]);
 
   // Handle connection acceptance - now initiate WebRTC
   const handleAcceptRequest = useCallback(async (fromId: string) => {
     acceptConnectionRequest(fromId);
+    sounds.current.playConnected();
     
     // The accepter initiates the WebRTC connection
     const user = roomState.users.find(u => u.id === fromId);
@@ -119,26 +123,41 @@ export default function Home() {
     setSelectedPeer(fromId);
   }, [acceptConnectionRequest, roomState.users, nearbyPeers, connectToPeer]);
 
-  // Handle file drop - send to all connected peers
-  const handleFileDrop = useCallback(async (file: File) => {
-    // Get all connected peers
+  // Handle file drop - show preview modal
+  const handleFileDrop = useCallback((files: File[]) => {
     const connectedPeers = peers.filter(p => p.state === 'connected');
     
     if (connectedPeers.length === 0) {
-      console.warn('[File Drop] No connected peers to send file to');
+      console.warn('[File Drop] No connected peers');
       return;
     }
 
-    // Send to all connected peers
+    setPendingFiles(files);
+    setShowFilePreview(true);
+  }, [peers]);
+
+  // Confirm and send files
+  const handleConfirmSend = useCallback(async () => {
+    setShowFilePreview(false);
+    const connectedPeers = peers.filter(p => p.state === 'connected');
+
+    sounds.current.playTransferStart();
+
     try {
-      for (const peer of connectedPeers) {
-        await sendFile(file, peer.id);
+      for (const file of pendingFiles) {
+        for (const peer of connectedPeers) {
+          await sendFile(file, peer.id);
+        }
       }
-      console.log(`[File Drop] Sending "${file.name}" to ${connectedPeers.length} peer(s)`);
+      console.log(`[File Drop] Sent ${pendingFiles.length} file(s) to ${connectedPeers.length} peer(s)`);
+      sounds.current.playTransferComplete();
     } catch (err) {
-      console.error('Failed to send file:', err);
+      console.error('Failed to send files:', err);
+      sounds.current.playError();
     }
-  }, [peers, sendFile]);
+    
+    setPendingFiles([]);
+  }, [pendingFiles, peers, sendFile]);
 
   // Track which users we've already sent requests to (prevent duplicates)
   const sentRequestsRef = useRef<Set<string>>(new Set());
@@ -263,7 +282,7 @@ export default function Home() {
         isOpen={showQRScanner}
         onClose={() => setShowQRScanner(false)}
         onScan={handleQRScan}
-      />
+      />`n`n      {/* File Preview Modal */}`n      <AnimatePresence>`n        {showFilePreview && (`n          <FilePreviewModal`n            files={pendingFiles}`n            peerCount={peers.filter(p => p.state === 'connected').length}`n            onConfirm={handleConfirmSend}`n            onCancel={() => {`n              setShowFilePreview(false);`n              setPendingFiles([]);`n            }}`n          />`n        )}`n      </AnimatePresence>
 
       {/* Header */}
       <header className="max-w-6xl mx-auto mb-10">
@@ -546,3 +565,4 @@ export default function Home() {
     </main>
   );
 }
+
