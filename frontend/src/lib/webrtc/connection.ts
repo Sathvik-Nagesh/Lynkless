@@ -395,6 +395,10 @@ class WebRTCManager {
     this.stateHandlers.clear();
     this.fingerprintHandlers.clear();
   }
+
+  getPeerConnection(peerId: string): RTCPeerConnection | undefined {
+    return this.peers.get(peerId)?.connection;
+  }
 }
 
 // Singleton instance

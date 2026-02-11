@@ -5,33 +5,42 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { MAX_FILE_SIZE } from '@/lib/webrtc/fileTransfer';
 
 interface FileDropZoneProps {
-  onFileDrop: (file: File) => void;
+  onFileDrop: (files: File[]) => void;
   disabled?: boolean;
 }
 
 export default function FileDropZone({ onFileDrop, disabled }: FileDropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
 
-  const validateFile = useCallback((file: File): boolean => {
-    if (file.size > MAX_FILE_SIZE) {
-      setError(`File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)}MB limit`);
-      return false;
+  const validateFiles = useCallback((files: FileList | File[]): File[] => {
+    const validFiles: File[] = [];
+    const fileArray = Array.from(files);
+    
+    for (const file of fileArray) {
+      if (file.size > MAX_FILE_SIZE) {
+        setError(`${file.name} exceeds ${MAX_FILE_SIZE / (1024 * 1024)}MB limit`);
+        continue;
+      }
+      validFiles.push(file);
     }
-    setError(null);
-    return true;
+    
+    if (validFiles.length > 0) {
+      setError(null);
+    }
+    return validFiles;
   }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
 
-    const file = e.dataTransfer.files[0];
-    if (file && validateFile(file)) {
-      setSelectedFile(file);
+    const validFiles = validateFiles(e.dataTransfer.files);
+    if (validFiles.length > 0) {
+      setSelectedFiles(validFiles);
     }
-  }, [validateFile]);
+  }, [validateFiles]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -44,21 +53,23 @@ export default function FileDropZone({ onFileDrop, disabled }: FileDropZoneProps
   }, []);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && validateFile(file)) {
-      setSelectedFile(file);
+    if (e.target.files) {
+      const validFiles = validateFiles(e.target.files);
+      if (validFiles.length > 0) {
+        setSelectedFiles(validFiles);
+      }
     }
-  }, [validateFile]);
+  }, [validateFiles]);
 
   const handleSend = useCallback(() => {
-    if (selectedFile) {
-      onFileDrop(selectedFile);
-      setSelectedFile(null);
+    if (selectedFiles.length > 0) {
+      onFileDrop(selectedFiles);
+      setSelectedFiles([]);
     }
-  }, [selectedFile, onFileDrop]);
+  }, [selectedFiles, onFileDrop]);
 
   const handleClear = useCallback(() => {
-    setSelectedFile(null);
+    setSelectedFiles([]);
     setError(null);
   }, []);
 
@@ -67,6 +78,8 @@ export default function FileDropZone({ onFileDrop, disabled }: FileDropZoneProps
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
+
+  const totalSize = selectedFiles.reduce((sum, file) => sum + file.size, 0);
 
   return (
     <div className="w-full">
@@ -78,133 +91,93 @@ export default function FileDropZone({ onFileDrop, disabled }: FileDropZoneProps
             : disabled 
               ? '1px dashed rgba(255,255,255,0.06)' 
               : '1px dashed rgba(255,255,255,0.12)',
-          background: isDragging 
-            ? 'rgba(34, 211, 238, 0.05)' 
+          background: isDragging
+            ? 'rgba(34, 211, 238, 0.06)'
             : disabled
-              ? 'var(--bg-surface)'
-              : 'var(--bg-surface)',
+              ? 'rgba(255, 255, 255, 0.01)'
+              : 'rgba(255, 255, 255, 0.03)',
         }}
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
+        animate={{
+          scale: isDragging ? 1.02 : 1,
+        }}
       >
-        <AnimatePresence mode="wait">
-          {selectedFile ? (
-            <motion.div
-              key="file-preview"
-              className="p-5"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-            >
-              <div className="flex items-center gap-3">
-                <div 
-                  className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
-                  style={{ background: 'linear-gradient(135deg, #22D3EE 0%, #6366F1 100%)' }}
+        <div className="p-8 flex flex-col items-center justify-center gap-4">
+          <input
+            type="file"
+            id="file-input"
+            className="hidden"
+            onChange={handleFileSelect}
+            disabled={disabled}
+            multiple
+          />
+          
+          {selectedFiles.length === 0 ? (
+            <>
+              <div className="text-5xl mb-2">📁</div>
+              <p className="text-white/60 font-medium">
+                {disabled ? 'No peer connected' : 'Drop files here or click to select'}
+              </p>
+              <p className="text-white/30 text-sm">
+                Up to {MAX_FILE_SIZE / (1024 * 1024)}MB per file • Multiple files supported
+              </p>
+              {!disabled && (
+                <label
+                  htmlFor="file-input"
+                  className="mt-2 px-6 py-2 bg-gradient-to-r from-cyan-500/10 to-purple-500/10 text-cyan-400 rounded-lg cursor-pointer hover:from-cyan-500/20 hover:to-purple-500/20 transition-all"
                 >
-                  <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-[#E6EDF3] font-medium truncate text-sm">{selectedFile.name}</p>
-                  <p className="text-[#64748B] text-xs">{formatSize(selectedFile.size)}</p>
-                </div>
+                  Choose Files
+                </label>
+              )}
+            </>
+          ) : (
+            <div className="w-full">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-white/80 font-medium">
+                  {selectedFiles.length} file{selectedFiles.length > 1 ? 's' : ''} selected
+                </p>
+                <p className="text-white/50 text-sm">{formatSize(totalSize)} total</p>
+              </div>
+              
+              <div className="max-h-32 overflow-y-auto space-y-2 mb-4">
+                {selectedFiles.map((file, index) => (
+                  <div
+                    key={`${file.name}-${index}`}
+                    className="flex items-center justify-between p-2 bg-white/5 rounded"
+                  >
+                    <span className="text-white/70 text-sm truncate flex-1">{file.name}</span>
+                    <span className="text-white/40 text-xs ml-2">{formatSize(file.size)}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex gap-2">
                 <button
                   onClick={handleClear}
-                  className="p-2 text-[#64748B] hover:text-[#E6EDF3] transition-colors"
+                  className="flex-1 px-4 py-2 bg-white/5 text-white/60 rounded-lg hover:bg-white/10 transition-colors"
                 >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
+                  Clear
+                </button>
+                <button
+                  onClick={handleSend}
+                  disabled={disabled}
+                  className="flex-1 px-4 py-2 bg-gradient-to-r from-cyan-500 to-purple-500 text-white rounded-lg hover:from-cyan-600 hover:to-purple-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Send {selectedFiles.length > 1 ? 'All' : 'File'}
                 </button>
               </div>
-              <motion.button
-                onClick={handleSend}
-                disabled={disabled}
-                className="mt-4 w-full py-2.5 rounded-xl text-sm font-medium transition-all"
-                style={{
-                  background: disabled ? 'var(--bg-hover)' : '#22D3EE',
-                  color: disabled ? '#64748B' : '#0B0F14',
-                  cursor: disabled ? 'not-allowed' : 'pointer',
-                }}
-                whileHover={disabled ? {} : { transform: 'translateY(-1px)', boxShadow: '0 4px 12px rgba(34, 211, 238, 0.2)' }}
-                whileTap={disabled ? {} : { transform: 'translateY(0)' }}
-              >
-                {disabled ? 'Connect to a peer first' : 'Send File'}
-              </motion.button>
-            </motion.div>
-          ) : (
-            <motion.label
-              key="drop-zone"
-              className={`flex flex-col items-center justify-center p-8 ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-            >
-              <input
-                type="file"
-                className="hidden"
-                onChange={handleFileSelect}
-                disabled={disabled}
-              />
-              
-              <motion.div
-                className="w-14 h-14 rounded-xl flex items-center justify-center mb-4"
-                style={{ 
-                  background: isDragging 
-                    ? 'rgba(34, 211, 238, 0.15)' 
-                    : 'rgba(34, 211, 238, 0.08)'
-                }}
-                animate={{
-                  y: isDragging ? -4 : 0,
-                  scale: isDragging ? 1.05 : 1,
-                }}
-                transition={{ duration: 0.15 }}
-              >
-                <svg 
-                  className="w-6 h-6" 
-                  style={{ color: '#22D3EE' }} 
-                  fill="none" 
-                  viewBox="0 0 24 24" 
-                  stroke="currentColor"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                </svg>
-              </motion.div>
-              
-              <p className="text-sm text-center mb-1">
-                {isDragging ? (
-                  <span style={{ color: '#22D3EE' }}>Drop your file here</span>
-                ) : (
-                  <span className="text-[#94A3B8]">
-                    <span style={{ color: '#22D3EE' }} className="font-medium">Click to upload</span> or drag and drop
-                  </span>
-                )}
-              </p>
-              <p className="text-[#64748B] text-xs">Maximum file size: 500MB</p>
-            </motion.label>
+            </div>
           )}
-        </AnimatePresence>
-      </motion.div>
+        </div>
 
-      {/* Error message */}
-      <AnimatePresence>
         {error && (
-          <motion.p
-            className="mt-2 text-xs flex items-center gap-2"
-            style={{ color: '#EF4444' }}
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+          <div className="px-4 py-2 bg-red-500/10 border-t border-red-500/20 text-red-400 text-sm">
             {error}
-          </motion.p>
+          </div>
         )}
-      </AnimatePresence>
+      </motion.div>
     </div>
   );
 }

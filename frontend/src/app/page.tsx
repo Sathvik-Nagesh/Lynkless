@@ -14,9 +14,13 @@ import QRCodeDisplay from '@/components/QRCodeDisplay';
 import QRScannerModal from '@/components/QRScannerModal';
 import PWAInstallPrompt from '@/components/PWAInstallPrompt';
 import Onboarding from '@/components/Onboarding';
+import FilePreviewModal from '@/components/FilePreviewModal';
+import ConnectionStatusBadge from '@/components/ConnectionStatusBadge';
 import { useSignaling } from '@/hooks/useSignaling';
 import { useWebRTC } from '@/hooks/useWebRTC';
 import { getPeerName, getEmojiForPeer } from '@/lib/utils/nameGenerator';
+import { getSounds } from '@/lib/utils/sounds';
+import { getConnectionMonitor, type PeerStats } from '@/lib/utils/connectionMonitor';
 
 const SIGNALING_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || 'ws://localhost:8080';
 
@@ -25,6 +29,11 @@ export default function Home() {
   const [selectedPeer, setSelectedPeer] = useState<string | null>(null);
   const [showQRCode, setShowQRCode] = useState(false);
   const [showQRScanner, setShowQRScanner] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [showFilePreview, setShowFilePreview] = useState(false);
+  const [peerStats, setPeerStats] = useState<Map<string, PeerStats>>(new Map());
+  const sounds = useRef(getSounds());
+  const connectionMonitor = useRef(getConnectionMonitor());
 
   const {
     clientId,
