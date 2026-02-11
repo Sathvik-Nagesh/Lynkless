@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, memo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface RoomControlsProps {
@@ -13,7 +13,7 @@ interface RoomControlsProps {
   error: string | null;
 }
 
-export default function RoomControls({
+const RoomControls = memo(function RoomControls({
   roomCode,
   isInRoom,
   isCreator,
@@ -329,4 +329,6 @@ export default function RoomControls({
       </AnimatePresence>
     </motion.div>
   );
-}
+});
+
+export default RoomControls;
