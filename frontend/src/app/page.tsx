@@ -282,7 +282,22 @@ export default function Home() {
         isOpen={showQRScanner}
         onClose={() => setShowQRScanner(false)}
         onScan={handleQRScan}
-      />`n`n      {/* File Preview Modal */}`n      <AnimatePresence>`n        {showFilePreview && (`n          <FilePreviewModal`n            files={pendingFiles}`n            peerCount={peers.filter(p => p.state === 'connected').length}`n            onConfirm={handleConfirmSend}`n            onCancel={() => {`n              setShowFilePreview(false);`n              setPendingFiles([]);`n            }}`n          />`n        )}`n      </AnimatePresence>
+      />
+
+      {/* File Preview Modal */}
+      <AnimatePresence>
+        {showFilePreview && (
+          <FilePreviewModal
+            files={pendingFiles}
+            peerCount={peers.filter(p => p.state === 'connected').length}
+            onConfirm={handleConfirmSend}
+            onCancel={() => {
+              setShowFilePreview(false);
+              setPendingFiles([]);
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Header */}
       <header className="max-w-6xl mx-auto mb-10">
@@ -420,6 +435,11 @@ export default function Home() {
                           <span className="text-base">{getEmojiForPeer(selectedPeer)}</span>
                           <span className="font-medium">{getPeerName(selectedPeer)}</span>
                         </span>
+                        {/* Connection quality badge */}
+                        <ConnectionStatusBadge
+                          quality={canSendFile ? 'excellent' : 'disconnected'}
+                          showDetails={true}
+                        />
                       </div>
                       <div className="flex gap-2">
                         <button
@@ -475,6 +495,75 @@ export default function Home() {
 
           {/* Right column - File Transfer and Chat */}
           <div className="space-y-6">
+            {/* Connected Peers Panel */}
+            {connectedPeersCount > 0 && (
+              <motion.div
+                className="panel-elevated p-5"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.25 }}
+              >
+                <div className="flex items-center gap-3 mb-4">
+                  <div 
+                    className="w-9 h-9 rounded-xl flex items-center justify-center"
+                    style={{ background: 'linear-gradient(135deg, #22C55E 0%, #10B981 100%)' }}
+                  >
+                    <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h2 className="text-base font-semibold text-[#E6EDF3]">Connected Devices</h2>
+                    <p className="text-[10px] text-[#64748B]">
+                      {connectedPeersCount} active connection{connectedPeersCount !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {peers.filter(p => p.state === 'connected').map((peer) => (
+                    <motion.div
+                      key={peer.id}
+                      className="flex items-center justify-between p-3 rounded-xl cursor-pointer transition-colors"
+                      style={{ 
+                        background: selectedPeer === peer.id 
+                          ? 'rgba(34, 211, 238, 0.1)' 
+                          : 'var(--bg-hover)',
+                        border: selectedPeer === peer.id
+                          ? '1px solid rgba(34, 211, 238, 0.2)'
+                          : '1px solid transparent'
+                      }}
+                      onClick={() => setSelectedPeer(peer.id)}
+                      whileHover={{ 
+                        background: 'rgba(34, 211, 238, 0.08)',
+                      }}
+                      layout
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-xl">{getEmojiForPeer(peer.id)}</span>
+                        <div>
+                          <p className="text-sm font-medium text-[#E6EDF3]">
+                            {getPeerName(peer.id)}
+                          </p>
+                          <p className="text-[10px] text-[#64748B]">
+                            {peer.isNearby ? '📡 Nearby' : '🌐 Remote'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <ConnectionStatusBadge
+                          quality="excellent"
+                          showDetails={true}
+                        />
+                        {selectedPeer === peer.id && (
+                          <span className="text-[10px] text-[#22D3EE] font-medium">Active</span>
+                        )}
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
             {/* File Drop Zone - Refined panel */}
             <motion.div
               className="panel-elevated p-6"
@@ -530,6 +619,7 @@ export default function Home() {
                 messages={messages}
                 onSendMessage={sendMessage}
                 disabled={connectedPeersCount === 0}
+                connectedPeers={peers.filter(p => p.state === 'connected').map(p => ({ id: p.id }))}
               />
             </motion.div>
           </div>

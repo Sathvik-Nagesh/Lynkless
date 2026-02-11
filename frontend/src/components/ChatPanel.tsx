@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChatMessage } from '@/lib/webrtc/chat';
 import { getPeerName, getEmojiForPeer } from '@/lib/utils/nameGenerator';
@@ -9,24 +9,53 @@ interface ChatPanelProps {
   messages: ChatMessage[];
   onSendMessage: (content: string) => void;
   disabled?: boolean;
+  connectedPeers?: { id: string; name?: string }[];
 }
 
-export default function ChatPanel({ messages, onSendMessage, disabled }: ChatPanelProps) {
+export default function ChatPanel({ messages, onSendMessage, disabled, connectedPeers = [] }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [isExpanded, setIsExpanded] = useState(true);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const lastMessageCountRef = useRef(messages.length);
 
+  // Auto-scroll to latest message
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Track unread messages when collapsed
+  useEffect(() => {
+    if (!isExpanded && messages.length > lastMessageCountRef.current) {
+      setUnreadCount(prev => prev + (messages.length - lastMessageCountRef.current));
+    }
+    lastMessageCountRef.current = messages.length;
+  }, [messages.length, isExpanded]);
+
+  // Clear unread when expanded
+  useEffect(() => {
+    if (isExpanded) {
+      setUnreadCount(0);
+    }
+  }, [isExpanded]);
+
+  const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (input.trim() && !disabled) {
       onSendMessage(input.trim());
       setInput('');
+      inputRef.current?.focus();
     }
-  };
+  }, [input, disabled, onSendMessage]);
+
+  // Handle keyboard shortcuts
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      setIsExpanded(false);
+    }
+  }, []);
 
   const formatTime = (timestamp: number) => {
     return new Date(timestamp).toLocaleTimeString([], { 
@@ -35,9 +64,25 @@ export default function ChatPanel({ messages, onSendMessage, disabled }: ChatPan
     });
   };
 
+  // Group messages by time (5 min intervals)
+  const shouldShowTimestamp = (index: number) => {
+    if (index === 0) return true;
+    const prev = messages[index - 1];
+    const curr = messages[index];
+    return curr.timestamp - prev.timestamp > 5 * 60 * 1000; // 5 minutes
+  };
+
+  // Check if messages are from the same sender consecutively
+  const isSameSender = (index: number) => {
+    if (index === 0) return false;
+    return messages[index].fromId === messages[index - 1].fromId &&
+           messages[index].isOwn === messages[index - 1].isOwn;
+  };
+
   return (
     <div 
       className="panel-elevated overflow-hidden flex flex-col"
+      onKeyDown={handleKeyDown}
     >
       {/* Header */}
       <button
@@ -53,8 +98,27 @@ export default function ChatPanel({ messages, onSendMessage, disabled }: ChatPan
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
           </div>
-          <span className="font-semibold text-[#E6EDF3] text-base">Chat</span>
-          {messages.length > 0 && (
+          <div className="text-left">
+            <span className="font-semibold text-[#E6EDF3] text-base block">Chat</span>
+            {connectedPeers.length > 0 && (
+              <span className="text-[10px] text-[#64748B]">
+                {connectedPeers.length} peer{connectedPeers.length !== 1 ? 's' : ''} connected
+              </span>
+            )}
+          </div>
+          {/* Unread badge */}
+          {unreadCount > 0 && !isExpanded && (
+            <motion.span 
+              className="px-2 py-0.5 text-xs rounded-full font-bold text-white"
+              style={{ background: '#EF4444' }}
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ type: 'spring', stiffness: 500 }}
+            >
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </motion.span>
+          )}
+          {messages.length > 0 && unreadCount === 0 && (
             <span 
               className="px-2 py-0.5 text-xs rounded-md font-medium"
               style={{ background: 'rgba(99, 102, 241, 0.15)', color: '#6366F1' }}
@@ -86,7 +150,7 @@ export default function ChatPanel({ messages, onSendMessage, disabled }: ChatPan
           >
             {/* Messages */}
             <div 
-              className="h-64 overflow-y-auto p-4 space-y-3"
+              className="h-72 overflow-y-auto p-4 space-y-1"
               style={{ borderTop: '1px solid var(--border-subtle)' }}
             >
               {messages.length === 0 ? (
@@ -95,51 +159,105 @@ export default function ChatPanel({ messages, onSendMessage, disabled }: ChatPan
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                   </svg>
                   <p className="text-sm text-[#64748B]">No messages yet</p>
-                  <p className="text-xs text-[#475569]">Messages are ephemeral</p>
+                  <p className="text-xs text-[#475569]">Messages are ephemeral & encrypted</p>
+                  {disabled && (
+                    <p className="text-xs text-[#EF4444] mt-2">Connect to a peer to start chatting</p>
+                  )}
                 </div>
               ) : (
                 messages.map((msg, index) => (
-                  <motion.div
-                    key={msg.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.03, duration: 0.15 }}
-                    className={`flex ${msg.isOwn ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div
-                      className="max-w-[80%] rounded-xl px-4 py-2"
-                      style={msg.isOwn ? {
-                        background: 'rgba(34, 211, 238, 0.12)',
-                        border: '1px solid rgba(34, 211, 238, 0.2)',
-                      } : {
-                        background: 'var(--bg-hover)',
-                        border: '1px solid var(--border-subtle)',
-                      }}
+                  <div key={msg.id}>
+                    {/* Time separator */}
+                    {shouldShowTimestamp(index) && (
+                      <div className="flex items-center gap-3 my-3">
+                        <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
+                        <span className="text-[10px] text-[#475569] font-medium">
+                          {formatTime(msg.timestamp)}
+                        </span>
+                        <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
+                      </div>
+                    )}
+
+                    <motion.div
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.12 }}
+                      className={`flex ${msg.isOwn ? 'justify-end' : 'justify-start'} ${
+                        isSameSender(index) ? 'mt-0.5' : 'mt-2'
+                      }`}
                     >
-                      {!msg.isOwn && (
-                        <p className="text-[9px] font-medium mb-1 flex items-center gap-1" style={{ color: '#6366F1' }}>
-                          <span>{getEmojiForPeer(msg.fromId)}</span>
-                          <span>{getPeerName(msg.fromId)}</span>
+                      <div
+                        className="max-w-[80%] rounded-2xl px-4 py-2 relative group"
+                        style={msg.isOwn ? {
+                          background: 'linear-gradient(135deg, rgba(34, 211, 238, 0.15), rgba(99, 102, 241, 0.15))',
+                          border: '1px solid rgba(34, 211, 238, 0.2)',
+                          borderBottomRightRadius: isSameSender(index) ? '8px' : '20px',
+                        } : {
+                          background: 'var(--bg-hover)',
+                          border: '1px solid var(--border-subtle)',
+                          borderBottomLeftRadius: isSameSender(index) ? '8px' : '20px',
+                        }}
+                      >
+                        {/* Sender name (only for received, and only if different from previous) */}
+                        {!msg.isOwn && !isSameSender(index) && (
+                          <p className="text-[10px] font-semibold mb-1 flex items-center gap-1" style={{ color: '#6366F1' }}>
+                            <span>{getEmojiForPeer(msg.fromId)}</span>
+                            <span>{getPeerName(msg.fromId)}</span>
+                          </p>
+                        )}
+                        <p 
+                          className="break-words text-sm leading-relaxed"
+                          style={{ color: msg.isOwn ? '#E6EDF3' : '#CBD5E1' }}
+                        >
+                          {msg.content}
                         </p>
-                      )}
-                      <p 
-                        className="break-words text-sm"
-                        style={{ color: msg.isOwn ? '#E6EDF3' : '#94A3B8' }}
-                      >
-                        {msg.content}
-                      </p>
-                      <p 
-                        className="text-[10px] mt-1"
-                        style={{ color: msg.isOwn ? '#22D3EE' : '#64748B' }}
-                      >
-                        {formatTime(msg.timestamp)}
-                      </p>
-                    </div>
-                  </motion.div>
+                        {/* Timestamp on hover */}
+                        <span 
+                          className="text-[9px] opacity-0 group-hover:opacity-100 transition-opacity absolute -bottom-4 text-[#475569]"
+                          style={{ [msg.isOwn ? 'right' : 'left']: '8px' }}
+                        >
+                          {formatTime(msg.timestamp)}
+                        </span>
+                      </div>
+                    </motion.div>
+                  </div>
                 ))
               )}
               <div ref={messagesEndRef} />
             </div>
+
+            {/* Typing indicator */}
+            <AnimatePresence>
+              {isTyping && (
+                <motion.div
+                  className="px-4 py-1"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                >
+                  <div className="flex items-center gap-2 text-xs text-[#64748B]">
+                    <span className="flex gap-1">
+                      <motion.span
+                        className="w-1.5 h-1.5 bg-[#64748B] rounded-full"
+                        animate={{ opacity: [0.3, 1, 0.3] }}
+                        transition={{ repeat: Infinity, duration: 1, delay: 0 }}
+                      />
+                      <motion.span
+                        className="w-1.5 h-1.5 bg-[#64748B] rounded-full"
+                        animate={{ opacity: [0.3, 1, 0.3] }}
+                        transition={{ repeat: Infinity, duration: 1, delay: 0.2 }}
+                      />
+                      <motion.span
+                        className="w-1.5 h-1.5 bg-[#64748B] rounded-full"
+                        animate={{ opacity: [0.3, 1, 0.3] }}
+                        transition={{ repeat: Infinity, duration: 1, delay: 0.4 }}
+                      />
+                    </span>
+                    <span>Someone is typing...</span>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Input */}
             <form 
@@ -149,21 +267,23 @@ export default function ChatPanel({ messages, onSendMessage, disabled }: ChatPan
             >
               <div className="flex gap-2">
                 <input
+                  ref={inputRef}
                   type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder={disabled ? 'Connect to chat' : 'Type a message...'}
+                  placeholder={disabled ? 'Connect to chat...' : 'Type a message...'}
                   disabled={disabled}
                   className="input flex-1"
                   style={{ fontSize: '14px' }}
+                  maxLength={2000}
                 />
                 <motion.button
                   type="submit"
                   disabled={disabled || !input.trim()}
                   className="px-4 py-2 rounded-xl font-medium disabled:opacity-40 disabled:cursor-not-allowed"
                   style={{
-                    background: disabled || !input.trim() ? 'var(--bg-hover)' : '#22D3EE',
-                    color: disabled || !input.trim() ? '#64748B' : '#0B0F14',
+                    background: disabled || !input.trim() ? 'var(--bg-hover)' : 'linear-gradient(135deg, #22D3EE, #6366F1)',
+                    color: disabled || !input.trim() ? '#64748B' : '#FFFFFF',
                   }}
                   whileHover={disabled ? {} : { transform: 'translateY(-1px)' }}
                   whileTap={disabled ? {} : { transform: 'translateY(0)' }}
@@ -173,6 +293,11 @@ export default function ChatPanel({ messages, onSendMessage, disabled }: ChatPan
                   </svg>
                 </motion.button>
               </div>
+              {!disabled && (
+                <p className="text-[10px] text-[#475569] mt-1.5 text-right">
+                  Press Enter to send • Esc to minimize
+                </p>
+              )}
             </form>
           </motion.div>
         )}
