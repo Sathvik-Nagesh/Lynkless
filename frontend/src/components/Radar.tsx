@@ -24,13 +24,13 @@ interface RadarProps {
 
 type NodeState = 'idle' | 'request-sent' | 'request-received' | 'connected' | 'rejected';
 
-export default function Radar({ 
-  users, 
-  nearbyPeers, 
-  peerStates, 
-  onUserClick, 
+export default function Radar({
+  users,
+  nearbyPeers,
+  peerStates,
+  onUserClick,
   currentUserId,
-  isInRoom 
+  isInRoom
 }: RadarProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number>(0);
@@ -133,14 +133,14 @@ export default function Radar({
   };
 
   // Get node styles based on state - cleaner, less saturated
-  const getNodeStyles = (userId: string, isNearby: boolean): { 
-    bgColor: string; 
+  const getNodeStyles = (userId: string, isNearby: boolean): {
+    bgColor: string;
     borderColor: string;
     shadowColor: string;
     pulse: boolean;
   } => {
     const state = getNodeState(userId);
-    
+
     switch (state) {
       case 'connected':
         return {
@@ -206,10 +206,10 @@ export default function Radar({
   };
 
   // Combine room users and nearby peers (without duplicates)
-  const allNearbyUsers = isInRoom 
+  const allNearbyUsers = isInRoom
     ? users.filter(u => u.isNearby && u.id !== currentUserId)
     : nearbyPeers.filter(u => u.id !== currentUserId);
-  
+
   const remoteUsers = users.filter(u => !u.isNearby && u.id !== currentUserId);
 
   // Calculate positions for users
@@ -238,7 +238,7 @@ export default function Radar({
         animate={{ scale: 1 }}
         transition={{ type: 'spring', duration: 0.5 }}
       >
-        <div 
+        <div
           className="w-11 h-11 rounded-full flex items-center justify-center"
           style={{
             background: 'linear-gradient(135deg, #22D3EE 0%, #6366F1 100%)',
@@ -260,7 +260,7 @@ export default function Radar({
         const pos = getUserPosition(index, allNearbyUsers.length, 18);
         const styles = getNodeStyles(user.id, true);
         const stateLabel = getStateLabel(user.id);
-        
+
         return (
           <motion.button
             key={user.id}
@@ -273,7 +273,7 @@ export default function Radar({
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.95 }}
           >
-            <div 
+            <div
               className="relative w-9 h-9 rounded-full flex items-center justify-center transition-all duration-150"
               style={{
                 backgroundColor: styles.bgColor,
@@ -283,7 +283,7 @@ export default function Radar({
               <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
               </svg>
-              
+
               {/* Subtle pulse for pending states */}
               {styles.pulse && (
                 <motion.div
@@ -294,14 +294,14 @@ export default function Radar({
                 />
               )}
             </div>
-            
-            <motion.span 
+
+            <motion.span
               className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] whitespace-nowrap font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-1"
-              style={{ 
-                color: stateLabel 
-                  ? (getNodeState(user.id) === 'connected' ? '#22C55E' : 
-                     getNodeState(user.id) === 'request-sent' ? '#22D3EE' :
-                     getNodeState(user.id) === 'request-received' ? '#F472B6' : '#94A3B8')
+              style={{
+                color: stateLabel
+                  ? (getNodeState(user.id) === 'connected' ? '#22C55E' :
+                    getNodeState(user.id) === 'request-sent' ? '#22D3EE' :
+                      getNodeState(user.id) === 'request-received' ? '#F472B6' : '#94A3B8')
                   : '#F59E0B'
               }}
             >
@@ -317,7 +317,7 @@ export default function Radar({
         const pos = getUserPosition(index, remoteUsers.length, 38);
         const styles = getNodeStyles(user.id, false);
         const stateLabel = getStateLabel(user.id);
-        
+
         return (
           <motion.button
             key={user.id}
@@ -330,7 +330,7 @@ export default function Radar({
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.95 }}
           >
-            <div 
+            <div
               className="relative w-8 h-8 rounded-full flex items-center justify-center transition-all duration-150"
               style={{
                 backgroundColor: styles.bgColor,
@@ -340,7 +340,7 @@ export default function Radar({
               <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
               </svg>
-              
+
               {/* Subtle pulse for pending states */}
               {styles.pulse && (
                 <motion.div
@@ -351,14 +351,14 @@ export default function Radar({
                 />
               )}
             </div>
-            
-            <motion.span 
+
+            <motion.span
               className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] whitespace-nowrap font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-1"
-              style={{ 
-                color: stateLabel 
-                  ? (getNodeState(user.id) === 'connected' ? '#22C55E' : 
-                     getNodeState(user.id) === 'request-sent' ? '#22D3EE' :
-                     getNodeState(user.id) === 'request-received' ? '#F472B6' : '#94A3B8')
+              style={{
+                color: stateLabel
+                  ? (getNodeState(user.id) === 'connected' ? '#22C55E' :
+                    getNodeState(user.id) === 'request-sent' ? '#22D3EE' :
+                      getNodeState(user.id) === 'request-received' ? '#F472B6' : '#94A3B8')
                   : '#6366F1'
               }}
             >
@@ -382,7 +382,7 @@ export default function Radar({
       <div className="absolute bottom-1 left-3 flex items-center gap-3 text-[10px]">
         <div className="flex items-center gap-1.5">
           <div className="w-2 h-2 rounded-full" style={{ backgroundColor: '#F59E0B' }} />
-          <span className="text-[#64748B]">Nearby</span>
+          <span className="text-[#64748B]">Local</span>
         </div>
         <div className="flex items-center gap-1.5">
           <div className="w-2 h-2 rounded-full" style={{ backgroundColor: '#6366F1' }} />

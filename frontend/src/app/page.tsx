@@ -120,13 +120,15 @@ export default function Home() {
     // Don't show "Connected" toast here - wait for actual WebRTC connection
 
     // The accepter initiates the WebRTC connection
+    // Check all sources for isNearby (server provides this in connection-request)
+    const incomingReq = incomingRequests.find(r => r.fromId === fromId);
     const user = roomState.users.find(u => u.id === fromId);
     const nearbyPeer = nearbyPeers.find(p => p.id === fromId);
-    const isNearby = user?.isNearby || nearbyPeer?.isNearby || false;
+    const isNearby = incomingReq?.isNearby || user?.isNearby || nearbyPeer?.isNearby || false;
 
     await connectToPeer(fromId, isNearby);
     setSelectedPeer(fromId);
-  }, [acceptConnectionRequest, roomState.users, nearbyPeers, connectToPeer]);
+  }, [acceptConnectionRequest, roomState.users, nearbyPeers, incomingRequests, connectToPeer]);
 
   // Watch for actual WebRTC connection state changes to show toasts
   const prevPeersRef = useRef<typeof peers>([]);
@@ -601,7 +603,7 @@ export default function Home() {
                             {getPeerName(peer.id)}
                           </p>
                           <p className="text-[10px] text-[#64748B]">
-                            {peer.isNearby ? '📡 Nearby' : '🌐 Remote'}
+                            {peer.isNearby ? '📡 Local Network' : '🌐 Remote'}
                           </p>
                         </div>
                       </div>

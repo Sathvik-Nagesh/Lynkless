@@ -71,7 +71,7 @@ class WebRTCManager {
     this.cleanupHandler = this.signaling.on((message: SignalingMessage) => {
       switch (message.type) {
         case 'offer':
-          this.handleOffer(message.fromId as string, message.offer as RTCSessionDescriptionInit);
+          this.handleOffer(message.fromId as string, message.offer as RTCSessionDescriptionInit, message.isNearby as boolean ?? false);
           break;
         case 'answer':
           this.handleAnswer(message.fromId as string, message.answer as RTCSessionDescriptionInit);
@@ -137,20 +137,21 @@ class WebRTCManager {
       type: 'offer',
       targetId: peerId,
       offer: peerConnection.connection.localDescription,
+      isNearby: isNearby,
     });
   }
 
   /**
    * Handle incoming offer from a peer
    */
-  private async handleOffer(fromId: string, offer: RTCSessionDescriptionInit): Promise<void> {
-    console.log('[WebRTC] Received offer from:', fromId);
+  private async handleOffer(fromId: string, offer: RTCSessionDescriptionInit, isNearby: boolean = false): Promise<void> {
+    console.log('[WebRTC] Received offer from:', fromId, isNearby ? '(nearby)' : '(remote)');
 
     // Initialize buffer and tracking for this peer
     this.iceCandidateBuffer.set(fromId, []);
     this.remoteDescriptionSet.set(fromId, false);
 
-    const peerConnection = this.createPeerConnection(fromId, false);
+    const peerConnection = this.createPeerConnection(fromId, isNearby);
 
     // Store remote SDP
     peerConnection.remoteSdp = offer.sdp;

@@ -10,16 +10,35 @@ const presenceByIp = new Map();
 const pendingRequests = new Map();
 
 /**
+ * Normalize IP address for consistent comparison
+ */
+function normalizeIp(ip) {
+  if (!ip) return '0.0.0.0';
+
+  // Handle IPv6 localhost variants
+  if (ip === '::1' || ip === '::ffff:127.0.0.1' || ip === '127.0.0.1') {
+    return '127.0.0.1';
+  }
+
+  // Extract IPv4 from IPv6-mapped address (e.g., ::ffff:192.168.1.1 -> 192.168.1.1)
+  if (ip.startsWith('::ffff:')) {
+    return ip.substring(7);
+  }
+
+  return ip;
+}
+
+/**
  * Extract client IP address from request
  */
 function getClientIp(req) {
   // Check for forwarded IP (when behind proxy/load balancer)
   const forwarded = req.headers['x-forwarded-for'];
   if (forwarded) {
-    return forwarded.split(',')[0].trim();
+    return normalizeIp(forwarded.split(',')[0].trim());
   }
   // Fall back to direct connection IP
-  return req.socket.remoteAddress || '0.0.0.0';
+  return normalizeIp(req.socket.remoteAddress);
 }
 
 /**
@@ -30,18 +49,18 @@ function getSubnet(ip) {
   if (ip === '::1' || ip === '::ffff:127.0.0.1') {
     return 'localhost';
   }
-  
+
   // Extract IPv4 from IPv6-mapped address
   if (ip.startsWith('::ffff:')) {
     ip = ip.substring(7);
   }
-  
+
   // Get first 3 octets for /24 subnet
   const parts = ip.split('.');
   if (parts.length === 4) {
     return `${parts[0]}.${parts[1]}.${parts[2]}`;
   }
-  
+
   // Fallback to full IP
   return ip;
 }
@@ -78,7 +97,7 @@ function getNearbyPeers(clientId, clientIp) {
   const subnet = getSubnet(clientIp);
   const ipClients = presenceByIp.get(subnet);
   if (!ipClients) return [];
-  
+
   const nearby = [];
   ipClients.forEach((id) => {
     if (id !== clientId) {
@@ -122,7 +141,7 @@ function initializeHandlers(wss) {
   wss.on('connection', (ws, req) => {
     const clientIp = getClientIp(req);
     const clientId = generateClientId();
-    
+
     // Store client reference
     ws.clientId = clientId;
     ws.clientIp = clientIp;
@@ -277,7 +296,7 @@ async function handleMessage(ws, message) {
  */
 function handleConnectionRequest(ws, { targetId }) {
   const targetWs = clients.get(targetId);
-  
+
   if (!targetWs) {
     sendToClient(ws, {
       type: 'connection-request-failed',
@@ -502,6 +521,7 @@ function handleOffer(ws, { targetId, offer }) {
       type: 'offer',
       fromId: ws.clientId,
       offer,
+      isNearby: ws.clientIp === targetWs.clientIp,
     });
   } else {
     sendToClient(ws, {
@@ -600,12 +620,12 @@ function handleGetUsers(ws) {
  */
 function handleDisconnect(ws) {
   console.log(`Client disconnected: ${ws.clientId}`);
-  
+
   // Clean up pending requests involving this client
   pendingRequests.forEach((request, requestId) => {
     if (request.fromId === ws.clientId || request.toId === ws.clientId) {
       pendingRequests.delete(requestId);
-      
+
       // Notify the other party
       const otherId = request.fromId === ws.clientId ? request.toId : request.fromId;
       const otherWs = clients.get(otherId);
@@ -617,7 +637,7 @@ function handleDisconnect(ws) {
       }
     }
   });
-  
+
   // Leave any room the client was in
   if (clientRooms.has(ws.clientId)) {
     handleLeaveRoom(ws);
@@ -626,7 +646,7 @@ function handleDisconnect(ws) {
   // Remove from presence registry and notify nearby
   removeFromPresence(ws.clientId, ws.clientIp);
   broadcastNearbyUpdate(ws.clientIp);
-  
+
   // Remove client from clients map
   clients.delete(ws.clientId);
 }

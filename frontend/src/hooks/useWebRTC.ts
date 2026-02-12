@@ -1,17 +1,17 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { 
-  getWebRTCManager, 
-  ConnectionState, 
+import {
+  getWebRTCManager,
+  ConnectionState,
 } from '@/lib/webrtc/connection';
-import { 
-  getFileTransferManager, 
-  TransferProgress 
+import {
+  getFileTransferManager,
+  TransferProgress
 } from '@/lib/webrtc/fileTransfer';
-import { 
-  getChatManager, 
-  ChatMessage 
+import {
+  getChatManager,
+  ChatMessage
 } from '@/lib/webrtc/chat';
 
 export interface PeerState {
@@ -64,14 +64,18 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
 
     // Handle state changes
     const unsubState = webrtc.onStateChange((peerId, state) => {
+      // Get isNearby from the actual WebRTC peer connection
+      const peerConn = webrtc.getPeer(peerId);
+      const isNearby = peerConn?.isNearby ?? false;
+
       setPeers((prev) => {
         const existing = prev.find((p) => p.id === peerId);
         if (existing) {
           return prev.map((p) =>
-            p.id === peerId ? { ...p, state } : p
+            p.id === peerId ? { ...p, state, isNearby } : p
           );
         }
-        return [...prev, { id: peerId, state, isNearby: false }];
+        return [...prev, { id: peerId, state, isNearby }];
       });
 
       // Remove disconnected peers
