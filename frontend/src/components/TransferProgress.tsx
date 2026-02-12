@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import { motion } from 'framer-motion';
 import { TransferProgress as TransferProgressType } from '@/lib/webrtc/fileTransfer';
 
@@ -10,25 +11,27 @@ interface TransferProgressProps {
   onResume?: (fileId: string) => void;
 }
 
-export default function TransferProgress({ transfer, onCancel, onPause, onResume }: TransferProgressProps) {
-  const formatSize = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
+// Helper functions moved outside to avoid recreation
+const formatSize = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
 
-  const formatSpeed = (bytesPerSecond: number): string => {
-    if (bytesPerSecond < 1024) return `${bytesPerSecond.toFixed(0)} B/s`;
-    if (bytesPerSecond < 1024 * 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
-    return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`;
-  };
+const formatSpeed = (bytesPerSecond: number): string => {
+  if (bytesPerSecond < 1024) return `${bytesPerSecond.toFixed(0)} B/s`;
+  if (bytesPerSecond < 1024 * 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+  return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`;
+};
 
-  const formatTime = (seconds: number): string => {
-    if (seconds < 60) return `${Math.ceil(seconds)}s`;
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.ceil(seconds % 60);
-    return `${mins}m ${secs}s`;
-  };
+const formatTime = (seconds: number): string => {
+  if (seconds < 60) return `${Math.ceil(seconds)}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.ceil(seconds % 60);
+  return `${mins}m ${secs}s`;
+};
+
+const TransferProgress = memo(function TransferProgress({ transfer, onCancel, onPause, onResume }: TransferProgressProps) {
 
   const getStatusColor = () => {
     switch (transfer.status) {
@@ -197,4 +200,6 @@ export default function TransferProgress({ transfer, onCancel, onPause, onResume
       )}
     </motion.div>
   );
-}
+});
+
+export default TransferProgress;

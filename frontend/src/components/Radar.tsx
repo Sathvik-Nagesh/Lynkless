@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useMemo, memo } from 'react';
 import { motion } from 'framer-motion';
 import { PeerConnectionState } from '@/hooks/useSignaling';
 import { getPeerName, getEmojiForPeer } from '@/lib/utils/nameGenerator';
@@ -24,7 +24,16 @@ interface RadarProps {
 
 type NodeState = 'idle' | 'request-sent' | 'request-received' | 'connected' | 'rejected';
 
-export default function Radar({
+// Calculate positions for users - moved outside to avoid recreation
+const getUserPosition = (index: number, total: number, radius: number) => {
+  const angle = (Math.PI * 2 * index) / Math.max(total, 1) - Math.PI / 2;
+  return {
+    x: 50 + Math.cos(angle) * radius,
+    y: 50 + Math.sin(angle) * radius,
+  };
+};
+
+const Radar = memo(function Radar({
   users,
   nearbyPeers,
   peerStates,
@@ -206,20 +215,14 @@ export default function Radar({
   };
 
   // Combine room users and nearby peers (without duplicates)
-  const allNearbyUsers = isInRoom
+  const allNearbyUsers = useMemo(() => isInRoom
     ? users.filter(u => u.isNearby && u.id !== currentUserId)
-    : nearbyPeers.filter(u => u.id !== currentUserId);
+    : nearbyPeers.filter(u => u.id !== currentUserId),
+  [isInRoom, users, currentUserId, nearbyPeers]);
 
-  const remoteUsers = users.filter(u => !u.isNearby && u.id !== currentUserId);
-
-  // Calculate positions for users
-  const getUserPosition = (index: number, total: number, radius: number) => {
-    const angle = (Math.PI * 2 * index) / Math.max(total, 1) - Math.PI / 2;
-    return {
-      x: 50 + Math.cos(angle) * radius,
-      y: 50 + Math.sin(angle) * radius,
-    };
-  };
+  const remoteUsers = useMemo(() =>
+    users.filter(u => !u.isNearby && u.id !== currentUserId),
+  [users, currentUserId]);
 
   const hasAnyPeers = allNearbyUsers.length > 0 || remoteUsers.length > 0;
 
@@ -395,4 +398,6 @@ export default function Radar({
       </div>
     </div>
   );
-}
+});
+
+export default Radar;
