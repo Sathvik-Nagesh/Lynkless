@@ -88,7 +88,7 @@ export default function Home() {
   // Handle user click on radar - now sends connection REQUEST
   const handleUserClick = useCallback(async (userId: string) => {
     const currentState = peerStates.get(userId);
-    
+
     // If already connected, just select the peer
     if (currentState?.state === 'connected') {
       setSelectedPeer(userId);
@@ -117,22 +117,45 @@ export default function Home() {
   // Handle connection acceptance - now initiate WebRTC
   const handleAcceptRequest = useCallback(async (fromId: string) => {
     acceptConnectionRequest(fromId);
-    sounds.current.playConnected();
-    showToast(`Connected to ${getPeerName(fromId)}`, 'success');
-    
+    // Don't show "Connected" toast here - wait for actual WebRTC connection
+
     // The accepter initiates the WebRTC connection
     const user = roomState.users.find(u => u.id === fromId);
     const nearbyPeer = nearbyPeers.find(p => p.id === fromId);
     const isNearby = user?.isNearby || nearbyPeer?.isNearby || false;
-    
+
     await connectToPeer(fromId, isNearby);
     setSelectedPeer(fromId);
-  }, [acceptConnectionRequest, roomState.users, nearbyPeers, connectToPeer, showToast]);
+  }, [acceptConnectionRequest, roomState.users, nearbyPeers, connectToPeer]);
+
+  // Watch for actual WebRTC connection state changes to show toasts
+  const prevPeersRef = useRef<typeof peers>([]);
+  useEffect(() => {
+    const prevPeers = prevPeersRef.current;
+
+    for (const peer of peers) {
+      const prev = prevPeers.find(p => p.id === peer.id);
+
+      // Peer just became connected (was not connected before)
+      if (peer.state === 'connected' && (!prev || prev.state !== 'connected')) {
+        sounds.current.playConnected();
+        showToast(`Connected to ${getPeerName(peer.id)}`, 'success');
+      }
+
+      // Peer connection failed
+      if (peer.state === 'failed' && (!prev || prev.state !== 'failed')) {
+        sounds.current.playError();
+        showToast(`Connection to ${getPeerName(peer.id)} failed`, 'error');
+      }
+    }
+
+    prevPeersRef.current = [...peers];
+  }, [peers, showToast]);
 
   // Handle file drop - show preview modal
   const handleFileDrop = useCallback((files: File[]) => {
     const connectedPeers = peers.filter(p => p.state === 'connected');
-    
+
     if (connectedPeers.length === 0) {
       console.warn('[File Drop] No connected peers');
       return;
@@ -163,7 +186,7 @@ export default function Home() {
       sounds.current.playError();
       showToast('Failed to send files. Please try again.', 'error');
     }
-    
+
     setPendingFiles([]);
   }, [pendingFiles, peers, sendFile]);
 
@@ -177,7 +200,7 @@ export default function Home() {
 
     // Get all users in room (excluding self)
     const otherUsers = roomState.users.filter(u => u.id !== clientId);
-    
+
     otherUsers.forEach(async (user) => {
       // Skip if we've already sent a request to this user
       if (sentRequestsRef.current.has(user.id)) {
@@ -187,7 +210,7 @@ export default function Home() {
       // Skip if already connected or has pending request
       const currentState = peerStates.get(user.id);
       if (currentState?.state === 'request-sent' ||
-          currentState?.state === 'request-received') {
+        currentState?.state === 'request-received') {
         return;
       }
 
@@ -222,7 +245,7 @@ export default function Home() {
         }
       });
     };
-    
+
     handleConnectionAccepted();
   }, [peerStates, peers]);
 
@@ -232,7 +255,7 @@ export default function Home() {
     if (payload.serverUrl !== SIGNALING_URL) {
       console.warn('QR code from different server:', payload.serverUrl);
     }
-    
+
     // Send connection request to the scanned peer
     if (payload.peerId && payload.peerId !== clientId) {
       sendConnectionRequest(payload.peerId);
@@ -253,7 +276,7 @@ export default function Home() {
     } else if (roomState.code && !roomState.isCreator) {
       showToast(`Joined room ${roomState.code}`, 'info');
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomState.code]);
 
   // Count connected peers
@@ -389,7 +412,7 @@ export default function Home() {
               transition={{ delay: 0.2 }}
             >
               <div className="flex items-center gap-3 mb-5">
-                <div 
+                <div
                   className="w-9 h-9 rounded-xl flex items-center justify-center"
                   style={{ background: 'linear-gradient(135deg, #22D3EE 0%, #6366F1 100%)' }}
                 >
@@ -400,9 +423,9 @@ export default function Home() {
                 <div className="flex-1">
                   <h2 className="text-base font-semibold text-[#E6EDF3]">Discovery Radar</h2>
                   <p className="text-xs text-[#64748B]">
-                    {roomState.code 
+                    {roomState.code
                       ? `Room ${roomState.code} • ${roomState.users.length} peer${roomState.users.length !== 1 ? 's' : ''}`
-                      : nearbyPeers.length > 0 
+                      : nearbyPeers.length > 0
                         ? `${nearbyPeers.length} nearby peer${nearbyPeers.length !== 1 ? 's' : ''} detected`
                         : 'Scanning for nearby peers...'}
                   </p>
@@ -449,7 +472,7 @@ export default function Home() {
                 {selectedPeer && (
                   <motion.div
                     className="mt-5 p-3 rounded-xl"
-                    style={{ 
+                    style={{
                       background: 'rgba(34, 211, 238, 0.08)',
                       border: '1px solid rgba(34, 211, 238, 0.15)'
                     }}
@@ -459,7 +482,7 @@ export default function Home() {
                   >
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <div 
+                        <div
                           className="w-2 h-2 rounded-full"
                           style={{ backgroundColor: canSendFile ? '#22C55E' : '#F59E0B' }}
                         />
@@ -513,7 +536,7 @@ export default function Home() {
 
               {/* Nearby discovery notice (when not in room) */}
               {!roomState.code && nearbyPeers.length === 0 && (
-                <div 
+                <div
                   className="mt-5 p-3 rounded-xl"
                   style={{ background: 'var(--bg-hover)' }}
                 >
@@ -536,7 +559,7 @@ export default function Home() {
                 transition={{ delay: 0.25 }}
               >
                 <div className="flex items-center gap-3 mb-4">
-                  <div 
+                  <div
                     className="w-9 h-9 rounded-xl flex items-center justify-center"
                     style={{ background: 'linear-gradient(135deg, #22C55E 0%, #10B981 100%)' }}
                   >
@@ -557,16 +580,16 @@ export default function Home() {
                     <motion.div
                       key={peer.id}
                       className="flex items-center justify-between p-3 rounded-xl cursor-pointer transition-colors"
-                      style={{ 
-                        background: selectedPeer === peer.id 
-                          ? 'rgba(34, 211, 238, 0.1)' 
+                      style={{
+                        background: selectedPeer === peer.id
+                          ? 'rgba(34, 211, 238, 0.1)'
                           : 'var(--bg-hover)',
                         border: selectedPeer === peer.id
                           ? '1px solid rgba(34, 211, 238, 0.2)'
                           : '1px solid transparent'
                       }}
                       onClick={() => setSelectedPeer(peer.id)}
-                      whileHover={{ 
+                      whileHover={{
                         background: 'rgba(34, 211, 238, 0.08)',
                       }}
                       layout
@@ -604,7 +627,7 @@ export default function Home() {
               transition={{ delay: 0.3 }}
             >
               <div className="flex items-center gap-3 mb-5">
-                <div 
+                <div
                   className="w-9 h-9 rounded-xl flex items-center justify-center"
                   style={{ background: 'linear-gradient(135deg, #6366F1 0%, #EC4899 100%)' }}
                 >
@@ -662,7 +685,7 @@ export default function Home() {
         {/* Privacy Notice - Refined */}
         <motion.div
           className="mt-10 p-4 rounded-xl text-center"
-          style={{ 
+          style={{
             background: 'var(--bg-surface)',
             border: '1px solid var(--border-subtle)'
           }}

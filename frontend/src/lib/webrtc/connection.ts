@@ -6,13 +6,32 @@
 import { getSignalingClient, SignalingMessage } from '../socket/client';
 import { generateSimpleFingerprint, storeFingerprint, clearFingerprint } from './fingerprint';
 
-// STUN servers for NAT traversal
+// STUN/TURN servers for NAT traversal
 const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    // Free TURN servers for relay (when direct/STUN fails across strict NATs)
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
   ],
+  iceCandidatePoolSize: 10,
 };
 
 export type ConnectionState = 'new' | 'connecting' | 'connected' | 'disconnected' | 'failed';
@@ -39,6 +58,10 @@ class WebRTCManager {
   private fingerprintHandlers: Set<FingerprintHandler> = new Set();
   private signaling = getSignalingClient();
   private cleanupHandler: (() => void) | null = null;
+  // Buffer ICE candidates that arrive before remote description is set
+  private iceCandidateBuffer: Map<string, RTCIceCandidateInit[]> = new Map();
+  // Track whether remote description has been set for each peer
+  private remoteDescriptionSet: Map<string, boolean> = new Map();
 
   constructor() {
     this.setupSignalingHandlers();
@@ -64,13 +87,38 @@ class WebRTCManager {
   }
 
   /**
+   * Flush buffered ICE candidates after remote description is set
+   */
+  private async flushIceCandidateBuffer(peerId: string): Promise<void> {
+    const buffered = this.iceCandidateBuffer.get(peerId);
+    if (buffered && buffered.length > 0) {
+      console.log(`[WebRTC] Flushing ${buffered.length} buffered ICE candidates for ${peerId}`);
+      for (const candidate of buffered) {
+        try {
+          const peer = this.peers.get(peerId);
+          if (peer) {
+            await peer.connection.addIceCandidate(candidate);
+          }
+        } catch (error) {
+          console.error('[WebRTC] Failed to add buffered ICE candidate:', error);
+        }
+      }
+      this.iceCandidateBuffer.delete(peerId);
+    }
+  }
+
+  /**
    * Initiate connection to a peer
    */
   async connectToPeer(peerId: string, isNearby: boolean = false): Promise<void> {
     console.log('[WebRTC] Initiating connection to:', peerId);
 
+    // Initialize buffer and tracking for this peer
+    this.iceCandidateBuffer.set(peerId, []);
+    this.remoteDescriptionSet.set(peerId, false);
+
     const peerConnection = this.createPeerConnection(peerId, isNearby);
-    
+
     // Create data channel (initiator creates it)
     const dataChannel = peerConnection.connection.createDataChannel('lynkless', {
       ordered: true,
@@ -98,11 +146,15 @@ class WebRTCManager {
   private async handleOffer(fromId: string, offer: RTCSessionDescriptionInit): Promise<void> {
     console.log('[WebRTC] Received offer from:', fromId);
 
+    // Initialize buffer and tracking for this peer
+    this.iceCandidateBuffer.set(fromId, []);
+    this.remoteDescriptionSet.set(fromId, false);
+
     const peerConnection = this.createPeerConnection(fromId, false);
-    
+
     // Store remote SDP
     peerConnection.remoteSdp = offer.sdp;
-    
+
     // Handle incoming data channel
     peerConnection.connection.ondatachannel = (event) => {
       this.setupDataChannel(fromId, event.channel);
@@ -110,6 +162,10 @@ class WebRTCManager {
     };
 
     await peerConnection.connection.setRemoteDescription(offer);
+    // Mark remote description as set and flush buffered candidates
+    this.remoteDescriptionSet.set(fromId, true);
+    await this.flushIceCandidateBuffer(fromId);
+
     const answer = await peerConnection.connection.createAnswer();
     await peerConnection.connection.setLocalDescription(answer);
 
@@ -132,7 +188,10 @@ class WebRTCManager {
     const peer = this.peers.get(fromId);
     if (peer) {
       await peer.connection.setRemoteDescription(answer);
-      
+      // Mark remote description as set and flush buffered candidates
+      this.remoteDescriptionSet.set(fromId, true);
+      await this.flushIceCandidateBuffer(fromId);
+
       // Store remote SDP and generate fingerprint
       peer.remoteSdp = answer.sdp;
       await this.generateAndStoreFingerprint(fromId, peer);
@@ -148,7 +207,7 @@ class WebRTCManager {
         const fingerprint = await generateSimpleFingerprint(peer.localSdp, peer.remoteSdp);
         peer.fingerprint = fingerprint;
         storeFingerprint(peerId, fingerprint);
-        
+
         // Notify handlers
         this.fingerprintHandlers.forEach(handler => handler(peerId, fingerprint));
         console.log('[WebRTC] Generated fingerprint for', peerId, ':', fingerprint);
@@ -159,16 +218,26 @@ class WebRTCManager {
   }
 
   /**
-   * Handle incoming ICE candidate
+   * Handle incoming ICE candidate - buffer if remote description not yet set
    */
   private async handleIceCandidate(fromId: string, candidate: RTCIceCandidateInit): Promise<void> {
     const peer = this.peers.get(fromId);
-    if (peer && candidate) {
-      try {
-        await peer.connection.addIceCandidate(candidate);
-      } catch (error) {
-        console.error('[WebRTC] Failed to add ICE candidate:', error);
-      }
+    if (!peer || !candidate) return;
+
+    // If remote description is not yet set, buffer the candidate
+    if (!this.remoteDescriptionSet.get(fromId)) {
+      console.log('[WebRTC] Buffering ICE candidate for', fromId, '(remote description not set yet)');
+      const buffer = this.iceCandidateBuffer.get(fromId) || [];
+      buffer.push(candidate);
+      this.iceCandidateBuffer.set(fromId, buffer);
+      return;
+    }
+
+    // Remote description is set, add candidate directly
+    try {
+      await peer.connection.addIceCandidate(candidate);
+    } catch (error) {
+      console.error('[WebRTC] Failed to add ICE candidate:', error);
     }
   }
 
@@ -202,13 +271,31 @@ class WebRTCManager {
       }
     };
 
+    // Log ICE gathering state for debugging
+    connection.onicegatheringstatechange = () => {
+      console.log('[WebRTC] ICE gathering state for', peerId, ':', connection.iceGatheringState);
+    };
+
+    // Log ICE connection state for debugging
+    connection.oniceconnectionstatechange = () => {
+      console.log('[WebRTC] ICE connection state for', peerId, ':', connection.iceConnectionState);
+
+      // If ICE fails, try restarting ICE
+      if (connection.iceConnectionState === 'failed') {
+        console.log('[WebRTC] ICE failed for', peerId, '- attempting ICE restart');
+        connection.restartIce();
+      }
+    };
+
     // Connection state changes
     connection.onconnectionstatechange = () => {
       const state = this.mapConnectionState(connection.connectionState);
       peerConnection.state = state;
       this.notifyStateChange(peerId, state);
 
-      if (state === 'failed' || state === 'disconnected') {
+      if (state === 'connected') {
+        console.log('[WebRTC] Successfully connected to', peerId);
+      } else if (state === 'failed' || state === 'disconnected') {
         console.log('[WebRTC] Connection to', peerId, 'is', state);
       }
     };
@@ -295,6 +382,8 @@ class WebRTCManager {
       peer.dataChannel?.close();
       peer.connection.close();
       this.peers.delete(peerId);
+      this.iceCandidateBuffer.delete(peerId);
+      this.remoteDescriptionSet.delete(peerId);
       clearFingerprint(peerId);
       this.notifyStateChange(peerId, 'disconnected');
     }
