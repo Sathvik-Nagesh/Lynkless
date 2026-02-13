@@ -8,9 +8,14 @@ import dynamic from 'next/dynamic';
 const X = dynamic(() => import('lucide-react').then(mod => ({ default: mod.X })), { ssr: false });
 const Download = dynamic(() => import('lucide-react').then(mod => ({ default: mod.Download })), { ssr: false });
 
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
 export default function PWAInstallPrompt() {
   const [showPrompt, setShowPrompt] = useState(false);
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
 
   useEffect(() => {
     // Register service worker
@@ -30,7 +35,7 @@ export default function PWAInstallPrompt() {
     // Handle install prompt
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
-      setDeferredPrompt(e);
+      setDeferredPrompt(e as BeforeInstallPromptEvent);
       
       // Check if user has dismissed before
       const hasDismissed = localStorage.getItem('pwa-install-dismissed');

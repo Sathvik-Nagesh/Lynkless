@@ -7,7 +7,8 @@ class NotificationSounds {
 
   constructor() {
     if (typeof window !== 'undefined') {
-      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      this.audioContext = new AudioContextClass();
       // Check localStorage for sound preference
       const savedPref = localStorage.getItem('lynkless-sounds-enabled');
       this.enabled = savedPref !== 'false';
