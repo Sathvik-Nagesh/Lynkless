@@ -34,12 +34,6 @@ export default function ChatPanel({ messages, onSendMessage, disabled, connected
     lastMessageCountRef.current = messages.length;
   }, [messages.length, isExpanded]);
 
-  // Clear unread when expanded
-  useEffect(() => {
-    if (isExpanded) {
-      setUnreadCount(0);
-    }
-  }, [isExpanded]);
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
@@ -86,7 +80,11 @@ export default function ChatPanel({ messages, onSendMessage, disabled, connected
     >
       {/* Header */}
       <button
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={() => {
+          const nextExpanded = !isExpanded;
+          setIsExpanded(nextExpanded);
+          if (nextExpanded) setUnreadCount(0);
+        }}
         className="flex items-center justify-between p-5 hover:bg-[#1C2433] transition-colors duration-150"
       >
         <div className="flex items-center gap-3">
