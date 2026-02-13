@@ -24,6 +24,7 @@ function generateUUID(): string {
 // Constants
 const CHUNK_SIZE = 64 * 1024; // 64KB chunks
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB limit
+const PROGRESS_UPDATE_INTERVAL = 100; // 100ms throttle interval
 
 export interface FileMetadata {
   id: string;
@@ -117,6 +118,7 @@ class FileTransferManager {
   private meshProgressHandlers: Set<MeshProgressHandler> = new Set();
   private incomingFiles: Map<string, IncomingTransferState> = new Map();
   private outgoingTransfers: Map<string, OutgoingTransferState> = new Map();
+  private lastUpdateTimes: Map<string, number> = new Map();
   private meshTransfers: Map<string, { file: File; peerIds: string[]; transfers: Map<string, string> }> = new Map();
   private cleanupHandler: (() => void) | null = null;
   private stateCleanupHandler: (() => void) | null = null;
@@ -862,13 +864,33 @@ class FileTransferManager {
     return () => this.fileReceivedHandlers.delete(handler);
   }
 
+  /**
+   * Notify progress with throttling to prevent UI thrashing
+   */
   private notifyProgress(progress: TransferProgress): void {
-    this.progressHandlers.forEach((handler) => handler(progress));
+    const now = Date.now();
+    const lastUpdate = this.lastUpdateTimes.get(progress.fileId) || 0;
 
-    // Update outgoing transfer if exists
-    const transfer = this.outgoingTransfers.get(progress.fileId);
-    if (transfer) {
-      transfer.progress = progress;
+    // Always emit if it's a final state or if enough time has passed
+    const isFinalState = progress.status === 'completed' ||
+                         progress.status === 'failed' ||
+                         progress.status === 'cancelled' ||
+                         progress.status === 'paused';
+
+    if (isFinalState || now - lastUpdate >= PROGRESS_UPDATE_INTERVAL) {
+      this.lastUpdateTimes.set(progress.fileId, now);
+      this.progressHandlers.forEach((handler) => handler(progress));
+
+      // Update outgoing transfer if exists
+      const transfer = this.outgoingTransfers.get(progress.fileId);
+      if (transfer) {
+        transfer.progress = progress;
+      }
+
+      // Cleanup update time when finished
+      if (progress.status === 'completed' || progress.status === 'failed' || progress.status === 'cancelled') {
+        setTimeout(() => this.lastUpdateTimes.delete(progress.fileId), 1000);
+      }
     }
   }
 
