@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Radar from '@/components/Radar';
 import FileDropZone from '@/components/FileDropZone';
@@ -20,7 +20,6 @@ import { useSignaling } from '@/hooks/useSignaling';
 import { useWebRTC } from '@/hooks/useWebRTC';
 import { getPeerName, getEmojiForPeer } from '@/lib/utils/nameGenerator';
 import { getSounds } from '@/lib/utils/sounds';
-import { getConnectionMonitor, type PeerStats } from '@/lib/utils/connectionMonitor';
 import { useToast } from '@/components/ToastProvider';
 import Link from 'next/link';
 
@@ -33,9 +32,7 @@ export default function Home() {
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [showFilePreview, setShowFilePreview] = useState(false);
-  const [peerStats, setPeerStats] = useState<Map<string, PeerStats>>(new Map());
   const sounds = useRef(getSounds());
-  const connectionMonitor = useRef(getConnectionMonitor());
   const { showToast } = useToast();
 
   const {
@@ -59,7 +56,6 @@ export default function Home() {
     peers,
     transfers,
     messages,
-    fingerprints,
     connectToPeer,
     sendFile,
     sendMessage,
@@ -190,7 +186,7 @@ export default function Home() {
     }
 
     setPendingFiles([]);
-  }, [pendingFiles, peers, sendFile]);
+  }, [pendingFiles, peers, sendFile, showToast]);
 
   // Track which users we've already sent requests to (prevent duplicates)
   const sentRequestsRef = useRef<Set<string>>(new Set());
@@ -278,20 +274,31 @@ export default function Home() {
     } else if (roomState.code && !roomState.isCreator) {
       showToast(`Joined room ${roomState.code}`, 'info');
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomState.code]);
+  }, [roomState.code, roomState.isCreator, showToast]);
+
+  // Memoize connected peers to stabilize downstream calculations
+  const connectedPeers = useMemo(() =>
+    peers.filter(p => p.state === 'connected'),
+  [peers]);
 
   // Count connected peers
-  const connectedPeersCount = peers.filter(p => p.state === 'connected').length;
+  const connectedPeersCount = connectedPeers.length;
 
   // Check if we can send files (have a connected peer)
-  const canSendFile = selectedPeer && peers.some(p => p.id === selectedPeer && p.state === 'connected');
+  const canSendFile = useMemo(() =>
+    !!selectedPeer && connectedPeers.some(p => p.id === selectedPeer),
+  [selectedPeer, connectedPeers]);
 
-  // Prepare users for radar with their connection states
-  const radarUsers = roomState.users.map(user => ({
+  // Prepare users for radar with their connection states - Memoized to prevent Radar re-renders
+  const radarUsers = useMemo(() => roomState.users.map(user => ({
     ...user,
-    isConnected: peers.some(p => p.id === user.id && p.state === 'connected'),
-  }));
+    isConnected: connectedPeers.some(p => p.id === user.id),
+  })), [roomState.users, connectedPeers]);
+
+  // Memoize peers for ChatPanel to prevent unnecessary re-renders
+  const chatPeers = useMemo(() =>
+    connectedPeers.map(p => ({ id: p.id })),
+  [connectedPeers]);
 
   if (isLoading) {
     return (
@@ -339,7 +346,7 @@ export default function Home() {
         {showFilePreview && (
           <FilePreviewModal
             files={pendingFiles}
-            peerCount={peers.filter(p => p.state === 'connected').length}
+        peerCount={connectedPeersCount}
             onConfirm={handleConfirmSend}
             onCancel={() => {
               setShowFilePreview(false);
@@ -578,7 +585,7 @@ export default function Home() {
                 </div>
 
                 <div className="space-y-2">
-                  {peers.filter(p => p.state === 'connected').map((peer) => (
+                  {connectedPeers.map((peer) => (
                     <motion.div
                       key={peer.id}
                       className="flex items-center justify-between p-3 rounded-xl cursor-pointer transition-colors"
@@ -678,7 +685,7 @@ export default function Home() {
                 messages={messages}
                 onSendMessage={sendMessage}
                 disabled={connectedPeersCount === 0}
-                connectedPeers={peers.filter(p => p.state === 'connected').map(p => ({ id: p.id }))}
+                connectedPeers={chatPeers}
               />
             </motion.div>
           </div>

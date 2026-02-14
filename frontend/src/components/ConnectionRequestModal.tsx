@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ConnectionRequest } from '@/hooks/useSignaling';
 
@@ -9,7 +10,7 @@ interface ConnectionRequestModalProps {
   onReject: (fromId: string) => void;
 }
 
-export default function ConnectionRequestModal({
+const ConnectionRequestModal = memo(function ConnectionRequestModal({
   requests,
   onAccept,
   onReject,
@@ -133,4 +134,6 @@ export default function ConnectionRequestModal({
       </motion.div>
     </AnimatePresence>
   );
-}
+});
+
+export default ConnectionRequestModal;
