@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import { ConnectionQuality } from '@/lib/utils/connectionMonitor';
 
 interface ConnectionStatusBadgeProps {
@@ -8,7 +9,7 @@ interface ConnectionStatusBadgeProps {
   showDetails?: boolean;
 }
 
-export default function ConnectionStatusBadge({ 
+const ConnectionStatusBadge = memo(function ConnectionStatusBadge({
   quality, 
   latency, 
   showDetails = false 
@@ -76,4 +77,6 @@ export default function ConnectionStatusBadge({
       )}
     </div>
   );
-}
+});
+
+export default ConnectionStatusBadge;

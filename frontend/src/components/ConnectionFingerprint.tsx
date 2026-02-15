@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, memo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface ConnectionFingerprintProps {
@@ -9,22 +9,16 @@ interface ConnectionFingerprintProps {
   isConnected: boolean;
 }
 
-export default function ConnectionFingerprint({
+const ConnectionFingerprint = memo(function ConnectionFingerprint({
   fingerprint,
   peerId,
   isConnected,
 }: ConnectionFingerprintProps) {
-  const [showVerify, setShowVerify] = useState(false);
+  const [closedForFingerprint, setClosedForFingerprint] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // Auto-show verification prompt when connected
-  useEffect(() => {
-    if (isConnected && fingerprint) {
-      setShowVerify(true);
-    } else {
-      setShowVerify(false);
-    }
-  }, [isConnected, fingerprint]);
+  // Derive visibility: show if connected with fingerprint, unless manually closed for THIS fingerprint
+  const showVerify = isConnected && !!fingerprint && closedForFingerprint !== fingerprint;
 
   const handleCopy = async () => {
     if (fingerprint) {
@@ -95,7 +89,7 @@ export default function ConnectionFingerprint({
 
             {/* Close button */}
             <button
-              onClick={() => setShowVerify(false)}
+              onClick={() => setClosedForFingerprint(fingerprint)}
               className="text-gray-500 hover:text-white transition-colors"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -119,4 +113,6 @@ export default function ConnectionFingerprint({
       )}
     </AnimatePresence>
   );
-}
+});
+
+export default ConnectionFingerprint;

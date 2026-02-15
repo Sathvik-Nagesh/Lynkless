@@ -22,7 +22,7 @@ export class ConnectionMonitor {
         let latency = 0;
         let packetsLost = 0;
         let bytesSent = 0;
-        let lastBytesSent = this.stats.get(peerId)?.bandwidth || 0;
+        const lastBytesSent = this.stats.get(peerId)?.bandwidth || 0;
 
         stats.forEach((report) => {
           if (report.type === 'candidate-pair' && report.state === 'succeeded') {
@@ -51,7 +51,7 @@ export class ConnectionMonitor {
 
         this.stats.set(peerId, peerStats);
         this.notifyCallbacks();
-      } catch (err) {
+      } catch {
         // Connection might be closed
         clearInterval(interval);
       }

@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState, useCallback, memo } from 'react';
+import { motion } from 'framer-motion';
 import { MAX_FILE_SIZE } from '@/lib/webrtc/fileTransfer';
 
 interface FileDropZoneProps {
@@ -9,7 +9,7 @@ interface FileDropZoneProps {
   disabled?: boolean;
 }
 
-export default function FileDropZone({ onFileDrop, disabled }: FileDropZoneProps) {
+const FileDropZone = memo(function FileDropZone({ onFileDrop, disabled }: FileDropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -180,4 +180,6 @@ export default function FileDropZone({ onFileDrop, disabled }: FileDropZoneProps
       </motion.div>
     </div>
   );
-}
+});
+
+export default FileDropZone;

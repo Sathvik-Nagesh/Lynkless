@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import { motion } from 'framer-motion';
 
 interface ConnectionStatusProps {
@@ -8,7 +9,7 @@ interface ConnectionStatusProps {
   connectedPeers: number;
 }
 
-export default function ConnectionStatus({
+const ConnectionStatus = memo(function ConnectionStatus({
   isSignalingConnected,
   roomCode,
   connectedPeers,
@@ -76,4 +77,6 @@ export default function ConnectionStatus({
       )}
     </div>
   );
-}
+});
+
+export default ConnectionStatus;
