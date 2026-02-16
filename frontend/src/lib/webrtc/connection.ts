@@ -333,7 +333,7 @@ class WebRTCManager {
       this.notifyDataReceived(peerId, event.data);
     };
 
-    channel.onerror = (error) => {
+    channel.onerror = (_error) => {
       // Data channel errors are often empty objects, ignore them if channel is working
       if (channel.readyState === 'open' || channel.readyState === 'connecting') {
         // Channel is fine, ignore spurious error
@@ -346,10 +346,11 @@ class WebRTCManager {
   /**
    * Send data to a specific peer
    */
-  sendToPeer(peerId: string, data: ArrayBuffer | string): boolean {
+  sendToPeer(peerId: string, data: string | ArrayBuffer | ArrayBufferView): boolean {
     const peer = this.peers.get(peerId);
     if (peer?.dataChannel?.readyState === 'open') {
-      peer.dataChannel.send(data as ArrayBuffer);
+      // RTCDataChannel.send supports string, ArrayBuffer, and ArrayBufferView natively
+      peer.dataChannel.send(data as Parameters<RTCDataChannel['send']>[0]);
       return true;
     }
     return false;
@@ -358,10 +359,10 @@ class WebRTCManager {
   /**
    * Send data to all connected peers
    */
-  broadcast(data: ArrayBuffer | string): void {
+  broadcast(data: string | ArrayBuffer | ArrayBufferView): void {
     this.peers.forEach((peer) => {
       if (peer.dataChannel?.readyState === 'open') {
-        peer.dataChannel.send(data as ArrayBuffer);
+        peer.dataChannel.send(data as Parameters<RTCDataChannel['send']>[0]);
       }
     });
   }
