@@ -77,7 +77,7 @@ interface FileMetaMessage extends FileMessage {
 interface FileChunkMessage extends FileMessage {
   type: 'file-chunk';
   chunkIndex: number;
-  data: string; // base64 encoded
+  // data removed to avoid Base64 overhead; binary follows header
 }
 
 interface FileResumeRequestMessage extends FileMessage {
@@ -119,6 +119,8 @@ class FileTransferManager {
   private incomingFiles: Map<string, IncomingTransferState> = new Map();
   private outgoingTransfers: Map<string, OutgoingTransferState> = new Map();
   private lastUpdateTimes: Map<string, number> = new Map();
+  // Maps peerId -> metadata for the next expected binary chunk (header-then-binary protocol)
+  private pendingChunkMetadata: Map<string, { fileId: string; chunkIndex: number }> = new Map();
   private meshTransfers: Map<string, { file: File; peerIds: string[]; transfers: Map<string, string> }> = new Map();
   private cleanupHandler: (() => void) | null = null;
   private stateCleanupHandler: (() => void) | null = null;
@@ -139,6 +141,13 @@ class FileTransferManager {
         } catch {
           // Not a file message, ignore
         }
+      } else {
+        // Handle binary chunk data (part of header-then-binary protocol)
+        const metadata = this.pendingChunkMetadata.get(peerId);
+        if (metadata) {
+          this.handleBinaryChunk(peerId, metadata.fileId, metadata.chunkIndex, data);
+          this.pendingChunkMetadata.delete(peerId);
+        }
       }
     });
   }
@@ -149,8 +158,13 @@ class FileTransferManager {
   private setupConnectionMonitor(): void {
     this.stateCleanupHandler = this.webrtc.onStateChange((peerId, state) => {
       if (state === 'disconnected' || state === 'failed') {
+        // Clear pending chunk metadata to prevent protocol corruption
+        this.pendingChunkMetadata.delete(peerId);
+
         // Mark transfers as paused for potential resume
-        this.outgoingTransfers.forEach((transfer, fileId) => {
+        // Bolt: Using for...of .values() to iterate over transfers.
+        // Note: the fileId key is not needed here as transfer.progress.fileId is used.
+        for (const transfer of this.outgoingTransfers.values()) {
           if (transfer.peerId === peerId && transfer.progress.status === 'transferring') {
             transfer.paused = true;
             this.notifyProgress({
@@ -159,7 +173,7 @@ class FileTransferManager {
               resumable: true,
             });
           }
-        });
+        }
       } else if (state === 'connected') {
         // Attempt to resume paused transfers
         this.outgoingTransfers.forEach((transfer, fileId) => {
@@ -177,7 +191,7 @@ class FileTransferManager {
         this.handleFileMeta(peerId, message as FileMetaMessage);
         break;
       case 'file-chunk':
-        this.handleFileChunk(message as FileChunkMessage);
+        this.handleFileChunk(peerId, message as FileChunkMessage);
         break;
       case 'file-complete':
         this.handleFileComplete(message.fileId);
@@ -219,20 +233,24 @@ class FileTransferManager {
     });
   }
 
-  private handleFileChunk(message: FileChunkMessage): void {
-    const incoming = this.incomingFiles.get(message.fileId);
+  private handleFileChunk(peerId: string, message: FileChunkMessage): void {
+    // Record that the next binary message from this peer is this specific chunk
+    this.pendingChunkMetadata.set(peerId, {
+      fileId: message.fileId,
+      chunkIndex: message.chunkIndex,
+    });
+  }
+
+  /**
+   * Handle raw binary chunk data
+   */
+  private handleBinaryChunk(peerId: string, fileId: string, chunkIndex: number, data: ArrayBuffer): void {
+    const incoming = this.incomingFiles.get(fileId);
     if (!incoming) return;
 
-    // Decode base64 chunk
-    const binaryString = atob(message.data);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    
-    incoming.chunks[message.chunkIndex] = bytes.buffer;
+    incoming.chunks[chunkIndex] = data;
     incoming.receivedChunks++;
-    incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, message.chunkIndex);
+    incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, chunkIndex);
 
     // Calculate progress
     const transferredSize = incoming.receivedChunks * CHUNK_SIZE;
@@ -242,7 +260,7 @@ class FileTransferManager {
     const remainingTime = speed > 0 ? remainingBytes / speed : 0;
 
     this.notifyProgress({
-      fileId: message.fileId,
+      fileId: fileId,
       fileName: incoming.metadata.name,
       totalSize: incoming.metadata.size,
       transferredSize: Math.min(transferredSize, incoming.metadata.size),
@@ -409,23 +427,21 @@ class FileTransferManager {
         while (offset < value.length) {
           if (transfer.cancelled || transfer.paused) break;
 
-          const chunk = value.slice(offset, offset + CHUNK_SIZE);
+          // Bolt Optimization: Use subarray for zero-copy chunking (O(1) vs O(N))
+          const chunk = value.subarray(offset, offset + CHUNK_SIZE);
           offset += CHUNK_SIZE;
 
-          // Convert to base64
-          let binary = '';
-          for (let i = 0; i < chunk.length; i++) {
-            binary += String.fromCharCode(chunk[i]);
-          }
-          const base64 = btoa(binary);
-
-          // Send chunk
+          // Send chunk header (JSON)
           this.webrtc.sendToPeer(peerId, JSON.stringify({
             type: 'file-chunk',
             fileId,
             chunkIndex,
-            data: base64,
           }));
+
+          // Send raw binary chunk immediately after to eliminate Base64 overhead.
+          // Bolt Optimization: Removing Base64 encoding reduces data size by ~33% and saves CPU.
+          // We send the Uint8Array directly since connection.ts now supports ArrayBufferView.
+          this.webrtc.sendToPeer(peerId, chunk);
 
           transfer.lastChunkIndex = chunkIndex;
           chunkIndex++;
@@ -581,23 +597,21 @@ class FileTransferManager {
           const currentTransfer = this.outgoingTransfers.get(fileId);
           if (currentTransfer?.cancelled || currentTransfer?.paused) break;
 
-          const chunk = value.slice(offset, offset + CHUNK_SIZE);
+          // Bolt Optimization: Use subarray for zero-copy chunking (O(1) vs O(N))
+          const chunk = value.subarray(offset, offset + CHUNK_SIZE);
           offset += CHUNK_SIZE;
 
-          // Convert to base64
-          let binary = '';
-          for (let i = 0; i < chunk.length; i++) {
-            binary += String.fromCharCode(chunk[i]);
-          }
-          const base64 = btoa(binary);
-
-          // Send chunk
+          // Send chunk header (JSON)
           this.webrtc.sendToPeer(peerId, JSON.stringify({
             type: 'file-chunk',
             fileId,
             chunkIndex,
-            data: base64,
           }));
+
+          // Send raw binary chunk immediately after to eliminate Base64 overhead.
+          // Bolt Optimization: Removing Base64 encoding reduces data size by ~33% and saves CPU.
+          // We send the Uint8Array directly since connection.ts now supports ArrayBufferView.
+          this.webrtc.sendToPeer(peerId, chunk);
 
           if (currentTransfer) {
             currentTransfer.lastChunkIndex = chunkIndex;
@@ -908,6 +922,7 @@ class FileTransferManager {
     this.fileReceivedHandlers.clear();
     this.incomingFiles.clear();
     this.outgoingTransfers.clear();
+    this.pendingChunkMetadata.clear();
   }
 }
 
