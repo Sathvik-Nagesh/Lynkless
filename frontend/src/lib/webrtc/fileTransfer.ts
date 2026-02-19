@@ -77,7 +77,6 @@ interface FileMetaMessage extends FileMessage {
 interface FileChunkMessage extends FileMessage {
   type: 'file-chunk';
   chunkIndex: number;
-  data: string; // base64 encoded
 }
 
 interface FileResumeRequestMessage extends FileMessage {
@@ -117,6 +116,7 @@ class FileTransferManager {
   private fileReceivedHandlers: Set<FileReceivedHandler> = new Set();
   private meshProgressHandlers: Set<MeshProgressHandler> = new Set();
   private incomingFiles: Map<string, IncomingTransferState> = new Map();
+  private pendingChunkMetadata: Map<string, { fileId: string; chunkIndex: number }> = new Map();
   private outgoingTransfers: Map<string, OutgoingTransferState> = new Map();
   private lastUpdateTimes: Map<string, number> = new Map();
   private meshTransfers: Map<string, { file: File; peerIds: string[]; transfers: Map<string, string> }> = new Map();
@@ -139,6 +139,8 @@ class FileTransferManager {
         } catch {
           // Not a file message, ignore
         }
+      } else if (data instanceof ArrayBuffer) {
+        this.handleBinaryChunk(peerId, data);
       }
     });
   }
@@ -149,8 +151,11 @@ class FileTransferManager {
   private setupConnectionMonitor(): void {
     this.stateCleanupHandler = this.webrtc.onStateChange((peerId, state) => {
       if (state === 'disconnected' || state === 'failed') {
+        // Clear pending binary metadata for this peer
+        this.pendingChunkMetadata.delete(peerId);
+
         // Mark transfers as paused for potential resume
-        this.outgoingTransfers.forEach((transfer, fileId) => {
+        this.outgoingTransfers.forEach((transfer) => {
           if (transfer.peerId === peerId && transfer.progress.status === 'transferring') {
             transfer.paused = true;
             this.notifyProgress({
@@ -177,7 +182,7 @@ class FileTransferManager {
         this.handleFileMeta(peerId, message as FileMetaMessage);
         break;
       case 'file-chunk':
-        this.handleFileChunk(message as FileChunkMessage);
+        this.handleFileChunk(peerId, message as FileChunkMessage);
         break;
       case 'file-complete':
         this.handleFileComplete(message.fileId);
@@ -219,20 +224,34 @@ class FileTransferManager {
     });
   }
 
-  private handleFileChunk(message: FileChunkMessage): void {
+  private handleFileChunk(peerId: string, message: FileChunkMessage): void {
     const incoming = this.incomingFiles.get(message.fileId);
     if (!incoming) return;
 
-    // Decode base64 chunk
-    const binaryString = atob(message.data);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    
-    incoming.chunks[message.chunkIndex] = bytes.buffer;
+    // Store metadata for the next incoming binary chunk
+    this.pendingChunkMetadata.set(peerId, {
+      fileId: message.fileId,
+      chunkIndex: message.chunkIndex,
+    });
+  }
+
+  /**
+   * Process a raw binary chunk from a peer
+   */
+  private handleBinaryChunk(peerId: string, data: ArrayBuffer): void {
+    const metadata = this.pendingChunkMetadata.get(peerId);
+    if (!metadata) return;
+
+    // Clear metadata immediately to prepare for next chunk
+    this.pendingChunkMetadata.delete(peerId);
+
+    const incoming = this.incomingFiles.get(metadata.fileId);
+    if (!incoming) return;
+
+    // Store the raw buffer
+    incoming.chunks[metadata.chunkIndex] = data;
     incoming.receivedChunks++;
-    incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, message.chunkIndex);
+    incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, metadata.chunkIndex);
 
     // Calculate progress
     const transferredSize = incoming.receivedChunks * CHUNK_SIZE;
@@ -242,7 +261,7 @@ class FileTransferManager {
     const remainingTime = speed > 0 ? remainingBytes / speed : 0;
 
     this.notifyProgress({
-      fileId: message.fileId,
+      fileId: metadata.fileId,
       fileName: incoming.metadata.name,
       totalSize: incoming.metadata.size,
       transferredSize: Math.min(transferredSize, incoming.metadata.size),
@@ -412,20 +431,15 @@ class FileTransferManager {
           const chunk = value.slice(offset, offset + CHUNK_SIZE);
           offset += CHUNK_SIZE;
 
-          // Convert to base64
-          let binary = '';
-          for (let i = 0; i < chunk.length; i++) {
-            binary += String.fromCharCode(chunk[i]);
-          }
-          const base64 = btoa(binary);
-
-          // Send chunk
+          // Send chunk metadata header
           this.webrtc.sendToPeer(peerId, JSON.stringify({
             type: 'file-chunk',
             fileId,
             chunkIndex,
-            data: base64,
           }));
+
+          // Send raw binary chunk
+          this.webrtc.sendToPeer(peerId, chunk);
 
           transfer.lastChunkIndex = chunkIndex;
           chunkIndex++;
@@ -584,20 +598,15 @@ class FileTransferManager {
           const chunk = value.slice(offset, offset + CHUNK_SIZE);
           offset += CHUNK_SIZE;
 
-          // Convert to base64
-          let binary = '';
-          for (let i = 0; i < chunk.length; i++) {
-            binary += String.fromCharCode(chunk[i]);
-          }
-          const base64 = btoa(binary);
-
-          // Send chunk
+          // Send chunk metadata header
           this.webrtc.sendToPeer(peerId, JSON.stringify({
             type: 'file-chunk',
             fileId,
             chunkIndex,
-            data: base64,
           }));
+
+          // Send raw binary chunk
+          this.webrtc.sendToPeer(peerId, chunk);
 
           if (currentTransfer) {
             currentTransfer.lastChunkIndex = chunkIndex;
@@ -907,6 +916,7 @@ class FileTransferManager {
     this.progressHandlers.clear();
     this.fileReceivedHandlers.clear();
     this.incomingFiles.clear();
+    this.pendingChunkMetadata.clear();
     this.outgoingTransfers.clear();
   }
 }
