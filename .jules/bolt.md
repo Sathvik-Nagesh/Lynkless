@@ -9,3 +9,7 @@
 ## 2026-02-14 - Derived State vs. useEffect for Visibility
 **Learning:** Using `useEffect` to sync a visibility state with props (e.g., showing a modal when `isConnected` becomes true) causes a synchronous cascading render. This is inefficient and often unnecessary.
 **Action:** Use derived state (a simple boolean expression in the render body) whenever possible. If state is needed for manual dismissal, use a "closed version" state (e.g., `closedForId`) to track which item was last dismissed, allowing the UI to re-appear if the ID changes.
+
+## 2026-02-19 - Binary over Base64 for WebRTC
+**Learning:** Sending binary data (Uint8Array/ArrayBuffer) over WebRTC is significantly more efficient than Base64. It reduces payload size by ~33% and eliminates expensive encoding/decoding cycles on the main thread.
+**Action:** Use a "header-then-binary" protocol for file transfers. Send a small JSON metadata message followed immediately by the raw binary chunk. Use a per-peer state map to associate the two.
