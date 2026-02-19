@@ -48,6 +48,7 @@ export interface PeerConnection {
 }
 
 export type DataHandler = (peerId: string, data: ArrayBuffer | string) => void;
+export type SendableData = string | ArrayBuffer | ArrayBufferView;
 export type StateChangeHandler = (peerId: string, state: ConnectionState) => void;
 export type FingerprintHandler = (peerId: string, fingerprint: string) => void;
 
@@ -346,10 +347,18 @@ class WebRTCManager {
   /**
    * Send data to a specific peer
    */
-  sendToPeer(peerId: string, data: ArrayBuffer | string): boolean {
+  sendToPeer(peerId: string, data: SendableData): boolean {
     const peer = this.peers.get(peerId);
     if (peer?.dataChannel?.readyState === 'open') {
-      peer.dataChannel.send(data as ArrayBuffer);
+      if (typeof data === 'string') {
+        peer.dataChannel.send(data);
+      } else if (data instanceof ArrayBuffer) {
+        peer.dataChannel.send(data);
+      } else {
+        // Handle ArrayBufferView (e.g. Uint8Array)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        peer.dataChannel.send(data as any);
+      }
       return true;
     }
     return false;
@@ -358,10 +367,18 @@ class WebRTCManager {
   /**
    * Send data to all connected peers
    */
-  broadcast(data: ArrayBuffer | string): void {
+  broadcast(data: SendableData): void {
     this.peers.forEach((peer) => {
       if (peer.dataChannel?.readyState === 'open') {
-        peer.dataChannel.send(data as ArrayBuffer);
+        if (typeof data === 'string') {
+          peer.dataChannel.send(data);
+        } else if (data instanceof ArrayBuffer) {
+          peer.dataChannel.send(data);
+        } else {
+          // Handle ArrayBufferView (e.g. Uint8Array)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          peer.dataChannel.send(data as any);
+        }
       }
     });
   }
