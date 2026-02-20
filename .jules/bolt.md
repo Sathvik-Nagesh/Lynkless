@@ -13,3 +13,7 @@
 ## 2026-02-15 - Eliminating Base64 Overhead in P2P Transfers
 **Learning:** Base64 encoding binary chunks in a WebRTC DataChannel adds ~33% payload overhead and significant CPU strain on the main thread (from `atob`/`btoa`). Reliable, ordered DataChannels guarantee message order, allowing a "header-then-binary" protocol.
 **Action:** Send a small JSON metadata header immediately followed by raw binary (`Uint8Array`). Use a per-peer `pendingChunkMetadata` map on the receiver side to associate the incoming binary chunk with its metadata.
+
+## 2026-02-15 - Zero-Copy Chunking with `subarray()`
+**Learning:** `TypedArray.prototype.slice()` creates a new `TypedArray` and copies the underlying data into a new `ArrayBuffer`. For file transfers, this adds significant memory and CPU overhead for every chunk. `TypedArray.prototype.subarray()` creates a new view on the *same* buffer, which is zero-copy.
+**Action:** Use `subarray()` instead of `slice()` when partitioning binary data for WebRTC transfers. `RTCDataChannel.send()` handles these views correctly and efficiently.

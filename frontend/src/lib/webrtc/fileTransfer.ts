@@ -428,7 +428,8 @@ class FileTransferManager {
         while (offset < value.length) {
           if (transfer.cancelled || transfer.paused) break;
 
-          const chunk = value.slice(offset, offset + CHUNK_SIZE);
+          // Bolt: Use subarray for zero-copy chunking to reduce memory allocations
+          const chunk = value.subarray(offset, offset + CHUNK_SIZE);
           offset += CHUNK_SIZE;
 
           // Send chunk metadata header
@@ -595,7 +596,8 @@ class FileTransferManager {
           const currentTransfer = this.outgoingTransfers.get(fileId);
           if (currentTransfer?.cancelled || currentTransfer?.paused) break;
 
-          const chunk = value.slice(offset, offset + CHUNK_SIZE);
+          // Bolt: Use subarray for zero-copy chunking to reduce memory allocations
+          const chunk = value.subarray(offset, offset + CHUNK_SIZE);
           offset += CHUNK_SIZE;
 
           // Send chunk metadata header
