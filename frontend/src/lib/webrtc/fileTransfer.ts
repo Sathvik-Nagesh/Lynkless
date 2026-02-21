@@ -253,24 +253,30 @@ class FileTransferManager {
     incoming.receivedChunks++;
     incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, metadata.chunkIndex);
 
-    // Calculate progress
-    const transferredSize = incoming.receivedChunks * CHUNK_SIZE;
-    const elapsed = (Date.now() - incoming.startTime) / 1000;
-    const speed = transferredSize / elapsed;
-    const remainingBytes = incoming.metadata.size - transferredSize;
-    const remainingTime = speed > 0 ? remainingBytes / speed : 0;
+    // Calculate progress with throttling to reduce CPU overhead
+    const now = Date.now();
+    const lastUpdate = this.lastUpdateTimes.get(metadata.fileId) || 0;
+    const isFinalChunk = incoming.receivedChunks >= incoming.metadata.totalChunks;
 
-    this.notifyProgress({
-      fileId: metadata.fileId,
-      fileName: incoming.metadata.name,
-      totalSize: incoming.metadata.size,
-      transferredSize: Math.min(transferredSize, incoming.metadata.size),
-      progress: (incoming.receivedChunks / incoming.metadata.totalChunks) * 100,
-      speed,
-      remainingTime,
-      status: 'transferring',
-      resumable: true,
-    });
+    if (isFinalChunk || now - lastUpdate >= PROGRESS_UPDATE_INTERVAL) {
+      const transferredSize = incoming.receivedChunks * CHUNK_SIZE;
+      const elapsed = (now - incoming.startTime) / 1000;
+      const speed = transferredSize / elapsed;
+      const remainingBytes = incoming.metadata.size - transferredSize;
+      const remainingTime = speed > 0 ? remainingBytes / speed : 0;
+
+      this.notifyProgress({
+        fileId: metadata.fileId,
+        fileName: incoming.metadata.name,
+        totalSize: incoming.metadata.size,
+        transferredSize: Math.min(transferredSize, incoming.metadata.size),
+        progress: (incoming.receivedChunks / incoming.metadata.totalChunks) * 100,
+        speed,
+        remainingTime,
+        status: 'transferring',
+        resumable: true,
+      });
+    }
   }
 
   private handleFileComplete(fileId: string): void {
@@ -446,24 +452,30 @@ class FileTransferManager {
           chunkIndex++;
           transferredSize += chunk.length;
 
-          // Update progress
-          const elapsed = (Date.now() - startTime) / 1000;
-          const bytesThisSession = transferredSize - startOffset;
-          const speed = elapsed > 0 ? bytesThisSession / elapsed : 0;
-          const remainingBytes = file.size - transferredSize;
-          const remainingTime = speed > 0 ? remainingBytes / speed : 0;
+          // Update progress with throttling to reduce CPU overhead
+          const now = Date.now();
+          const lastUpdate = this.lastUpdateTimes.get(fileId) || 0;
+          const isFinalChunk = transferredSize >= file.size;
 
-          this.notifyProgress({
-            fileId,
-            fileName: file.name,
-            totalSize: file.size,
-            transferredSize,
-            progress: (transferredSize / file.size) * 100,
-            speed,
-            remainingTime,
-            status: 'transferring',
-            resumable: true,
-          });
+          if (isFinalChunk || now - lastUpdate >= PROGRESS_UPDATE_INTERVAL) {
+            const elapsed = (now - startTime) / 1000;
+            const bytesThisSession = transferredSize - startOffset;
+            const speed = elapsed > 0 ? bytesThisSession / elapsed : 0;
+            const remainingBytes = file.size - transferredSize;
+            const remainingTime = speed > 0 ? remainingBytes / speed : 0;
+
+            this.notifyProgress({
+              fileId,
+              fileName: file.name,
+              totalSize: file.size,
+              transferredSize,
+              progress: (transferredSize / file.size) * 100,
+              speed,
+              remainingTime,
+              status: 'transferring',
+              resumable: true,
+            });
+          }
 
           await new Promise((resolve) => setTimeout(resolve, 1));
         }
@@ -616,23 +628,29 @@ class FileTransferManager {
           chunkIndex++;
           transferredSize += chunk.length;
 
-          // Update progress
-          const elapsed = (Date.now() - startTime) / 1000;
-          const speed = transferredSize / elapsed;
-          const remainingBytes = file.size - transferredSize;
-          const remainingTime = speed > 0 ? remainingBytes / speed : 0;
+          // Update progress with throttling to reduce CPU overhead
+          const now = Date.now();
+          const lastUpdate = this.lastUpdateTimes.get(fileId) || 0;
+          const isFinalChunk = transferredSize >= file.size;
 
-          this.notifyProgress({
-            fileId,
-            fileName: file.name,
-            totalSize: file.size,
-            transferredSize,
-            progress: (transferredSize / file.size) * 100,
-            speed,
-            remainingTime,
-            status: 'transferring',
-            resumable: true,
-          });
+          if (isFinalChunk || now - lastUpdate >= PROGRESS_UPDATE_INTERVAL) {
+            const elapsed = (now - startTime) / 1000;
+            const speed = elapsed > 0 ? transferredSize / elapsed : 0;
+            const remainingBytes = file.size - transferredSize;
+            const remainingTime = speed > 0 ? remainingBytes / speed : 0;
+
+            this.notifyProgress({
+              fileId,
+              fileName: file.name,
+              totalSize: file.size,
+              transferredSize,
+              progress: (transferredSize / file.size) * 100,
+              speed,
+              remainingTime,
+              status: 'transferring',
+              resumable: true,
+            });
+          }
 
           // Small delay to prevent overwhelming the channel
           await new Promise((resolve) => setTimeout(resolve, 1));
