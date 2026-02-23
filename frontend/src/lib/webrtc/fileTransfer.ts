@@ -158,9 +158,10 @@ class FileTransferManager {
         this.outgoingTransfers.forEach((transfer) => {
           if (transfer.peerId === peerId && transfer.progress.status === 'transferring') {
             transfer.paused = true;
-            this.notifyProgress({
-              ...transfer.progress,
-              status: 'paused',
+            this.notifyProgress(transfer.progress.fileId, 'paused', transfer.progress.transferredSize, {
+              fileName: transfer.metadata.name,
+              totalSize: transfer.metadata.size,
+              startTime: Date.now(),
               resumable: true,
             });
           }
@@ -212,15 +213,10 @@ class FileTransferManager {
       peerId,
     });
 
-    this.notifyProgress({
-      fileId: metadata.id,
+    this.notifyProgress(metadata.id, 'transferring', 0, {
       fileName: metadata.name,
       totalSize: metadata.size,
-      transferredSize: 0,
-      progress: 0,
-      speed: 0,
-      remainingTime: 0,
-      status: 'transferring',
+      startTime: Date.now(),
     });
   }
 
@@ -253,22 +249,12 @@ class FileTransferManager {
     incoming.receivedChunks++;
     incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, metadata.chunkIndex);
 
-    // Calculate progress
     const transferredSize = incoming.receivedChunks * CHUNK_SIZE;
-    const elapsed = (Date.now() - incoming.startTime) / 1000;
-    const speed = transferredSize / elapsed;
-    const remainingBytes = incoming.metadata.size - transferredSize;
-    const remainingTime = speed > 0 ? remainingBytes / speed : 0;
 
-    this.notifyProgress({
-      fileId: metadata.fileId,
+    this.notifyProgress(metadata.fileId, 'transferring', transferredSize, {
       fileName: incoming.metadata.name,
       totalSize: incoming.metadata.size,
-      transferredSize: Math.min(transferredSize, incoming.metadata.size),
-      progress: (incoming.receivedChunks / incoming.metadata.totalChunks) * 100,
-      speed,
-      remainingTime,
-      status: 'transferring',
+      startTime: incoming.startTime,
       resumable: true,
     });
   }
@@ -286,15 +272,10 @@ class FileTransferManager {
       handler(blob, incoming.metadata)
     );
 
-    this.notifyProgress({
-      fileId,
+    this.notifyProgress(fileId, 'completed', incoming.metadata.size, {
       fileName: incoming.metadata.name,
       totalSize: incoming.metadata.size,
-      transferredSize: incoming.metadata.size,
-      progress: 100,
-      speed: 0,
-      remainingTime: 0,
-      status: 'completed',
+      startTime: incoming.startTime,
     });
 
     // Auto-download the file
@@ -307,15 +288,10 @@ class FileTransferManager {
   private handleFileCancel(fileId: string): void {
     const incoming = this.incomingFiles.get(fileId);
     if (incoming) {
-      this.notifyProgress({
-        fileId,
+      this.notifyProgress(fileId, 'cancelled', 0, {
         fileName: incoming.metadata.name,
         totalSize: incoming.metadata.size,
-        transferredSize: 0,
-        progress: 0,
-        speed: 0,
-        remainingTime: 0,
-        status: 'cancelled',
+        startTime: incoming.startTime,
       });
       this.incomingFiles.delete(fileId);
     }
@@ -407,10 +383,12 @@ class FileTransferManager {
     let transferredSize = startOffset;
 
     // Update status
-    this.notifyProgress({
-      ...transfer.progress,
-      status: 'transferring',
+    this.notifyProgress(fileId, 'transferring', transfer.progress.transferredSize, {
+      fileName: file.name,
+      totalSize: file.size,
+      startTime: Date.now(),
       resumable: true,
+      startOffset,
     });
 
     try {
@@ -446,23 +424,13 @@ class FileTransferManager {
           chunkIndex++;
           transferredSize += chunk.length;
 
-          // Update progress
-          const elapsed = (Date.now() - startTime) / 1000;
-          const bytesThisSession = transferredSize - startOffset;
-          const speed = elapsed > 0 ? bytesThisSession / elapsed : 0;
-          const remainingBytes = file.size - transferredSize;
-          const remainingTime = speed > 0 ? remainingBytes / speed : 0;
-
-          this.notifyProgress({
-            fileId,
+          // Bolt: notifyProgress now handles speed/time calculations within throttled block
+          this.notifyProgress(fileId, 'transferring', transferredSize, {
             fileName: file.name,
             totalSize: file.size,
-            transferredSize,
-            progress: (transferredSize / file.size) * 100,
-            speed,
-            remainingTime,
-            status: 'transferring',
+            startTime,
             resumable: true,
+            startOffset,
           });
 
           await new Promise((resolve) => setTimeout(resolve, 1));
@@ -476,30 +444,20 @@ class FileTransferManager {
           fileId,
         }));
 
-        this.notifyProgress({
-          fileId,
+        this.notifyProgress(fileId, 'completed', file.size, {
           fileName: file.name,
           totalSize: file.size,
-          transferredSize: file.size,
-          progress: 100,
-          speed: 0,
-          remainingTime: 0,
-          status: 'completed',
+          startTime,
         });
 
         this.outgoingTransfers.delete(fileId);
       }
     } catch (error) {
       console.error('[FileTransfer] Error resuming file:', error);
-      this.notifyProgress({
-        fileId,
+      this.notifyProgress(fileId, 'failed', transferredSize, {
         fileName: file.name,
         totalSize: file.size,
-        transferredSize,
-        progress: (transferredSize / file.size) * 100,
-        speed: 0,
-        remainingTime: 0,
-        status: 'failed',
+        startTime,
       });
     }
   }
@@ -616,21 +574,11 @@ class FileTransferManager {
           chunkIndex++;
           transferredSize += chunk.length;
 
-          // Update progress
-          const elapsed = (Date.now() - startTime) / 1000;
-          const speed = transferredSize / elapsed;
-          const remainingBytes = file.size - transferredSize;
-          const remainingTime = speed > 0 ? remainingBytes / speed : 0;
-
-          this.notifyProgress({
-            fileId,
+          // Bolt: notifyProgress now handles speed/time calculations within throttled block
+          this.notifyProgress(fileId, 'transferring', transferredSize, {
             fileName: file.name,
             totalSize: file.size,
-            transferredSize,
-            progress: (transferredSize / file.size) * 100,
-            speed,
-            remainingTime,
-            status: 'transferring',
+            startTime,
             resumable: true,
           });
 
@@ -647,15 +595,10 @@ class FileTransferManager {
           fileId,
         }));
 
-        this.notifyProgress({
-          fileId,
+        this.notifyProgress(fileId, 'completed', file.size, {
           fileName: file.name,
           totalSize: file.size,
-          transferredSize: file.size,
-          progress: 100,
-          speed: 0,
-          remainingTime: 0,
-          status: 'completed',
+          startTime,
         });
 
         this.outgoingTransfers.delete(fileId);
@@ -663,15 +606,10 @@ class FileTransferManager {
 
     } catch (error) {
       console.error('[FileTransfer] Error sending file:', error);
-      this.notifyProgress({
-        fileId,
+      this.notifyProgress(fileId, 'failed', transferredSize, {
         fileName: file.name,
         totalSize: file.size,
-        transferredSize,
-        progress: (transferredSize / file.size) * 100,
-        speed: 0,
-        remainingTime: 0,
-        status: 'failed',
+        startTime,
         resumable: true,
       });
       throw error;
@@ -697,9 +635,10 @@ class FileTransferManager {
     const transfer = this.outgoingTransfers.get(fileId);
     if (transfer) {
       transfer.paused = true;
-      this.notifyProgress({
-        ...transfer.progress,
-        status: 'paused',
+      this.notifyProgress(fileId, 'paused', transfer.progress.transferredSize, {
+        fileName: transfer.file.name,
+        totalSize: transfer.file.size,
+        startTime: Date.now(), // Pause state doesn't need accurate speed calculation
         resumable: true,
       });
     }
@@ -877,30 +816,64 @@ class FileTransferManager {
 
   /**
    * Notify progress with throttling to prevent UI thrashing
+   * Bolt: Expensive calculations are performed ONLY when notification is emitted
    */
-  private notifyProgress(progress: TransferProgress): void {
+  private notifyProgress(
+    fileId: string,
+    status: TransferProgress['status'],
+    transferredSize: number,
+    metadata: {
+      fileName: string;
+      totalSize: number;
+      startTime: number;
+      resumable?: boolean;
+      startOffset?: number;
+    }
+  ): void {
     const now = Date.now();
-    const lastUpdate = this.lastUpdateTimes.get(progress.fileId) || 0;
+    const lastUpdate = this.lastUpdateTimes.get(fileId) || 0;
 
     // Always emit if it's a final state or if enough time has passed
-    const isFinalState = progress.status === 'completed' ||
-                         progress.status === 'failed' ||
-                         progress.status === 'cancelled' ||
-                         progress.status === 'paused';
+    const isFinalState = status === 'completed' ||
+                         status === 'failed' ||
+                         status === 'cancelled' ||
+                         status === 'paused';
 
     if (isFinalState || now - lastUpdate >= PROGRESS_UPDATE_INTERVAL) {
-      this.lastUpdateTimes.set(progress.fileId, now);
+      // ONLY calculate metrics if we are actually going to notify
+      // For speed, we use bytes transferred since this session started
+      const elapsed = (now - metadata.startTime) / 1000;
+      const startOffset = metadata.startOffset || 0;
+      const bytesThisSession = transferredSize - startOffset;
+      const speed = status === 'transferring' && elapsed > 0 ? bytesThisSession / elapsed : 0;
+
+      const remainingBytes = metadata.totalSize - transferredSize;
+      const remainingTime = speed > 0 ? remainingBytes / speed : 0;
+
+      const progress: TransferProgress = {
+        fileId,
+        fileName: metadata.fileName,
+        totalSize: metadata.totalSize,
+        transferredSize: Math.min(transferredSize, metadata.totalSize),
+        progress: metadata.totalSize > 0 ? (transferredSize / metadata.totalSize) * 100 : 0,
+        speed,
+        remainingTime,
+        status,
+        resumable: metadata.resumable,
+      };
+
+      this.lastUpdateTimes.set(fileId, now);
       this.progressHandlers.forEach((handler) => handler(progress));
 
       // Update outgoing transfer if exists
-      const transfer = this.outgoingTransfers.get(progress.fileId);
+      const transfer = this.outgoingTransfers.get(fileId);
       if (transfer) {
         transfer.progress = progress;
       }
 
       // Cleanup update time when finished
-      if (progress.status === 'completed' || progress.status === 'failed' || progress.status === 'cancelled') {
-        setTimeout(() => this.lastUpdateTimes.delete(progress.fileId), 1000);
+      if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+        setTimeout(() => this.lastUpdateTimes.delete(fileId), 1000);
       }
     }
   }
