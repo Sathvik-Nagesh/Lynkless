@@ -17,3 +17,7 @@
 ## 2026-02-15 - Zero-Copy Chunking with `subarray()`
 **Learning:** `TypedArray.prototype.slice()` creates a new `TypedArray` and copies the underlying data into a new `ArrayBuffer`. For file transfers, this adds significant memory and CPU overhead for every chunk. `TypedArray.prototype.subarray()` creates a new view on the *same* buffer, which is zero-copy.
 **Action:** Use `subarray()` instead of `slice()` when partitioning binary data for WebRTC transfers. `RTCDataChannel.send()` handles these views correctly and efficiently.
+
+## 2026-02-23 - Offloading Metrics Calculations from Hot Loops
+**Learning:** Calculating transfer metrics (speed, remaining time, progress percentage) for every 64KB chunk in a high-speed transfer is computationally expensive and redundant since the UI only updates at a throttled interval (e.g., 100ms).
+**Action:** Refactor `notifyProgress` to accept raw values and move all floating-point math inside the throttled block. Use a `startOffset` to maintain accuracy during resumed transfers.
