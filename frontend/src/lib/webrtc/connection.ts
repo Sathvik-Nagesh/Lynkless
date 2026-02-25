@@ -333,7 +333,7 @@ class WebRTCManager {
       this.notifyDataReceived(peerId, event.data);
     };
 
-    channel.onerror = (error) => {
+    channel.onerror = () => {
       // Data channel errors are often empty objects, ignore them if channel is working
       if (channel.readyState === 'open' || channel.readyState === 'connecting') {
         // Channel is fine, ignore spurious error

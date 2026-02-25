@@ -77,7 +77,6 @@ export default function FilePreviewModal({ files, peerCount, onConfirm, onCancel
           <div className="overflow-y-auto max-h-96 mb-4 space-y-2">
             {files.map((file, index) => {
               const preview = getPreview(file);
-              const isImage = file.type.startsWith('image/');
               const isVideo = file.type.startsWith('video/');
 
               return (
@@ -103,9 +102,10 @@ export default function FilePreviewModal({ files, peerCount, onConfirm, onCancel
                     )}
                   </div>
 
-                  {/* File Info */}
                   <div className="flex-1 min-w-0">
-                    <p className="text-[#E6EDF3] font-medium truncate">{file.name}</p>
+                    <p className="text-[#E6EDF3] font-medium truncate" title={(file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name}>
+                      {(file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name}
+                    </p>
                     <p className="text-[#64748B] text-sm">
                       {formatSize(file.size)} • {file.type || 'Unknown type'}
                     </p>
