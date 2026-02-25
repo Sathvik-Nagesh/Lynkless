@@ -15,8 +15,9 @@ A blazing-fast, zero-storage, peer-to-peer file transfer and chat platform built
 - 🚀 **Direct P2P Transfer** — Send files up to 500MB directly between browsers
 - 💬 **Ephemeral Chat** — Real-time messaging that disappears when you disconnect
 - 📡 **Smart Discovery** — Beautiful radar UI to discover nearby peers on your network
-- 🔐 **Zero Storage** — Files never touch any server, period
+- 🔐 **Zero Storage & E2EE** — Files never touch any server. Add custom passwords for robust AES-GCM End-to-End Encryption.
 - 🎯 **Connection Fingerprints** — SHA-256 verification codes to ensure secure connections
+- 📁 **Folder & Clipboard Support** — Drag-and-drop entire directories or paste images directly from your clipboard.
 
 ### User Experience
 
@@ -24,7 +25,8 @@ A blazing-fast, zero-storage, peer-to-peer file transfer and chat platform built
 - 📱 **QR Code Connect** — Instant connection via QR code scanning
 - 🏠 **Room System** — Create rooms with 6-digit codes for easy sharing
 - 🔄 **Resume Support** — Auto-resume file transfers on reconnection
-- 🎪 **Multi-Peer Mesh** — Broadcast to multiple peers simultaneously
+- 🎪 **Multi-Peer Mesh** — Concurrent chunked broadcasting to multiple connected peers simultaneously
+- 📊 **Transfer History** — Built-in IndexedDB tracking for past incoming/outgoing file records
 - 🍬 **Cute Names** — Fun Indian dessert-themed peer names (PinkGulabCrispy!)
 
 ## 🏗️ Architecture
@@ -236,12 +238,12 @@ MIT License - feel free to use for personal or commercial projects.
 
 ## 💡 Future Ideas
 
-- [ ] E2E encryption layer
+- [x] E2E encryption layer
 - [ ] Screen sharing
 - [ ] Voice/video calls
 - [ ] Mobile app (React Native)
-- [ ] Folder upload
-- [ ] Download history (session-only)
+- [x] Folder upload
+- [x] Transfer history dashboard
 
 ---
 
