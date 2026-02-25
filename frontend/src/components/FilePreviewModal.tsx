@@ -11,12 +11,14 @@ const FileIcon = dynamic(() => import('lucide-react').then(mod => ({ default: mo
 interface FilePreviewModalProps {
   files: File[];
   peerCount: number;
-  onConfirm: () => void;
+  onConfirm: (password?: string) => void;
   onCancel: () => void;
 }
 
 export default function FilePreviewModal({ files, peerCount, onConfirm, onCancel }: FilePreviewModalProps) {
   const [previews, setPreviews] = useState<{ [key: string]: string }>({});
+  const [usePassword, setUsePassword] = useState(false);
+  const [password, setPassword] = useState('');
 
   // Generate preview for images
   const getPreview = (file: File) => {
@@ -77,7 +79,6 @@ export default function FilePreviewModal({ files, peerCount, onConfirm, onCancel
           <div className="overflow-y-auto max-h-96 mb-4 space-y-2">
             {files.map((file, index) => {
               const preview = getPreview(file);
-              const isImage = file.type.startsWith('image/');
               const isVideo = file.type.startsWith('video/');
 
               return (
@@ -103,9 +104,10 @@ export default function FilePreviewModal({ files, peerCount, onConfirm, onCancel
                     )}
                   </div>
 
-                  {/* File Info */}
                   <div className="flex-1 min-w-0">
-                    <p className="text-[#E6EDF3] font-medium truncate">{file.name}</p>
+                    <p className="text-[#E6EDF3] font-medium truncate" title={(file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name}>
+                      {(file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name}
+                    </p>
                     <p className="text-[#64748B] text-sm">
                       {formatSize(file.size)} • {file.type || 'Unknown type'}
                     </p>
@@ -129,6 +131,37 @@ export default function FilePreviewModal({ files, peerCount, onConfirm, onCancel
             </div>
           </div>
 
+          {/* E2EE Options */}
+          <div className="mb-4">
+            <label className="flex items-center gap-2 text-sm text-[#E6EDF3] cursor-pointer w-fit mb-2">
+              <input 
+                type="checkbox" 
+                className="rounded border-[#334155] bg-[#0F172A]"
+                checked={usePassword}
+                onChange={(e) => setUsePassword(e.target.checked)}
+              />
+              <span>Protect with password (E2EE)</span>
+            </label>
+            <AnimatePresence>
+              {usePassword && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="overflow-hidden"
+                >
+                  <input
+                    type="text"
+                    placeholder="Enter password to encrypt files"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full bg-[#0F172A] border border-[#334155]/50 rounded-xl px-4 py-3 text-sm text-[#E6EDF3] focus:outline-none focus:border-[#3B82F6]"
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
           {/* Actions */}
           <div className="flex gap-3">
             <button
@@ -138,7 +171,7 @@ export default function FilePreviewModal({ files, peerCount, onConfirm, onCancel
               Cancel
             </button>
             <button
-              onClick={onConfirm}
+              onClick={() => onConfirm(usePassword ? password : undefined)}
               className="flex-1 px-6 py-3 bg-gradient-to-r from-[#3B82F6] to-[#2563EB] text-white font-semibold rounded-xl hover:from-[#2563EB] hover:to-[#1D4ED8] transition-all flex items-center justify-center gap-2"
             >
               <Send size={18} />

@@ -13,6 +13,7 @@ import {
   getChatManager,
   ChatMessage
 } from '@/lib/webrtc/chat';
+import { saveTransferHistory } from '@/lib/db/transferHistory';
 
 export interface PeerState {
   id: string;
@@ -32,6 +33,7 @@ interface UseWebRTCReturn {
   fingerprints: Map<string, string>;
   connectToPeer: (peerId: string, isNearby?: boolean) => Promise<void>;
   sendFile: (file: File, peerId: string) => Promise<string>;
+  broadcastFile: (file: File, peerIds: string[]) => Promise<string>;
   sendMessage: (content: string) => void;
   cancelTransfer: (fileId: string) => void;
   pauseTransfer: (fileId: string) => void;
@@ -113,8 +115,18 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
         return [...prev, progress];
       });
 
-      // Remove completed transfers after delay
-      if (progress.status === 'completed' || progress.status === 'failed') {
+      // Remove completed transfers after delay and save history
+      if (progress.status === 'completed' || progress.status === 'failed' || progress.status === 'cancelled') {
+        saveTransferHistory({
+          id: progress.fileId + '-' + Date.now(),
+          fileName: progress.fileName,
+          totalSize: progress.totalSize,
+          transferType: progress.type,
+          peerId: progress.peerId,
+          timestamp: Date.now(),
+          status: progress.status,
+        });
+
         setTimeout(() => {
           setTransfers((prev) =>
             prev.filter((t) => t.fileId !== progress.fileId)
@@ -142,6 +154,10 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
 
   const sendFile = useCallback(async (file: File, peerId: string) => {
     return fileTransferRef.current.sendFile(file, peerId);
+  }, []);
+
+  const broadcastFile = useCallback(async (file: File, peerIds: string[]) => {
+    return fileTransferRef.current.broadcastFile(file, peerIds);
   }, []);
 
   const sendMessage = useCallback((content: string) => {
@@ -183,6 +199,7 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
     fingerprints,
     connectToPeer,
     sendFile,
+    broadcastFile,
     sendMessage,
     cancelTransfer,
     pauseTransfer,

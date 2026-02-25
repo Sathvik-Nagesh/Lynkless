@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, memo } from 'react';
+import { useState, useCallback, memo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { MAX_FILE_SIZE } from '@/lib/webrtc/fileTransfer';
 
@@ -8,6 +8,36 @@ interface FileDropZoneProps {
   onFileDrop: (files: File[]) => void;
   disabled?: boolean;
 }
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const processEntry = async (entry: any, path = ''): Promise<File[]> => {
+  if (entry.isFile) {
+    return new Promise((resolve) => {
+      entry.file((file: File) => {
+        // Add the path to the file object as a custom property for reference
+        Object.defineProperty(file, 'webkitRelativePath', {
+          value: path + file.name,
+          writable: false,
+        });
+        resolve([file]);
+      });
+    });
+  } else if (entry.isDirectory) {
+    const dirReader = entry.createReader();
+    return new Promise((resolve) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      dirReader.readEntries(async (entries: any[]) => {
+        let files: File[] = [];
+        for (const child of entries) {
+          const childFiles = await processEntry(child, path + entry.name + '/');
+          files = files.concat(childFiles);
+        }
+        resolve(files);
+      });
+    });
+  }
+  return [];
+};
 
 const FileDropZone = memo(function FileDropZone({ onFileDrop, disabled }: FileDropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
@@ -32,13 +62,35 @@ const FileDropZone = memo(function FileDropZone({ onFileDrop, disabled }: FileDr
     return validFiles;
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
+// REMOVED processEntry FROM HERE
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
 
-    const validFiles = validateFiles(e.dataTransfer.files);
-    if (validFiles.length > 0) {
-      setSelectedFiles(validFiles);
+    if (e.dataTransfer.items) {
+      let files: File[] = [];
+      const items = Array.from(e.dataTransfer.items);
+      
+      for (const item of items) {
+        if (item.kind === 'file') {
+          const entry = item.webkitGetAsEntry();
+          if (entry) {
+            const entryFiles = await processEntry(entry);
+            files = files.concat(entryFiles);
+          }
+        }
+      }
+      
+      const validFiles = validateFiles(files);
+      if (validFiles.length > 0) {
+        setSelectedFiles(prev => [...prev, ...validFiles]);
+      }
+    } else {
+      const validFiles = validateFiles(e.dataTransfer.files);
+      if (validFiles.length > 0) {
+        setSelectedFiles(prev => [...prev, ...validFiles]);
+      }
     }
   }, [validateFiles]);
 
@@ -56,10 +108,32 @@ const FileDropZone = memo(function FileDropZone({ onFileDrop, disabled }: FileDr
     if (e.target.files) {
       const validFiles = validateFiles(e.target.files);
       if (validFiles.length > 0) {
-        setSelectedFiles(validFiles);
+        setSelectedFiles(prev => [...prev, ...validFiles]);
       }
+      // Reset input so the same files can be selected again
+      e.target.value = '';
     }
   }, [validateFiles]);
+
+  const handlePaste = useCallback((e: ClipboardEvent) => {
+    if (disabled) return;
+    
+    // Check if what was pasted contains files (e.g. images from clipboard)
+    if (e.clipboardData?.files && e.clipboardData.files.length > 0) {
+      const validFiles = validateFiles(e.clipboardData.files);
+      if (validFiles.length > 0) {
+        setSelectedFiles(prev => [...prev, ...validFiles]);
+      }
+    }
+  }, [disabled, validateFiles]);
+
+  // Global paste handler
+  useEffect(() => {
+    document.addEventListener('paste', handlePaste);
+    return () => {
+      document.removeEventListener('paste', handlePaste);
+    };
+  }, [handlePaste]);
 
   const handleSend = useCallback(() => {
     if (selectedFiles.length > 0) {
@@ -118,10 +192,10 @@ const FileDropZone = memo(function FileDropZone({ onFileDrop, disabled }: FileDr
             <>
               <div className="text-5xl mb-2">📁</div>
               <p className="text-white/60 font-medium">
-                {disabled ? 'No peer connected' : 'Drop files here or click to select'}
+                {disabled ? 'No peer connected' : 'Drop files, folders, or Ctrl+V to paste'}
               </p>
               <p className="text-white/30 text-sm">
-                Up to {MAX_FILE_SIZE / (1024 * 1024)}MB per file • Multiple files supported
+                Up to {MAX_FILE_SIZE / (1024 * 1024)}MB per file • Folders supported
               </p>
               {!disabled && (
                 <label
@@ -147,7 +221,9 @@ const FileDropZone = memo(function FileDropZone({ onFileDrop, disabled }: FileDr
                     key={`${file.name}-${index}`}
                     className="flex items-center justify-between p-2 bg-white/5 rounded"
                   >
-                    <span className="text-white/70 text-sm truncate flex-1">{file.name}</span>
+                    <span className="text-white/70 text-sm truncate flex-1" title={(file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name}>
+                      {(file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name}
+                    </span>
                     <span className="text-white/40 text-xs ml-2">{formatSize(file.size)}</span>
                   </div>
                 ))}
