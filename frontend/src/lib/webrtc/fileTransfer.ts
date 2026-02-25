@@ -44,6 +44,8 @@ export interface TransferProgress {
   remainingTime: number; // seconds
   status: 'pending' | 'transferring' | 'completed' | 'failed' | 'cancelled' | 'paused';
   resumable?: boolean;
+  type: 'incoming' | 'outgoing';
+  peerId: string;
 }
 
 export type ProgressHandler = (progress: TransferProgress) => void;
@@ -221,6 +223,8 @@ class FileTransferManager {
       speed: 0,
       remainingTime: 0,
       status: 'transferring',
+      type: 'incoming',
+      peerId,
     });
   }
 
@@ -270,6 +274,8 @@ class FileTransferManager {
       remainingTime,
       status: 'transferring',
       resumable: true,
+      type: 'incoming',
+      peerId,
     });
   }
 
@@ -295,6 +301,8 @@ class FileTransferManager {
       speed: 0,
       remainingTime: 0,
       status: 'completed',
+      type: 'incoming',
+      peerId: incoming.peerId,
     });
 
     // Auto-download the file
@@ -316,6 +324,8 @@ class FileTransferManager {
         speed: 0,
         remainingTime: 0,
         status: 'cancelled',
+        type: 'incoming',
+        peerId: incoming.peerId,
       });
       this.incomingFiles.delete(fileId);
     }
@@ -463,6 +473,8 @@ class FileTransferManager {
             remainingTime,
             status: 'transferring',
             resumable: true,
+            type: 'outgoing',
+            peerId,
           });
 
           await new Promise((resolve) => setTimeout(resolve, 1));
@@ -485,6 +497,8 @@ class FileTransferManager {
           speed: 0,
           remainingTime: 0,
           status: 'completed',
+          type: 'outgoing',
+          peerId,
         });
 
         this.outgoingTransfers.delete(fileId);
@@ -500,6 +514,8 @@ class FileTransferManager {
         speed: 0,
         remainingTime: 0,
         status: 'failed',
+        type: 'outgoing',
+        peerId,
       });
     }
   }
@@ -550,6 +566,8 @@ class FileTransferManager {
         remainingTime: 0,
         status: 'pending',
         resumable: true,
+        type: 'outgoing',
+        peerId,
       },
       cancelled: false,
       paused: false,
@@ -632,6 +650,8 @@ class FileTransferManager {
             remainingTime,
             status: 'transferring',
             resumable: true,
+            type: 'outgoing',
+            peerId,
           });
 
           // Small delay to prevent overwhelming the channel
@@ -656,6 +676,8 @@ class FileTransferManager {
           speed: 0,
           remainingTime: 0,
           status: 'completed',
+          type: 'outgoing',
+          peerId,
         });
 
         this.outgoingTransfers.delete(fileId);
@@ -673,6 +695,8 @@ class FileTransferManager {
         remainingTime: 0,
         status: 'failed',
         resumable: true,
+        type: 'outgoing',
+        peerId,
       });
       throw error;
     }
@@ -732,9 +756,8 @@ class FileTransferManager {
    * Broadcast a file to multiple peers simultaneously (Mesh Mode)
    */
   async broadcastFile(file: File, peerIds: string[]): Promise<string> {
-    if (peerIds.length === 0) {
-      throw new Error('No peers specified for broadcast');
-    }
+    if (peerIds.length === 0) throw new Error("No peers provided for broadcast");
+    if (peerIds.length === 1) return this.sendFile(file, peerIds[0]);
 
     if (file.size > MAX_FILE_SIZE) {
       throw new Error(`File size exceeds limit of ${MAX_FILE_SIZE / (1024 * 1024)}MB`);
@@ -742,38 +765,150 @@ class FileTransferManager {
 
     const meshId = generateUUID();
     const transfers = new Map<string, string>();
+    const fileId = generateUUID(); // Use a single inner fileId for all peers
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
-    // Store mesh transfer info
-    this.meshTransfers.set(meshId, {
-      file,
-      peerIds,
-      transfers,
+    const metadata: FileMetadata = {
+      id: fileId,
+      name: file.name,
+      size: file.size,
+      type: file.type || 'application/octet-stream',
+      totalChunks,
+    };
+
+    this.meshTransfers.set(meshId, { file, peerIds, transfers });
+
+    peerIds.forEach(peerId => {
+      transfers.set(peerId, `${fileId}-${peerId}`);
+
+      this.outgoingTransfers.set(`${fileId}-${peerId}`, {
+        file,
+        peerId,
+        progress: {
+          fileId: `${fileId}-${peerId}`, // Treat each peer stream as a unique transfer visually
+          fileName: file.name,
+          totalSize: file.size,
+          transferredSize: 0,
+          progress: 0,
+          speed: 0,
+          remainingTime: 0,
+          status: 'pending',
+          resumable: true,
+          type: 'outgoing',
+          peerId,
+        },
+        cancelled: false,
+        paused: false,
+        lastChunkIndex: -1,
+        metadata,
+      });
+
+      this.webrtc.sendToPeer(peerId, JSON.stringify({ type: 'file-meta', fileId, metadata }));
     });
 
-    // Start individual transfers to each peer
-    const transferPromises = peerIds.map(async (peerId) => {
+    const startTime = Date.now();
+    const reader = file.stream().getReader();
+    let chunkIndex = 0;
+    let transferredSize = 0;
+
+    // Run async mesh transfer loop without blocking the return of meshId
+    (async () => {
       try {
-        const fileId = await this.sendFile(file, peerId);
-        transfers.set(peerId, fileId);
-        return { peerId, fileId, success: true };
+        while (true) {
+          const activePeers = peerIds.filter(peerId => {
+            const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
+            return tx && !tx.cancelled && !tx.paused;
+          });
+
+          if (activePeers.length === 0) break; // All cancelled or paused
+
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          let offset = 0;
+          while (offset < value.length) {
+            const chunk = value.subarray(offset, Math.min(offset + CHUNK_SIZE, value.length));
+            offset += CHUNK_SIZE;
+
+            const chunkMetaStr = JSON.stringify({ type: 'file-chunk', fileId, chunkIndex });
+
+            activePeers.forEach(peerId => {
+              const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
+              if (tx && !tx.cancelled && !tx.paused) {
+                this.webrtc.sendToPeer(peerId, chunkMetaStr);
+                this.webrtc.sendToPeer(peerId, chunk);
+                tx.lastChunkIndex = chunkIndex;
+              }
+            });
+
+            chunkIndex++;
+            transferredSize += chunk.length;
+
+            const elapsed = (Date.now() - startTime) / 1000;
+            const speed = transferredSize / elapsed;
+            const remainingBytes = file.size - transferredSize;
+            const remainingTime = speed > 0 ? remainingBytes / speed : 0;
+
+            activePeers.forEach(peerId => {
+              this.notifyProgress({
+                fileId: `${fileId}-${peerId}`,
+                fileName: file.name,
+                totalSize: file.size,
+                transferredSize,
+                progress: (transferredSize / file.size) * 100,
+                speed,
+                remainingTime,
+                status: 'transferring',
+                resumable: true,
+                type: 'outgoing',
+                peerId,
+              });
+            });
+
+            await new Promise(resolve => setTimeout(resolve, 1));
+          }
+        }
+
+        peerIds.forEach(peerId => {
+          const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
+          if (tx && !tx.cancelled && !tx.paused) {
+            this.webrtc.sendToPeer(peerId, JSON.stringify({ type: 'file-complete', fileId }));
+            this.notifyProgress({
+              fileId: `${fileId}-${peerId}`,
+              fileName: file.name,
+              totalSize: file.size,
+              transferredSize: file.size,
+              progress: 100,
+              speed: 0,
+              remainingTime: 0,
+              status: 'completed',
+              type: 'outgoing',
+              peerId,
+            });
+            this.outgoingTransfers.delete(`${fileId}-${peerId}`);
+          }
+        });
       } catch (error) {
-        console.error(`[FileTransfer] Failed to send to ${peerId}:`, error);
-        return { peerId, fileId: '', success: false };
+        console.error('[FileTransfer] Error in mesh broadcast:', error);
+        peerIds.forEach(peerId => {
+          this.notifyProgress({
+            fileId: `${fileId}-${peerId}`,
+            fileName: file.name,
+            totalSize: file.size,
+            transferredSize,
+            progress: (transferredSize / file.size) * 100,
+            speed: 0,
+            remainingTime: 0,
+            status: 'failed',
+            type: 'outgoing',
+            peerId,
+          });
+        });
+      } finally {
+        this.meshTransfers.delete(meshId);
       }
-    });
+    })();
 
-    // Run all transfers in parallel
-    Promise.all(transferPromises).then((results) => {
-      const successful = results.filter(r => r.success).length;
-      const total = results.length;
-      
-      console.log(`[FileTransfer] Mesh broadcast complete: ${successful}/${total} peers`);
-      
-      // Cleanup mesh tracking
-      this.meshTransfers.delete(meshId);
-    });
-
-    // Notify initial mesh progress
     this.notifyMeshProgress({
       fileId: meshId,
       fileName: file.name,

@@ -16,11 +16,14 @@ import PWAInstallPrompt from '@/components/PWAInstallPrompt';
 import Onboarding from '@/components/Onboarding';
 import FilePreviewModal from '@/components/FilePreviewModal';
 import ConnectionStatusBadge from '@/components/ConnectionStatusBadge';
+import TransferHistoryPanel from '@/components/TransferHistoryPanel';
 import { useSignaling } from '@/hooks/useSignaling';
 import { useWebRTC } from '@/hooks/useWebRTC';
 import { getPeerName, getEmojiForPeer } from '@/lib/utils/nameGenerator';
 import { getSounds } from '@/lib/utils/sounds';
 import { useToast } from '@/components/ToastProvider';
+import { E2EEHelper } from '@/lib/webrtc/e2ee';
+import DecryptionTool from '@/components/DecryptionTool';
 import Link from 'next/link';
 
 const SIGNALING_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || 'ws://localhost:8080';
@@ -58,6 +61,7 @@ export default function Home() {
     messages,
     connectToPeer,
     sendFile,
+    broadcastFile,
     sendMessage,
     cancelTransfer,
     pauseTransfer,
@@ -164,18 +168,32 @@ export default function Home() {
   }, [peers]);
 
   // Confirm and send files
-  const handleConfirmSend = useCallback(async () => {
+  const handleConfirmSend = useCallback(async (password?: string) => {
     setShowFilePreview(false);
     const connectedPeers = peers.filter(p => p.state === 'connected');
 
     sounds.current.playTransferStart();
 
     try {
-      for (const file of pendingFiles) {
-        for (const peer of connectedPeers) {
-          await sendFile(file, peer.id);
+      const filesToSend = password 
+        ? await Promise.all(pendingFiles.map(f => E2EEHelper.encryptFile(f, password)))
+        : pendingFiles;
+
+      if (connectedPeers.length > 1) {
+        // Send to all via Mesh broadcast
+        const peerIds = connectedPeers.map(p => p.id);
+        for (const file of filesToSend) {
+          await broadcastFile(file, peerIds);
+        }
+      } else {
+        // Single peer sending
+        for (const file of filesToSend) {
+          for (const peer of connectedPeers) {
+            await sendFile(file, peer.id);
+          }
         }
       }
+      
       console.log(`[File Drop] Sent ${pendingFiles.length} file(s) to ${connectedPeers.length} peer(s)`);
       sounds.current.playTransferComplete();
       showToast(`Sent ${pendingFiles.length} file(s) to ${connectedPeers.length} peer(s)`, 'success');
@@ -186,7 +204,7 @@ export default function Home() {
     }
 
     setPendingFiles([]);
-  }, [pendingFiles, peers, sendFile, showToast]);
+  }, [pendingFiles, peers, sendFile, broadcastFile, showToast]);
 
   // Track which users we've already sent requests to (prevent duplicates)
   const sentRequestsRef = useRef<Set<string>>(new Set());
@@ -687,6 +705,24 @@ export default function Home() {
                 disabled={connectedPeersCount === 0}
                 connectedPeers={chatPeers}
               />
+            </motion.div>
+
+            {/* Transfer History Panel */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.5 }}
+            >
+              <TransferHistoryPanel />
+            </motion.div>
+
+            {/* Decryption Tool */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.6 }}
+            >
+              <DecryptionTool />
             </motion.div>
           </div>
         </div>
