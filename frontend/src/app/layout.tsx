@@ -25,6 +25,9 @@ export const metadata: Metadata = {
     description: "Your files don't belong in the cloud. Transfer files and chat directly between browsers.",
     type: "website",
   },
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({
