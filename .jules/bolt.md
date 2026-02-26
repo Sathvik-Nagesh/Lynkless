@@ -17,3 +17,11 @@
 ## 2026-02-15 - Zero-Copy Chunking with `subarray()`
 **Learning:** `TypedArray.prototype.slice()` creates a new `TypedArray` and copies the underlying data into a new `ArrayBuffer`. For file transfers, this adds significant memory and CPU overhead for every chunk. `TypedArray.prototype.subarray()` creates a new view on the *same* buffer, which is zero-copy.
 **Action:** Use `subarray()` instead of `slice()` when partitioning binary data for WebRTC transfers. `RTCDataChannel.send()` handles these views correctly and efficiently.
+
+## 2026-02-25 - Reducing Yield Frequency for Throughput
+**Learning:** Yielding the event loop via `setTimeout(..., 1)` after every single 64KB chunk creates a massive performance bottleneck. Since `setTimeout` minimum delay is ~4ms, throughput is capped at ~16MB/s regardless of network speed.
+**Action:** Yield the event loop less frequently (e.g., every 16 chunks or 1MB) and use a 0ms delay. This maintains UI responsiveness while increasing theoretical throughput by 16x.
+
+## 2026-02-25 - Moving Math out of Hot Loops
+**Learning:** Calculating transfer metrics (speed, ETA, progress %) for every incoming/outgoing chunk (64KB) consumes significant CPU on the main thread during high-speed transfers.
+**Action:** Pass raw data to a throttled notification method and perform expensive calculations only when an update is actually being emitted to listeners (e.g., every 100ms).
