@@ -49,25 +49,39 @@ export function generateCuteName(peerId: string): string {
   }
 }
 
+const emojiCache = new Map<string, string>();
+const hashCache = new Map<string, number>();
+
 /**
  * Get emoji for a peer based on their name
+ * Bolt: Added cache to prevent redundant emoji lookups
  */
 export function getEmojiForPeer(name: string): string {
+  if (emojiCache.has(name)) return emojiCache.get(name)!;
+
   const emojis = ['🍬', '🍭', '🧁', '🍰', '🎂', '🍮', '🍩', '🍪', '🥮', '🍡', '🧇', '🥞'];
   const hash = hashCode(name);
-  return emojis[Math.abs(hash) % emojis.length];
+  const emoji = emojis[Math.abs(hash) % emojis.length];
+
+  emojiCache.set(name, emoji);
+  return emoji;
 }
 
 /**
  * Simple string hash function for consistent random generation
+ * Bolt: Added cache to prevent redundant hashing of identical strings
  */
 function hashCode(str: string): number {
+  if (hashCache.has(str)) return hashCache.get(str)!;
+
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
     hash = hash & hash; // Convert to 32bit integer
   }
+
+  hashCache.set(str, hash);
   return hash;
 }
 
@@ -102,4 +116,6 @@ export function getPeerName(peerId: string): string {
  */
 export function clearNameCache(): void {
   nameCache.clear();
+  emojiCache.clear();
+  hashCache.clear();
 }

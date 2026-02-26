@@ -121,7 +121,9 @@ class FileTransferManager {
   private fileReceivedHandlers: Set<FileReceivedHandler> = new Set();
   private meshProgressHandlers: Set<MeshProgressHandler> = new Set();
   private incomingFiles: Map<string, IncomingTransferState> = new Map();
-  private pendingChunkMetadata: Map<string, { fileId: string; chunkIndex: number }> = new Map();
+  // Bolt: Use separate Maps for primitives to avoid object allocations per 64KB chunk
+  private pendingChunkFileId: Map<string, string> = new Map();
+  private pendingChunkIndex: Map<string, number> = new Map();
   private outgoingTransfers: Map<string, OutgoingTransferState> = new Map();
   private lastUpdateTimes: Map<string, number> = new Map();
   private meshTransfers: Map<string, { file: File; peerIds: string[]; transfers: Map<string, string> }> = new Map();
@@ -157,7 +159,8 @@ class FileTransferManager {
     this.stateCleanupHandler = this.webrtc.onStateChange((peerId, state) => {
       if (state === 'disconnected' || state === 'failed') {
         // Clear pending binary metadata for this peer
-        this.pendingChunkMetadata.delete(peerId);
+        this.pendingChunkFileId.delete(peerId);
+        this.pendingChunkIndex.delete(peerId);
 
         // Mark transfers as paused for potential resume
         this.outgoingTransfers.forEach((transfer, fileId) => {
@@ -231,35 +234,37 @@ class FileTransferManager {
     if (!incoming) return;
 
     // Store metadata for the next incoming binary chunk
-    this.pendingChunkMetadata.set(peerId, {
-      fileId: message.fileId,
-      chunkIndex: message.chunkIndex,
-    });
+    // Bolt: Store in separate maps to avoid object allocation
+    this.pendingChunkFileId.set(peerId, message.fileId);
+    this.pendingChunkIndex.set(peerId, message.chunkIndex);
   }
 
   /**
    * Process a raw binary chunk from a peer
    */
   private handleBinaryChunk(peerId: string, data: ArrayBuffer): void {
-    const metadata = this.pendingChunkMetadata.get(peerId);
-    if (!metadata) return;
+    const fileId = this.pendingChunkFileId.get(peerId);
+    const chunkIndex = this.pendingChunkIndex.get(peerId);
+
+    if (fileId === undefined || chunkIndex === undefined) return;
 
     // Clear metadata immediately to prepare for next chunk
-    this.pendingChunkMetadata.delete(peerId);
+    this.pendingChunkFileId.delete(peerId);
+    this.pendingChunkIndex.delete(peerId);
 
-    const incoming = this.incomingFiles.get(metadata.fileId);
+    const incoming = this.incomingFiles.get(fileId);
     if (!incoming) return;
 
     // Store the raw buffer
-    if (incoming.chunks[metadata.chunkIndex] === null) {
-      incoming.chunks[metadata.chunkIndex] = data;
+    if (incoming.chunks[chunkIndex] === null) {
+      incoming.chunks[chunkIndex] = data;
       incoming.receivedChunks++;
-      incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, metadata.chunkIndex);
+      incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, chunkIndex);
     }
 
     // Bolt: Throttled progress update with lazy metrics calculation
     const transferredSize = incoming.receivedChunks * CHUNK_SIZE;
-    this.notifyProgress(metadata.fileId, 'transferring', {
+    this.notifyProgress(fileId, 'transferring', {
       transferredSize: Math.min(transferredSize, incoming.metadata.size),
       resumable: true,
     });
@@ -985,7 +990,8 @@ class FileTransferManager {
     this.progressHandlers.clear();
     this.fileReceivedHandlers.clear();
     this.incomingFiles.clear();
-    this.pendingChunkMetadata.clear();
+    this.pendingChunkFileId.clear();
+    this.pendingChunkIndex.clear();
     this.outgoingTransfers.clear();
   }
 }
