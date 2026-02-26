@@ -25,3 +25,11 @@
 ## 2026-02-25 - Moving Math out of Hot Loops
 **Learning:** Calculating transfer metrics (speed, ETA, progress %) for every incoming/outgoing chunk (64KB) consumes significant CPU on the main thread during high-speed transfers.
 **Action:** Pass raw data to a throttled notification method and perform expensive calculations only when an update is actually being emitted to listeners (e.g., every 100ms).
+
+## 2026-02-26 - Minimizing Object Allocations in Hot Loops
+**Learning:** In high-frequency data paths (like processing 64KB chunks in a file transfer), allocating even small objects for metadata tracking creates significant garbage collection pressure. Modern JS engines handle Map lookups on primitives much more efficiently than short-lived object allocation.
+**Action:** Use separate primitive Maps (e.g., `Map<string, string>` and `Map<string, number>`) instead of a single object Map (`Map<string, { id: string, index: number }>`) for tracking state in hot loops.
+
+## 2026-02-26 - Derived State for Syncing Counters
+**Learning:** Using `useEffect` to synchronize a counter (like `unreadCount`) with prop changes causes an avoidable double-render. Synchronizing state *during* render (with a guard) or using derived state is significantly more efficient and avoids the "cascading render" lint error.
+**Action:** Synchronize counters or visibility markers directly in the render body (guarding against redundant `set` calls) to keep state updates bundled in the same render cycle.
