@@ -27,6 +27,16 @@ const COLORS = [
 ];
 
 /**
+ * Store mapping of peerId to cute name
+ */
+const nameCache = new Map<string, string>();
+
+/**
+ * Bolt: Store mapping of name/id to emoji to avoid redundant hash computations
+ */
+const emojiCache = new Map<string, string>();
+
+/**
  * Generate a cute random name for a peer
  * Format: ColorSweetAdjective or AdjectiveColorSweet
  * Examples: "PinkGulabCrispy", "SoftOrangeJalebi"
@@ -53,9 +63,17 @@ export function generateCuteName(peerId: string): string {
  * Get emoji for a peer based on their name
  */
 export function getEmojiForPeer(name: string): string {
+  // Bolt: Use cache to prevent redundant hash calculations during high-frequency renders
+  if (emojiCache.has(name)) {
+    return emojiCache.get(name)!;
+  }
+
   const emojis = ['🍬', '🍭', '🧁', '🍰', '🎂', '🍮', '🍩', '🍪', '🥮', '🍡', '🧇', '🥞'];
   const hash = hashCode(name);
-  return emojis[Math.abs(hash) % emojis.length];
+  const emoji = emojis[Math.abs(hash) % emojis.length];
+
+  emojiCache.set(name, emoji);
+  return emoji;
 }
 
 /**
@@ -83,11 +101,6 @@ export function getShortDisplayName(fullName: string): string {
 }
 
 /**
- * Store mapping of peerId to cute name
- */
-const nameCache = new Map<string, string>();
-
-/**
  * Get or generate cute name for a peer
  */
 export function getPeerName(peerId: string): string {
@@ -102,4 +115,5 @@ export function getPeerName(peerId: string): string {
  */
 export function clearNameCache(): void {
   nameCache.clear();
+  emojiCache.clear();
 }

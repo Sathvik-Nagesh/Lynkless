@@ -12,27 +12,107 @@ interface ChatPanelProps {
   connectedPeers?: { id: string; name?: string }[];
 }
 
+const formatTime = (timestamp: number) => {
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
+// Bolt: Memoized message item to prevent redundant re-renders of the entire list
+// and expensive animation re-evaluations for previous messages.
+const ChatMessageItem = memo(({
+  msg,
+  showTimestamp,
+  isSameSender
+}: {
+  msg: ChatMessage;
+  showTimestamp: boolean;
+  isSameSender: boolean;
+}) => {
+  return (
+    <div key={msg.id}>
+      {/* Time separator */}
+      {showTimestamp && (
+        <div className="flex items-center gap-3 my-3">
+          <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
+          <span className="text-[10px] text-[#475569] font-medium">
+            {formatTime(msg.timestamp)}
+          </span>
+          <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
+        </div>
+      )}
+
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.12 }}
+        className={`flex ${msg.isOwn ? 'justify-end' : 'justify-start'} ${
+          isSameSender ? 'mt-0.5' : 'mt-2'
+        }`}
+      >
+        <div
+          className="max-w-[80%] rounded-2xl px-4 py-2 relative group"
+          style={msg.isOwn ? {
+            background: 'linear-gradient(135deg, rgba(34, 211, 238, 0.15), rgba(99, 102, 241, 0.15))',
+            border: '1px solid rgba(34, 211, 238, 0.2)',
+            borderBottomRightRadius: isSameSender ? '8px' : '20px',
+          } : {
+            background: 'var(--bg-hover)',
+            border: '1px solid var(--border-subtle)',
+            borderBottomLeftRadius: isSameSender ? '8px' : '20px',
+          }}
+        >
+          {/* Sender name (only for received, and only if different from previous) */}
+          {!msg.isOwn && !isSameSender && (
+            <p className="text-[10px] font-semibold mb-1 flex items-center gap-1" style={{ color: '#6366F1' }}>
+              <span>{getEmojiForPeer(msg.fromId)}</span>
+              <span>{getPeerName(msg.fromId)}</span>
+            </p>
+          )}
+          <p
+            className="break-words text-sm leading-relaxed"
+            style={{ color: msg.isOwn ? '#E6EDF3' : '#CBD5E1' }}
+          >
+            {msg.content}
+          </p>
+          {/* Timestamp on hover */}
+          <span
+            className="text-[9px] opacity-0 group-hover:opacity-100 transition-opacity absolute -bottom-4 text-[#475569]"
+            style={{ [msg.isOwn ? 'right' : 'left']: '8px' }}
+          >
+            {formatTime(msg.timestamp)}
+          </span>
+        </div>
+      </motion.div>
+    </div>
+  );
+});
+
+ChatMessageItem.displayName = 'ChatMessageItem';
+
 const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, connectedPeers = [] }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [isExpanded, setIsExpanded] = useState(true);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [lastReadCount, setLastReadCount] = useState(messages.length);
   const [isTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const lastMessageCountRef = useRef(messages.length);
 
   // Auto-scroll to latest message
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Track unread messages when collapsed
-  useEffect(() => {
-    if (!isExpanded && messages.length > lastMessageCountRef.current) {
-      setUnreadCount(prev => prev + (messages.length - lastMessageCountRef.current));
-    }
-    lastMessageCountRef.current = messages.length;
-  }, [messages.length, isExpanded]);
+  // Bolt: Derived state for unreadCount avoids a second render cycle
+  // triggered by useEffect synchronization.
+  const unreadCount = isExpanded ? 0 : Math.max(0, messages.length - lastReadCount);
+
+  // Bolt: Sync lastReadCount during render if panel is expanded
+  // This is the idiomatic way to sync state with props in React without effects
+  if (isExpanded && lastReadCount !== messages.length) {
+    setLastReadCount(messages.length);
+  }
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
@@ -50,28 +130,6 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
     }
   }, []);
 
-  const formatTime = (timestamp: number) => {
-    return new Date(timestamp).toLocaleTimeString([], { 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    });
-  };
-
-  // Group messages by time (5 min intervals)
-  const shouldShowTimestamp = (index: number) => {
-    if (index === 0) return true;
-    const prev = messages[index - 1];
-    const curr = messages[index];
-    return curr.timestamp - prev.timestamp > 5 * 60 * 1000; // 5 minutes
-  };
-
-  // Check if messages are from the same sender consecutively
-  const isSameSender = (index: number) => {
-    if (index === 0) return false;
-    return messages[index].fromId === messages[index - 1].fromId &&
-           messages[index].isOwn === messages[index - 1].isOwn;
-  };
-
   return (
     <div 
       className="panel-elevated overflow-hidden flex flex-col"
@@ -82,7 +140,9 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
         onClick={() => {
           const nextExpanded = !isExpanded;
           setIsExpanded(nextExpanded);
-          if (nextExpanded) setUnreadCount(0);
+          if (nextExpanded) {
+            setLastReadCount(messages.length);
+          }
         }}
         className="flex items-center justify-between p-5 hover:bg-[#1C2433] transition-colors duration-150"
       >
@@ -162,63 +222,20 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
                   )}
                 </div>
               ) : (
-                messages.map((msg, index) => (
-                  <div key={msg.id}>
-                    {/* Time separator */}
-                    {shouldShowTimestamp(index) && (
-                      <div className="flex items-center gap-3 my-3">
-                        <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
-                        <span className="text-[10px] text-[#475569] font-medium">
-                          {formatTime(msg.timestamp)}
-                        </span>
-                        <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
-                      </div>
-                    )}
+                messages.map((msg, index) => {
+                  const prev = messages[index - 1];
+                  const showTimestamp = !prev || msg.timestamp - prev.timestamp > 5 * 60 * 1000;
+                  const sameSender = !!prev && msg.fromId === prev.fromId && msg.isOwn === prev.isOwn;
 
-                    <motion.div
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.12 }}
-                      className={`flex ${msg.isOwn ? 'justify-end' : 'justify-start'} ${
-                        isSameSender(index) ? 'mt-0.5' : 'mt-2'
-                      }`}
-                    >
-                      <div
-                        className="max-w-[80%] rounded-2xl px-4 py-2 relative group"
-                        style={msg.isOwn ? {
-                          background: 'linear-gradient(135deg, rgba(34, 211, 238, 0.15), rgba(99, 102, 241, 0.15))',
-                          border: '1px solid rgba(34, 211, 238, 0.2)',
-                          borderBottomRightRadius: isSameSender(index) ? '8px' : '20px',
-                        } : {
-                          background: 'var(--bg-hover)',
-                          border: '1px solid var(--border-subtle)',
-                          borderBottomLeftRadius: isSameSender(index) ? '8px' : '20px',
-                        }}
-                      >
-                        {/* Sender name (only for received, and only if different from previous) */}
-                        {!msg.isOwn && !isSameSender(index) && (
-                          <p className="text-[10px] font-semibold mb-1 flex items-center gap-1" style={{ color: '#6366F1' }}>
-                            <span>{getEmojiForPeer(msg.fromId)}</span>
-                            <span>{getPeerName(msg.fromId)}</span>
-                          </p>
-                        )}
-                        <p 
-                          className="break-words text-sm leading-relaxed"
-                          style={{ color: msg.isOwn ? '#E6EDF3' : '#CBD5E1' }}
-                        >
-                          {msg.content}
-                        </p>
-                        {/* Timestamp on hover */}
-                        <span 
-                          className="text-[9px] opacity-0 group-hover:opacity-100 transition-opacity absolute -bottom-4 text-[#475569]"
-                          style={{ [msg.isOwn ? 'right' : 'left']: '8px' }}
-                        >
-                          {formatTime(msg.timestamp)}
-                        </span>
-                      </div>
-                    </motion.div>
-                  </div>
-                ))
+                  return (
+                    <ChatMessageItem
+                      key={msg.id}
+                      msg={msg}
+                      showTimestamp={showTimestamp}
+                      isSameSender={sameSender}
+                    />
+                  );
+                })
               )}
               <div ref={messagesEndRef} />
             </div>
