@@ -1,23 +1,40 @@
 'use client';
 
-import { useState, useEffect, memo, useCallback } from 'react';
+import { useState, useEffect, memo, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { TransferHistoryEntry, getTransferHistory, clearTransferHistory } from '@/lib/db/transferHistory';
+
+// Helper functions moved outside component to avoid recreation
+const formatTime = (ts: number) => {
+  return new Date(ts).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+  });
+};
+
+const formatSize = (bytes: number) => {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+};
 
 const TransferHistoryPanel = memo(function TransferHistoryPanel() {
   const [history, setHistory] = useState<TransferHistoryEntry[]>([]);
   const [isExpanded, setIsExpanded] = useState(false);
+  const isExpandedRef = useRef(isExpanded);
+
+  // Keep ref in sync to avoid stale closures in interval
+  useEffect(() => {
+    isExpandedRef.current = isExpanded;
+  }, [isExpanded]);
 
   const loadHistory = useCallback(async () => {
     const data = await getTransferHistory();
-    setHistory(data);
-  }, []);
-
-  useEffect(() => {
-    if (isExpanded) {
-      loadHistory();
+    // Only update if still expanded to avoid unnecessary renders
+    if (isExpandedRef.current) {
+      setHistory(data);
     }
-  }, [isExpanded, loadHistory]);
+  }, []);
 
   // Optionally poll or listen for new history items. Simple interval when expanded:
   useEffect(() => {
@@ -34,23 +51,16 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
     }
   };
 
-  const formatTime = (ts: number) => {
-    return new Date(ts).toLocaleString(undefined, {
-      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-    });
-  };
-
-  const formatSize = (bytes: number) => {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
-  };
-
   return (
     <div className="panel-elevated overflow-hidden flex flex-col mt-6">
       <button
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={() => {
+          const nextExpanded = !isExpanded;
+          setIsExpanded(nextExpanded);
+          if (nextExpanded) {
+            loadHistory();
+          }
+        }}
         className="flex items-center justify-between p-5 hover:bg-[#1C2433] transition-colors duration-150"
       >
         <div className="flex items-center gap-3">
