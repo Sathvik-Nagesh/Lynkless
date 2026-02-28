@@ -25,3 +25,7 @@
 ## 2026-02-25 - Moving Math out of Hot Loops
 **Learning:** Calculating transfer metrics (speed, ETA, progress %) for every incoming/outgoing chunk (64KB) consumes significant CPU on the main thread during high-speed transfers.
 **Action:** Pass raw data to a throttled notification method and perform expensive calculations only when an update is actually being emitted to listeners (e.g., every 100ms).
+
+## 2026-03-01 - Optimizing Chat and Name Generation
+**Learning:** Re-rendering a long chat list for every new message or re-hashing peer IDs for names/emojis every render is a significant "death by a thousand cuts" for performance.
+**Action:** Memoize individual `ChatMessageItem` components and implement a simple `emojiCache` at the utility level. Use derived state for `unreadCount` relative to a `lastReadCount` to avoid `useEffect` cascading renders.
