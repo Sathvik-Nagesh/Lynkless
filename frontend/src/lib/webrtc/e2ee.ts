@@ -15,7 +15,7 @@ export class E2EEHelper {
     return crypto.subtle.deriveKey(
       {
         name: "PBKDF2",
-        salt: salt as any,
+        salt: salt as BufferSource,
         iterations: 100000,
         hash: "SHA-256"
       },

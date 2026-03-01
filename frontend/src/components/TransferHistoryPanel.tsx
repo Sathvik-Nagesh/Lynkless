@@ -1,30 +1,40 @@
 'use client';
 
-import { useState, useEffect, memo, useCallback } from 'react';
+import { useState, useEffect, memo, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { TransferHistoryEntry, getTransferHistory, clearTransferHistory } from '@/lib/db/transferHistory';
 
 const TransferHistoryPanel = memo(function TransferHistoryPanel() {
   const [history, setHistory] = useState<TransferHistoryEntry[]>([]);
   const [isExpanded, setIsExpanded] = useState(false);
+  const isExpandedRef = useRef(isExpanded);
+
+  // Sync ref with state
+  useEffect(() => {
+    isExpandedRef.current = isExpanded;
+  }, [isExpanded]);
 
   const loadHistory = useCallback(async () => {
     const data = await getTransferHistory();
     setHistory(data);
   }, []);
 
+  // Poll for new history items when expanded
+  // Bolt: Using a single effect that only runs when expanded to maintain idle efficiency
   useEffect(() => {
-    if (isExpanded) {
-      loadHistory();
-    }
-  }, [isExpanded, loadHistory]);
+    if (!isExpanded) return;
 
-  // Optionally poll or listen for new history items. Simple interval when expanded:
-  useEffect(() => {
-    if (isExpanded) {
-      const interval = setInterval(loadHistory, 5000);
-      return () => clearInterval(interval);
-    }
+    // Initial load
+    loadHistory();
+
+    const interval = setInterval(() => {
+      // Re-verify expanded state using ref to satisfy react-hooks/set-state-in-effect
+      if (isExpandedRef.current) {
+        loadHistory();
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
   }, [isExpanded, loadHistory]);
 
   const clearHistory = async () => {
