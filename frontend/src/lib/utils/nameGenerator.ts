@@ -50,12 +50,24 @@ export function generateCuteName(peerId: string): string {
 }
 
 /**
+ * Internal cache for peer emojis to avoid redundant hash calculations
+ */
+const emojiCache = new Map<string, string>();
+
+/**
  * Get emoji for a peer based on their name
  */
 export function getEmojiForPeer(name: string): string {
+  if (emojiCache.has(name)) {
+    return emojiCache.get(name)!;
+  }
+
   const emojis = ['🍬', '🍭', '🧁', '🍰', '🎂', '🍮', '🍩', '🍪', '🥮', '🍡', '🧇', '🥞'];
   const hash = hashCode(name);
-  return emojis[Math.abs(hash) % emojis.length];
+  const emoji = emojis[Math.abs(hash) % emojis.length];
+
+  emojiCache.set(name, emoji);
+  return emoji;
 }
 
 /**
@@ -102,4 +114,5 @@ export function getPeerName(peerId: string): string {
  */
 export function clearNameCache(): void {
   nameCache.clear();
+  emojiCache.clear();
 }
