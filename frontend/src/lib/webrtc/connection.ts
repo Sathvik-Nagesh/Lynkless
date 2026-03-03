@@ -7,30 +7,31 @@ import { getSignalingClient, SignalingMessage } from '../socket/client';
 import { generateSimpleFingerprint, storeFingerprint, clearFingerprint } from './fingerprint';
 
 // STUN/TURN servers for NAT traversal
+// Allow users to provide their own TURN/STUN servers via env variables if needed
+const customIceServersStr = process.env.NEXT_PUBLIC_ICE_SERVERS;
+let customIceServers: RTCIceServer[] = [];
+try {
+  if (customIceServersStr) {
+    customIceServers = JSON.parse(customIceServersStr);
+  }
+} catch (e) {
+  console.warn('Failed to parse NEXT_PUBLIC_ICE_SERVERS, ignoring.');
+}
+
+// Default STUN servers (Google's are very reliable for most connections)
+// TURN servers are required for Symmetric NAT (e.g., enterprise firewalls/cellular).
+// Providing a free open TURN server is difficult as they frequently shut down or get abused.
+// Users should configure NEXT_PUBLIC_ICE_SERVERS to add their own TURN credentials.
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+  { urls: 'stun:stun4.l.google.com:19302' },
+];
+
 const ICE_SERVERS: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
-    // Free TURN servers for relay (when direct/STUN fails across strict NATs)
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-  ],
+  iceServers: customIceServers.length > 0 ? customIceServers : DEFAULT_ICE_SERVERS,
   iceCandidatePoolSize: 10,
 };
 

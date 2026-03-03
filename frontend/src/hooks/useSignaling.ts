@@ -88,6 +88,9 @@ export function useSignaling(): UseSignalingReturn {
   const handleMessage = useCallback((message: SignalingMessage) => {
     switch (message.type) {
       case 'connected':
+        setClientId(message.clientId as string);
+        setIsConnected(true);
+        setError(null);
         // Initial nearby peers from server
         if (message.nearbyPeers) {
           setNearbyPeers(message.nearbyPeers as NearbyPeer[]);
@@ -200,6 +203,23 @@ export function useSignaling(): UseSignalingReturn {
 
       case 'error':
         setError(message.message as string);
+        break;
+
+      case 'reconnecting':
+        setError(`Connection lost. Reconnecting (Attempt ${message.attempt})...`);
+        setIsConnected(false);
+        break;
+
+      case 'disconnected':
+        setError('Lost connection to server. Please refresh the page.');
+        setIsConnected(false);
+        setRoomState({
+          code: null,
+          hasPassword: false,
+          users: [],
+          isCreator: false,
+        });
+        setNearbyPeers([]);
         break;
     }
   }, [updatePeerState, removePeerState]);
