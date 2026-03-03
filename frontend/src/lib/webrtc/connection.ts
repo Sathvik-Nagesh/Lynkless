@@ -51,12 +51,14 @@ export interface PeerConnection {
 export type DataHandler = (peerId: string, data: ArrayBuffer | string) => void;
 export type StateChangeHandler = (peerId: string, state: ConnectionState) => void;
 export type FingerprintHandler = (peerId: string, fingerprint: string) => void;
+export type TrackHandler = (peerId: string, track: MediaStreamTrack, streams: readonly MediaStream[]) => void;
 
 class WebRTCManager {
   private peers: Map<string, PeerConnection> = new Map();
   private dataHandlers: Set<DataHandler> = new Set();
   private stateHandlers: Set<StateChangeHandler> = new Set();
   private fingerprintHandlers: Set<FingerprintHandler> = new Set();
+  private trackHandlers: Set<TrackHandler> = new Set();
   private signaling = getSignalingClient();
   private cleanupHandler: (() => void) | null = null;
   // Buffer ICE candidates that arrive before remote description is set
@@ -302,6 +304,29 @@ class WebRTCManager {
       }
     };
 
+    // Handle remote media tracks (Screen share, Video, Audio)
+    connection.ontrack = (event) => {
+      console.log('[WebRTC] Received remote track from', peerId, event.track.kind);
+      this.trackHandlers.forEach((handler) => handler(peerId, event.track, event.streams));
+    };
+
+    // Handle renegotiation
+    connection.onnegotiationneeded = async () => {
+      try {
+        console.log('[WebRTC] Negotiation needed for', peerId);
+        const offer = await connection.createOffer();
+        await connection.setLocalDescription(offer);
+        peerConnection.localSdp = offer.sdp;
+        this.signaling.send({
+          type: 'offer',
+          targetId: peerId,
+          offer: connection.localDescription,
+        });
+      } catch (err) {
+        console.error('[WebRTC] onnegotiationneeded error:', err);
+      }
+    };
+
     this.peers.set(peerId, peerConnection);
     return peerConnection;
   }
@@ -445,6 +470,33 @@ class WebRTCManager {
   onFingerprint(handler: FingerprintHandler): () => void {
     this.fingerprintHandlers.add(handler);
     return () => this.fingerprintHandlers.delete(handler);
+  }
+
+  /**
+   * Register track handler
+   */
+  onTrack(handler: TrackHandler): () => void {
+    this.trackHandlers.add(handler);
+    return () => this.trackHandlers.delete(handler);
+  }
+
+  /**
+   * Add a MediaStreamTrack to a peer
+   */
+  addTrack(peerId: string, track: MediaStreamTrack, stream: MediaStream): RTCRtpSender | null {
+    const peer = this.peers.get(peerId);
+    if (!peer) return null;
+    return peer.connection.addTrack(track, stream);
+  }
+
+  /**
+   * Remove a MediaStreamTrack from a peer
+   */
+  removeTrack(peerId: string, sender: RTCRtpSender): void {
+    const peer = this.peers.get(peerId);
+    if (peer) {
+      peer.connection.removeTrack(sender);
+    }
   }
 
   private notifyDataReceived(peerId: string, data: ArrayBuffer | string): void {

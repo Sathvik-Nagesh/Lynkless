@@ -19,12 +19,14 @@ const formatSize = (bytes: number): string => {
 };
 
 const formatSpeed = (bytesPerSecond: number): string => {
+  if (!isFinite(bytesPerSecond) || isNaN(bytesPerSecond) || bytesPerSecond < 0) return '0 B/s';
   if (bytesPerSecond < 1024) return `${bytesPerSecond.toFixed(0)} B/s`;
   if (bytesPerSecond < 1024 * 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
   return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`;
 };
 
 const formatTime = (seconds: number): string => {
+  if (!isFinite(seconds) || isNaN(seconds) || seconds < 0) return '0s';
   if (seconds < 60) return `${Math.ceil(seconds)}s`;
   const mins = Math.floor(seconds / 60);
   const secs = Math.ceil(seconds % 60);

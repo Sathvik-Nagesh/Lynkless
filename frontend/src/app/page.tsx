@@ -17,6 +17,7 @@ import Onboarding from '@/components/Onboarding';
 import FilePreviewModal from '@/components/FilePreviewModal';
 import ConnectionStatusBadge from '@/components/ConnectionStatusBadge';
 import TransferHistoryPanel from '@/components/TransferHistoryPanel';
+import ScreenSharePanel from '@/components/ScreenSharePanel';
 import { useSignaling } from '@/hooks/useSignaling';
 import { useWebRTC } from '@/hooks/useWebRTC';
 import { getPeerName, getEmojiForPeer } from '@/lib/utils/nameGenerator';
@@ -35,6 +36,7 @@ export default function Home() {
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [showFilePreview, setShowFilePreview] = useState(false);
+  const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
   const sounds = useRef(getSounds());
   const { showToast } = useToast();
 
@@ -68,6 +70,10 @@ export default function Home() {
     resumeTransfer,
     disconnectFromPeer,
     getFingerprint,
+    localStream,
+    remoteStreams,
+    startScreenShare,
+    stopScreenShare,
   } = useWebRTC(clientId);
 
   // Auto-connect to signaling server
@@ -431,22 +437,65 @@ export default function Home() {
               />
             </motion.div>
 
-            {/* Radar Discovery - Refined panel */}
+            {/* Tabs for switching Views */}
             <motion.div
-              className="panel-elevated p-6"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 }}
+              className="flex gap-2 p-1 bg-[#0F172A] rounded-xl border border-[#334155]/50"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.15 }}
             >
-              <div className="flex items-center gap-3 mb-5">
-                <div
-                  className="w-9 h-9 rounded-xl flex items-center justify-center"
-                  style={{ background: 'linear-gradient(135deg, #22D3EE 0%, #6366F1 100%)' }}
+              <button
+                onClick={() => setActiveView('files')}
+                className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${
+                  activeView === 'files' 
+                    ? 'bg-[#1E293B] text-white shadow-sm' 
+                    : 'text-[#64748B] hover:text-[#E6EDF3] hover:bg-[#1E293B]/50'
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
+                </svg>
+                Files & Radar
+              </button>
+              <button
+                onClick={() => setActiveView('screen')}
+                className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${
+                  activeView === 'screen' 
+                    ? 'bg-[#1E293B] text-white shadow-sm' 
+                    : 'text-[#64748B] hover:text-[#E6EDF3] hover:bg-[#1E293B]/50'
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+                Screen Share
+                {remoteStreams.size > 0 && (
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse ml-1" />
+                )}
+              </button>
+            </motion.div>
+
+            {/* Radar Discovery - Refined panel */}
+            <AnimatePresence mode="wait">
+              {activeView === 'files' ? (
+                <motion.div
+                  key="files-view"
+                  className="space-y-4 md:space-y-6"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.2 }}
                 >
-                  <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
-                  </svg>
-                </div>
+                  <div className="panel-elevated p-6">
+                    <div className="flex items-center gap-3 mb-5">
+                      <div
+                        className="w-9 h-9 rounded-xl flex items-center justify-center"
+                        style={{ background: 'linear-gradient(135deg, #22D3EE 0%, #6366F1 100%)' }}
+                      >
+                        <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                        </svg>
+                      </div>
                 <div className="flex-1">
                   <h2 className="text-base font-semibold text-[#E6EDF3]">Discovery Radar</h2>
                   <p className="text-xs text-[#64748B]">
@@ -572,7 +621,27 @@ export default function Home() {
                   </p>
                 </div>
               )}
+              </div>
             </motion.div>
+          ) : (
+            <motion.div
+              key="screen-view"
+              className="space-y-4 md:space-y-6"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+            >
+              <ScreenSharePanel
+                localStream={localStream}
+                remoteStreams={remoteStreams}
+                onStartShare={startScreenShare}
+                onStopShare={stopScreenShare}
+                peerCount={connectedPeersCount}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
           </div>
 
           {/* Right column - File Transfer and Chat */}
