@@ -12,22 +12,21 @@ A blazing-fast, zero-storage, peer-to-peer file transfer and chat platform built
 
 ### Core Functionality
 
-- 🚀 **Direct P2P Transfer** — Send files up to 500MB directly between browsers
-- 💬 **Ephemeral Chat** — Real-time messaging that disappears when you disconnect
-- 📡 **Smart Discovery** — Beautiful radar UI to discover nearby peers on your network
-- 🔐 **Zero Storage & E2EE** — Files never touch any server. Add custom passwords for robust AES-GCM End-to-End Encryption.
-- 🎯 **Connection Fingerprints** — SHA-256 verification codes to ensure secure connections
-- 📁 **Folder & Clipboard Support** — Drag-and-drop entire directories or paste images directly from your clipboard.
+- 🚀 **Direct P2P Transfer** — Send files, even up to 500MB, directly between browsers with resuming capabilities.
+- 📡 **Smart Discovery** — Beautiful radar UI to discover nearby peers on your network automatically.
+- 🔐 **Zero Storage & E2EE** — Files never touch any centralized data centers. Enable E2EE custom passwords out of the box using military-grade `AES-GCM` encryption layer processing.
+- 📁 **Folder & Clipboard Support** — Drag-and-drop massive nested directories natively, or instantly `CTRL+V` paste images straight from your clipboard.
+- 📺 **Live Screen Sharing** — Securely share your desktop directly over P2P using our pristine Screen-Share interface without interrupting your file-transfers tabs.
+- � **Multi-Peer "Send to All"** — Concurrent mesh broadcast transferring to numerous peers simultaneously within your room.
 
 ### User Experience
 
-- 🎨 **Premium Cyber Aesthetic** — Modern, minimal UI with smooth animations
-- 📱 **QR Code Connect** — Instant connection via QR code scanning
-- 🏠 **Room System** — Create rooms with 6-digit codes for easy sharing
-- 🔄 **Resume Support** — Auto-resume file transfers on reconnection
-- 🎪 **Multi-Peer Mesh** — Concurrent chunked broadcasting to multiple connected peers simultaneously
-- 📊 **Transfer History** — Built-in IndexedDB tracking for past incoming/outgoing file records
-- 🍬 **Cute Names** — Fun Indian dessert-themed peer names (PinkGulabCrispy!)
+- � **Ephemeral Chat + Markdown** — Real-time messaging synced seamlessly over WebRTC data channels natively parsing inline code formatting.
+- 📊 **Transfer Analytics Dashboard** — A dedicated history vault locally tracked by IndexedDB rendering granular stats natively covering **Total Sent** and **Total Received** data.
+- 🏎️ **Live Speed & ETA Estimator** — Real-time, math-based speeds displaying elapsed transfer progression gracefully managing `NaN` artifacts natively.
+- � **Room System / QR Connect** — Scan QRs natively inside browsers, or spawn ephemeral 6-digit instances globally crossing subnet frontiers natively resolving STUN ICE gaps.
+- 🎨 **Premium Cyber Aesthetic** — A responsive modern dashboard wrapped inside Framer Motion with automatic chat auto-scroll logic that knows when you're reading!
+- 🍬 **Cute Usernames** — Generates dessert-styled aliases upon joining. (Ex: _PinkGulabCrispy_)
 
 ## 🏗️ Architecture
 
@@ -63,7 +62,7 @@ A blazing-fast, zero-storage, peer-to-peer file transfer and chat platform built
 1. **Clone the repository**
 
    ```bash
-   git clone https://github.com/yourusername/lynkless.git
+   git clone https://github.com/Sathvik-Nagesh/Lynkless.git
    cd lynkless
    ```
 
@@ -92,7 +91,7 @@ A blazing-fast, zero-storage, peer-to-peer file transfer and chat platform built
    - Create a room in tab 1
    - Join with the 6-digit code in tab 2
    - Click a peer to connect
-   - Drop a file and watch it transfer instantly! 🎉
+   - Drop a folder or file natively! 🎉
 
 ## 🌐 Network Access (Same WiFi)
 
@@ -121,38 +120,23 @@ To access from other devices on your network:
 
 ## 📁 Project Structure
 
-```
+```text
 Lynkless/
-├── signaling-server/           # WebSocket signaling server
-│   ├── server.js              # Main server
-│   ├── websocketHandlers.js   # Message handlers
-│   └── rooms.js               # Room management
+├── signaling-server/           # WebSocket signaling server routing Handshakes
+│   ├── server.js
+│   ├── websocketHandlers.js
+│   └── rooms.js
 │
-└── frontend/                   # Next.js application
+└── frontend/                   # Next.js 16 application natively Turbopack
     ├── src/
-    │   ├── app/               # Pages
-    │   ├── components/        # UI components
-    │   ├── hooks/             # React hooks
+    │   ├── app/               # NextPages & UI Matrix
+    │   ├── components/        # React Subcomponents
+    │   ├── hooks/             # WebRTC & Signaling hooks
     │   └── lib/
-    │       ├── webrtc/        # WebRTC connection logic
-    │       └── socket/        # WebSocket client
-    └── .env.local             # Configuration
-```
-
-## 🔧 Configuration
-
-### Environment Variables
-
-**Frontend** (`frontend/.env.local`):
-
-```env
-NEXT_PUBLIC_SIGNALING_URL=ws://localhost:8080
-```
-
-**Signaling Server**:
-
-```env
-PORT=8080  # Default port
+    │       ├── webrtc/        # Connection Engines & FileTransfer Handlers
+    │       ├── db/            # IndexedDB Vaults
+    │       └── socket/        # WebSocket orchestrations natively
+    └── .env.local
 ```
 
 ## 🌍 Deployment
@@ -184,45 +168,10 @@ fly deploy
 
 ## 🛡️ Security & Privacy
 
-- ✅ **WebRTC DTLS** — All connections encrypted by default
-- ✅ **Zero Server Storage** — Files never stored anywhere
-- ✅ **Connection Fingerprints** — SHA-256 verification codes
-- ✅ **Subnet Discovery** — Nearby peers detected securely
-- ✅ **Ephemeral Data** — Chat and transfers disappear on disconnect
-
-## 🎯 Use Cases
-
-- 🎬 **Media Sharing** — Send large video files between devices
-- 📸 **Photo Transfer** — Move photos from phone to laptop
-- 📁 **Document Sharing** — Share files without email attachments
-- 💼 **Work Collaboration** — Quick file exchange in meetings
-- 🏠 **Home Network** — Transfer between your own devices
-
-## 🎨 Tech Stack
-
-**Frontend:**
-
-- Next.js 16 (Turbopack)
-- TypeScript
-- Tailwind CSS
-- Framer Motion
-- WebRTC APIs
-
-**Backend:**
-
-- Node.js
-- WebSocket (ws)
-- Room management
-
-## 📝 How It Works
-
-1. **Create/Join Room** — Use 6-digit code or QR scan
-2. **Peer Discovery** — Nearby peers (subnet) auto-detected
-3. **Request Connection** — Click peer in radar
-4. **Accept Request** — Peer approves connection
-5. **Verify Fingerprint** — Both see same SHA-256 code
-6. **Transfer Files** — Drag & drop or use file picker
-7. **Chat** — Send messages over data channel
+- ✅ **WebRTC DTLS** — All connections encrypted natively.
+- ✅ **AES-GCM File Encoding** — Protect native folder matrices over a custom User Input password completely out of the box dynamically natively.
+- ✅ **Zero Server Storage** — Files never stored natively.
+- ✅ **Connection Fingerprints** — SHA-256 validation verifying man-in-the-middle attacks.
 
 ## 🤝 Contributing
 
@@ -236,14 +185,17 @@ Contributions welcome! Feel free to:
 
 MIT License - feel free to use for personal or commercial projects.
 
-## 💡 Future Ideas
+## 💡 Roadmap & Tasks completed
 
-- [x] E2E encryption layer
-- [ ] Screen sharing
-- [ ] Voice/video calls
-- [ ] Mobile app (React Native)
-- [x] Folder upload
-- [x] Transfer history dashboard
+- [x] E2E custom encryption layer
+- [x] Resumable transfers natively parsing byte alignments.
+- [x] Multi-peer mesh transfers
+- [x] Screen sharing pipeline!
+- [x] Folder directory recursively parsing support
+- [x] Transfer IndexedDB dashboard globally tracking session hashes.
+- [x] Inline formatting chat!
+- [ ] Voice/video call support
+- [ ] Mobile native fallback Service Worker
 
 ---
 
