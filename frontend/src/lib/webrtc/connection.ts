@@ -46,6 +46,7 @@ export interface PeerConnection {
   localSdp?: string;
   remoteSdp?: string;
   fingerprint?: string;
+  initialNegotiationComplete: boolean;
 }
 
 export type DataHandler = (peerId: string, data: ArrayBuffer | string) => void;
@@ -135,6 +136,7 @@ class WebRTCManager {
 
     // Store local SDP for fingerprint generation
     peerConnection.localSdp = offer.sdp;
+    peerConnection.initialNegotiationComplete = true;
 
     this.signaling.send({
       type: 'offer',
@@ -175,6 +177,7 @@ class WebRTCManager {
 
     // Store local SDP and generate fingerprint
     peerConnection.localSdp = answer.sdp;
+    peerConnection.initialNegotiationComplete = true;
     await this.generateAndStoreFingerprint(fromId, peerConnection);
 
     this.signaling.send({
@@ -194,6 +197,7 @@ class WebRTCManager {
       await peer.connection.setRemoteDescription(answer);
       // Mark remote description as set and flush buffered candidates
       this.remoteDescriptionSet.set(fromId, true);
+      peer.initialNegotiationComplete = true;
       await this.flushIceCandidateBuffer(fromId);
 
       // Store remote SDP and generate fingerprint
@@ -262,6 +266,7 @@ class WebRTCManager {
       dataChannel: null,
       state: 'new',
       isNearby,
+      initialNegotiationComplete: false,
     };
 
     // ICE candidate handling
@@ -312,15 +317,24 @@ class WebRTCManager {
 
     // Handle renegotiation
     connection.onnegotiationneeded = async () => {
+      if (!peerConnection.initialNegotiationComplete) {
+        // Ignoring negotiation needed during initial setup loop
+        return;
+      }
       try {
-        console.log('[WebRTC] Negotiation needed for', peerId);
+        // Debounce or catch stable state
+        if (connection.signalingState !== 'stable') return;
+
+        console.log('[WebRTC] Renegotiation needed for', peerId);
         const offer = await connection.createOffer();
         await connection.setLocalDescription(offer);
         peerConnection.localSdp = offer.sdp;
+        
         this.signaling.send({
           type: 'offer',
           targetId: peerId,
           offer: connection.localDescription,
+          isNearby: peerConnection.isNearby,
         });
       } catch (err) {
         console.error('[WebRTC] onnegotiationneeded error:', err);
