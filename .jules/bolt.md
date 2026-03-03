@@ -25,3 +25,11 @@
 ## 2026-02-25 - Moving Math out of Hot Loops
 **Learning:** Calculating transfer metrics (speed, ETA, progress %) for every incoming/outgoing chunk (64KB) consumes significant CPU on the main thread during high-speed transfers.
 **Action:** Pass raw data to a throttled notification method and perform expensive calculations only when an update is actually being emitted to listeners (e.g., every 100ms).
+
+## 2026-02-28 - Efficient IndexedDB History Retrieval
+**Learning:** Fetching an entire database table and sorting it in JavaScript is O(n log n) and memory-intensive. IndexedDB indexes support reverse traversal and limits natively.
+**Action:** Use `index.openCursor(null, 'prev')` and a counter to fetch only the N most recent records. This keeps memory usage constant regardless of history size.
+
+## 2026-02-28 - Event-Driven UI vs. Polling
+**Learning:** Polling a database at fixed intervals (e.g., 5s) wastes CPU/IO and creates lag between data changes and UI updates.
+**Action:** Implement a simple Observer pattern (pub/sub) in the data layer. Notify listeners immediately when data changes, allowing the UI to react instantly and stay idle when nothing is happening.
