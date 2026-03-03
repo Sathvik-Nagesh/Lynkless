@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, memo, useCallback, useRef } from 'react';
+import { useState, useEffect, memo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { TransferHistoryEntry, getTransferHistory, clearTransferHistory } from '@/lib/db/transferHistory';
+import { TransferHistoryEntry, getTransferHistory, clearTransferHistory, onHistoryChange } from '@/lib/db/transferHistory';
 
 const TransferHistoryPanel = memo(function TransferHistoryPanel() {
   const [history, setHistory] = useState<TransferHistoryEntry[]>([]);
@@ -14,29 +14,25 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
   }, []);
 
   /**
-   * Performance optimization: use a Ref to access isExpanded within
-   * the polling effect without triggering re-initialization of the interval.
+   * Bolt: Performance optimization - replace polling with an observer pattern.
+   * Listen for history changes only when the panel is expanded.
    */
-  const isExpandedRef = useRef(isExpanded);
   useEffect(() => {
-    isExpandedRef.current = isExpanded;
-    if (isExpanded) {
-      // Use setTimeout to move the state update out of the render/effect cycle
-      // and satisfy the "no-set-state-in-effect" lint rule while preserving functionality.
-      setTimeout(loadHistory, 0);
-    }
-  }, [isExpanded, loadHistory]);
+    if (!isExpanded) return;
 
-  // Optionally poll or listen for new history items. Simple interval when expanded:
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // Only perform expensive DB reads if the panel is actually active
-      if (isExpandedRef.current) {
-        loadHistory();
-      }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [loadHistory]);
+    // Load initial data
+    // Use setTimeout to avoid synchronous setState during render cycle
+    setTimeout(loadHistory, 0);
+
+    // Subscribe to future changes
+    const unsubscribe = onHistoryChange(() => {
+      loadHistory();
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [isExpanded, loadHistory]);
 
   const clearHistory = async () => {
     if (window.confirm('Clear all transfer history?')) {
