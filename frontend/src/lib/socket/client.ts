@@ -85,9 +85,13 @@ class SignalingClientImpl implements SignalingClient {
         if (event.code !== 1000 && this.reconnectAttempts < this.maxReconnectAttempts) {
           this.reconnectAttempts++;
           console.log(`[Signaling] Reconnecting... Attempt ${this.reconnectAttempts}`);
+          this.handlers.forEach((handler) => handler({ type: 'reconnecting', attempt: this.reconnectAttempts }));
           setTimeout(() => this.initWebSocket(), this.reconnectDelay * this.reconnectAttempts);
-        } else if (this.connectionRejecter && !this.clientId) {
-          this.connectionRejecter(new Error('Failed to connect to signaling server'));
+        } else {
+          if (this.connectionRejecter && !this.clientId) {
+            this.connectionRejecter(new Error('Failed to connect to signaling server'));
+          }
+          this.handlers.forEach((handler) => handler({ type: 'disconnected' }));
         }
       };
 
