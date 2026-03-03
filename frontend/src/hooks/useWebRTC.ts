@@ -41,6 +41,10 @@ interface UseWebRTCReturn {
   disconnectFromPeer: (peerId: string) => void;
   disconnectAll: () => void;
   getFingerprint: (peerId: string) => string | undefined;
+  localStream: MediaStream | null;
+  remoteStreams: Map<string, MediaStream>;
+  startScreenShare: () => Promise<void>;
+  stopScreenShare: () => void;
 }
 
 export function useWebRTC(clientId: string | null): UseWebRTCReturn {
@@ -48,6 +52,9 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
   const [transfers, setTransfers] = useState<TransferProgress[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [fingerprints, setFingerprints] = useState<Map<string, string>>(new Map());
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
+  const localSendersRef = useRef<Map<string, RTCRtpSender[]>>(new Map());
 
   const webrtcRef = useRef(getWebRTCManager());
   const fileTransferRef = useRef(getFileTransferManager());
@@ -140,11 +147,31 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
       setMessages((prev) => [...prev, message]);
     });
 
+    // Handle track additions (remote media)
+    const unsubTrack = webrtc.onTrack((peerId, track, streams) => {
+      setRemoteStreams((prev) => {
+        const newMap = new Map(prev);
+        if (streams && streams[0]) {
+          newMap.set(peerId, streams[0]);
+        }
+        return newMap;
+      });
+      // Handle when track ends remotely
+      track.onmute = () => {
+        setRemoteStreams((prev) => {
+          const newMap = new Map(prev);
+          newMap.delete(peerId);
+          return newMap;
+        });
+      };
+    });
+
     return () => {
       unsubState();
       unsubFingerprint();
       unsubProgress();
       unsubChat();
+      unsubTrack();
     };
   }, []);
 
@@ -192,6 +219,47 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
     return fingerprints.get(peerId);
   }, [fingerprints]);
 
+  const stopScreenShare = useCallback(() => {
+    if (localStream) {
+      localStream.getTracks().forEach((track) => track.stop());
+      
+      const webrtc = webrtcRef.current;
+      localSendersRef.current.forEach((senders, peerId) => {
+        senders.forEach((sender) => webrtc.removeTrack(peerId, sender));
+      });
+      
+      localSendersRef.current.clear();
+      setLocalStream(null);
+    }
+  }, [localStream]);
+
+  const startScreenShare = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      setLocalStream(stream);
+
+      // Handle user stopping screen share from browser UI
+      stream.getVideoTracks()[0].onended = () => {
+        stopScreenShare();
+      };
+
+      const webrtc = webrtcRef.current;
+      localSendersRef.current.clear();
+
+      webrtc.getConnectedPeers().forEach((peer) => {
+        const senders: RTCRtpSender[] = [];
+        stream.getTracks().forEach((track) => {
+          const sender = webrtc.addTrack(peer.peerId, track, stream);
+          if (sender) senders.push(sender);
+        });
+        localSendersRef.current.set(peer.peerId, senders);
+      });
+
+    } catch (err) {
+      console.error('Failed to start screen share', err);
+    }
+  }, [stopScreenShare]);
+
   return {
     peers,
     transfers,
@@ -207,5 +275,9 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
     disconnectFromPeer,
     disconnectAll,
     getFingerprint,
+    localStream,
+    remoteStreams,
+    startScreenShare,
+    stopScreenShare,
   };
 }

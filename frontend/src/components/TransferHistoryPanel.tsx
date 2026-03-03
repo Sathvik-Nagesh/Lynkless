@@ -41,11 +41,15 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
   };
 
   const formatSize = (bytes: number) => {
+    if (!isFinite(bytes) || isNaN(bytes)) return '0 B';
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
     if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
   };
+
+  const totalDataSent = history.filter(h => h.status === 'completed' && h.transferType === 'outgoing').reduce((acc, curr) => acc + curr.totalSize, 0);
+  const totalDataReceived = history.filter(h => h.status === 'completed' && h.transferType === 'incoming').reduce((acc, curr) => acc + curr.totalSize, 0);
 
   return (
     <div className="panel-elevated overflow-hidden flex flex-col mt-6">
@@ -88,14 +92,24 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
             className="overflow-hidden"
             transition={{ duration: 0.15 }}
           >
-            <div className="p-4 flex justify-end" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+            <div className="p-4 pt-2 flex items-center justify-between" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+               <div className="flex gap-4">
+                 <div className="flex flex-col">
+                   <span className="text-[10px] text-[#64748B] uppercase font-bold tracking-wider">Total Sent</span>
+                   <span className="text-sm font-semibold text-[#60A5FA]">{formatSize(totalDataSent)}</span>
+                 </div>
+                 <div className="flex flex-col">
+                   <span className="text-[10px] text-[#64748B] uppercase font-bold tracking-wider">Total Received</span>
+                   <span className="text-sm font-semibold text-[#34D399]">{formatSize(totalDataReceived)}</span>
+                 </div>
+               </div>
                {history.length > 0 && (
-                 <button onClick={clearHistory} className="text-xs text-red-500 hover:text-red-400">
+                 <button onClick={clearHistory} className="text-[11px] px-2 py-1 rounded bg-[#EF4444]/10 text-red-500 hover:text-red-400 hover:bg-[#EF4444]/20 transition-all font-medium">
                    Clear History
                  </button>
                )}
             </div>
-            <div className="h-64 overflow-y-auto px-4 pb-4 space-y-2">
+            <div className="h-64 overflow-y-auto px-4 pb-4 space-y-2 mt-2">
               {history.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full">
                   <p className="text-sm text-[#64748B]">No recent transfers</p>

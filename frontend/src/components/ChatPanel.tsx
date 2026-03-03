@@ -18,12 +18,28 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
   const [unreadCount, setUnreadCount] = useState(0);
   const [isTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const lastMessageCountRef = useRef(messages.length);
 
-  // Auto-scroll to latest message
+  // Auto-scroll to latest message smartly
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = containerRef.current;
+    if (!container) return;
+
+    // Check if we are near the bottom (within 100px)
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 150;
+    
+    // Check if the latest message is our own or if it's the very first load
+    const lastMessage = messages[messages.length - 1];
+    const isOwnMessage = lastMessage?.isOwn;
+    const isFirstLoad = lastMessageCountRef.current === 0 && messages.length > 0;
+
+    if (isNearBottom || isOwnMessage || isFirstLoad) {
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 50);
+    }
   }, [messages]);
 
   // Track unread messages when collapsed
@@ -70,6 +86,29 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
     if (index === 0) return false;
     return messages[index].fromId === messages[index - 1].fromId &&
            messages[index].isOwn === messages[index - 1].isOwn;
+  };
+
+  const renderMessageContent = (content: string) => {
+    const codeBlockRegex = /```([\s\S]*?)```/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+    
+    while ((match = codeBlockRegex.exec(content)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(<span key={lastIndex}>{content.slice(lastIndex, match.index)}</span>);
+      }
+      parts.push(
+         <pre key={match.index} className="bg-[#020617] p-3 rounded-lg text-[11px] mt-1 mb-1 overflow-x-auto text-[#22D3EE] border border-[#334155]/50 shadow-inner block w-full font-mono">
+           <code>{match[1].trim()}</code>
+         </pre>
+      );
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < content.length) {
+      parts.push(<span key={lastIndex} className="whitespace-pre-wrap">{content.slice(lastIndex)}</span>);
+    }
+    return parts.length > 0 ? parts : <span className="whitespace-pre-wrap">{content}</span>;
   };
 
   return (
@@ -147,6 +186,7 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
           >
             {/* Messages */}
             <div 
+              ref={containerRef}
               className="h-72 overflow-y-auto p-4 space-y-1"
               style={{ borderTop: '1px solid var(--border-subtle)' }}
             >
@@ -202,12 +242,12 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
                             <span>{getPeerName(msg.fromId)}</span>
                           </p>
                         )}
-                        <p 
+                        <div 
                           className="break-words text-sm leading-relaxed"
                           style={{ color: msg.isOwn ? '#E6EDF3' : '#CBD5E1' }}
                         >
-                          {msg.content}
-                        </p>
+                          {renderMessageContent(msg.content)}
+                        </div>
                         {/* Timestamp on hover */}
                         <span 
                           className="text-[9px] opacity-0 group-hover:opacity-100 transition-opacity absolute -bottom-4 text-[#475569]"
