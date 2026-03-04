@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, memo, useCallback, useRef } from 'react';
+import { useState, useEffect, memo, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { TransferHistoryEntry, getTransferHistory, clearTransferHistory } from '@/lib/db/transferHistory';
+import { TransferHistoryEntry, getTransferHistory, clearTransferHistory, onHistoryChange } from '@/lib/db/transferHistory';
 
 const TransferHistoryPanel = memo(function TransferHistoryPanel() {
   const [history, setHistory] = useState<TransferHistoryEntry[]>([]);
@@ -14,29 +14,28 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
   }, []);
 
   /**
-   * Performance optimization: use a Ref to access isExpanded within
-   * the polling effect without triggering re-initialization of the interval.
+   * Bolt: Use observer pattern instead of polling
+   * This reduces unnecessary database reads and ensures the UI is always in sync.
+   * Subscription is only active when the panel is expanded to save resources.
    */
-  const isExpandedRef = useRef(isExpanded);
   useEffect(() => {
-    isExpandedRef.current = isExpanded;
-    if (isExpanded) {
-      // Use setTimeout to move the state update out of the render/effect cycle
-      // and satisfy the "no-set-state-in-effect" lint rule while preserving functionality.
-      setTimeout(loadHistory, 0);
-    }
-  }, [isExpanded, loadHistory]);
+    if (!isExpanded) return;
 
-  // Optionally poll or listen for new history items. Simple interval when expanded:
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // Only perform expensive DB reads if the panel is actually active
-      if (isExpandedRef.current) {
-        loadHistory();
-      }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [loadHistory]);
+    // Bolt: Use setTimeout to avoid synchronous setState in useEffect
+    const timer = setTimeout(() => {
+      loadHistory();
+    }, 0);
+
+    // Subscribe to future changes
+    const unsubscribe = onHistoryChange(() => {
+      loadHistory();
+    });
+
+    return () => {
+      clearTimeout(timer);
+      unsubscribe();
+    };
+  }, [isExpanded, loadHistory]);
 
   const clearHistory = async () => {
     if (window.confirm('Clear all transfer history?')) {
@@ -59,8 +58,21 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
     return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
   };
 
-  const totalDataSent = history.filter(h => h.status === 'completed' && h.transferType === 'outgoing').reduce((acc, curr) => acc + curr.totalSize, 0);
-  const totalDataReceived = history.filter(h => h.status === 'completed' && h.transferType === 'incoming').reduce((acc, curr) => acc + curr.totalSize, 0);
+  /**
+   * Bolt: Memoize aggregate statistics
+   * Prevents re-calculating totals on every render unless history changes.
+   */
+  const stats = useMemo(() => {
+    const completed = history.filter(h => h.status === 'completed');
+    const totalDataSent = completed
+      .filter(h => h.transferType === 'outgoing')
+      .reduce((acc, curr) => acc + curr.totalSize, 0);
+    const totalDataReceived = completed
+      .filter(h => h.transferType === 'incoming')
+      .reduce((acc, curr) => acc + curr.totalSize, 0);
+
+    return { totalDataSent, totalDataReceived };
+  }, [history]);
 
   return (
     <div className="panel-elevated overflow-hidden flex flex-col mt-6">
@@ -107,11 +119,11 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
                <div className="flex gap-4">
                  <div className="flex flex-col">
                    <span className="text-[10px] text-[#64748B] uppercase font-bold tracking-wider">Total Sent</span>
-                   <span className="text-sm font-semibold text-[#60A5FA]">{formatSize(totalDataSent)}</span>
+                   <span className="text-sm font-semibold text-[#60A5FA]">{formatSize(stats.totalDataSent)}</span>
                  </div>
                  <div className="flex flex-col">
                    <span className="text-[10px] text-[#64748B] uppercase font-bold tracking-wider">Total Received</span>
-                   <span className="text-sm font-semibold text-[#34D399]">{formatSize(totalDataReceived)}</span>
+                   <span className="text-sm font-semibold text-[#34D399]">{formatSize(stats.totalDataReceived)}</span>
                  </div>
                </div>
                {history.length > 0 && (
@@ -139,7 +151,7 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
                         {entry.status.charAt(0).toUpperCase() + entry.status.slice(1)}
                       </span>
                     </div>
-                    <div className="flex justify-between items-center mt-1 text-[10px] text-[#94A3B8]">
+                    <div className="justify-between flex items-center mt-1 text-[10px] text-[#94A3B8]">
                       <span>{formatSize(entry.totalSize)}</span>
                       <span>{formatTime(entry.timestamp)}</span>
                     </div>

@@ -35,23 +35,49 @@ export const getDB = () => {
   return dbPromise;
 };
 
+// Bolt: Simple observer pattern for database changes
+type HistoryChangeListener = () => void;
+const listeners = new Set<HistoryChangeListener>();
+
+export const onHistoryChange = (listener: HistoryChangeListener) => {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+};
+
+const notifyListeners = () => {
+  listeners.forEach(listener => listener());
+};
+
 export const saveTransferHistory = async (entry: TransferHistoryEntry) => {
   try {
     const db = await getDB();
     if (db) {
       await db.put('transfers', entry);
+      notifyListeners();
     }
   } catch (err) {
     console.error('[DB] Failed to save transfer history', err);
   }
 };
 
-export const getTransferHistory = async (): Promise<TransferHistoryEntry[]> => {
+/**
+ * Bolt: Optimized history retrieval
+ * Uses a reverse cursor on the timestamp index and a limit of 50 items
+ * to prevent performance degradation as the database grows.
+ */
+export const getTransferHistory = async (limit = 50): Promise<TransferHistoryEntry[]> => {
   try {
     const db = await getDB();
     if (db) {
-      const all = await db.getAllFromIndex('transfers', 'by-timestamp');
-      return all.sort((a, b) => b.timestamp - a.timestamp);
+      const results: TransferHistoryEntry[] = [];
+      let cursor = await db.transaction('transfers').store.index('by-timestamp').openCursor(null, 'prev');
+
+      while (cursor && results.length < limit) {
+        results.push(cursor.value);
+        cursor = await cursor.continue();
+      }
+
+      return results;
     }
   } catch (err) {
     console.error('[DB] Failed to get transfer history', err);
@@ -64,6 +90,7 @@ export const clearTransferHistory = async () => {
     const db = await getDB();
     if (db) {
       await db.clear('transfers');
+      notifyListeners();
     }
   } catch (err) {
     console.error('[DB] Failed to clear transfer history', err);

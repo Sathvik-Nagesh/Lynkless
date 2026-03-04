@@ -7,7 +7,7 @@
 **Action:** Move state resets to the event handlers that trigger the change (e.g., the onClick handler of the toggle button) to keep state updates bundled in a single render.
 
 ## 2026-02-14 - Derived State vs. useEffect for Visibility
-**Learning:** Using `useEffect` to sync a visibility state with props (e.g., showing a modal when `isConnected` becomes true) causes a synchronous cascading render. This is inefficient and often unnecessary.
+**Learning:** Using `useEffect` to sync a visibility state with props (e.g., showing a modal when `isConnected` becomes true) causes a synchronous cascading renders. This is inefficient and often unnecessary.
 **Action:** Use derived state (a simple boolean expression in the render body) whenever possible. If state is needed for manual dismissal, use a "closed version" state (e.g., `closedForId`) to track which item was last dismissed, allowing the UI to re-appear if the ID changes.
 
 ## 2026-02-15 - Eliminating Base64 Overhead in P2P Transfers
@@ -25,3 +25,11 @@
 ## 2026-02-25 - Moving Math out of Hot Loops
 **Learning:** Calculating transfer metrics (speed, ETA, progress %) for every incoming/outgoing chunk (64KB) consumes significant CPU on the main thread during high-speed transfers.
 **Action:** Pass raw data to a throttled notification method and perform expensive calculations only when an update is actually being emitted to listeners (e.g., every 100ms).
+
+## 2026-03-04 - Scalable IndexedDB Retrieval with Reverse Cursors
+**Learning:** Using `getAll()` or `getAllFromIndex()` on a growing database can lead to significant memory and CPU overhead as every record is fetched into memory before filtering/sorting.
+**Action:** Use IndexedDB cursors (`openCursor(null, 'prev')`) with a hard limit to fetch only the necessary subset of data directly from the index.
+
+## 2026-03-04 - Reactive UI without Polling
+**Learning:** Polling a database (e.g., every 5 seconds) for UI updates causes unnecessary wake-ups and I/O overhead, even when no data has changed.
+**Action:** Implement a simple observer pattern (Pub/Sub) for database-level changes to ensure components only re-fetch data when an actual mutation occurs.
