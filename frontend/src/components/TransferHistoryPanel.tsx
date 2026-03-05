@@ -1,66 +1,68 @@
 'use client';
 
-import { useState, useEffect, memo, useCallback, useRef } from 'react';
+import { useState, useEffect, memo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { TransferHistoryEntry, getTransferHistory, clearTransferHistory } from '@/lib/db/transferHistory';
+import {
+  TransferHistoryEntry,
+  getTransferHistory,
+  getTransferStats,
+  clearTransferHistory,
+  onHistoryChange
+} from '@/lib/db/transferHistory';
+
+// Bolt: Move helper functions outside to avoid redundant re-initialization on every render
+const formatTime = (ts: number) => {
+  return new Date(ts).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+  });
+};
+
+const formatSize = (bytes: number) => {
+  if (!isFinite(bytes) || isNaN(bytes)) return '0 B';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+};
 
 const TransferHistoryPanel = memo(function TransferHistoryPanel() {
   const [history, setHistory] = useState<TransferHistoryEntry[]>([]);
+  const [stats, setStats] = useState({ sent: 0, received: 0 });
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const loadHistory = useCallback(async () => {
-    const data = await getTransferHistory();
-    setHistory(data);
+  const loadData = useCallback(async () => {
+    const [h, s] = await Promise.all([
+      getTransferHistory(50), // Bolt: Limit to recent 50 items
+      getTransferStats()      // Bolt: Get accurate totals across all history
+    ]);
+    setHistory(h);
+    setStats(s);
   }, []);
 
-  /**
-   * Performance optimization: use a Ref to access isExpanded within
-   * the polling effect without triggering re-initialization of the interval.
-   */
-  const isExpandedRef = useRef(isExpanded);
+  // Bolt: Use the observer pattern to keep the history in sync without polling
   useEffect(() => {
-    isExpandedRef.current = isExpanded;
-    if (isExpanded) {
-      // Use setTimeout to move the state update out of the render/effect cycle
-      // and satisfy the "no-set-state-in-effect" lint rule while preserving functionality.
-      setTimeout(loadHistory, 0);
-    }
-  }, [isExpanded, loadHistory]);
+    // Only subscribe to changes if the panel is expanded to save resources
+    if (!isExpanded) return;
 
-  // Optionally poll or listen for new history items. Simple interval when expanded:
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // Only perform expensive DB reads if the panel is actually active
-      if (isExpandedRef.current) {
-        loadHistory();
-      }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [loadHistory]);
+    // Load initial data when expanding
+    const timer = setTimeout(loadData, 0);
+
+    // Subscribe to database changes
+    const unsubscribe = onHistoryChange(loadData);
+
+    return () => {
+      clearTimeout(timer);
+      unsubscribe();
+    };
+  }, [isExpanded, loadData]);
 
   const clearHistory = async () => {
     if (window.confirm('Clear all transfer history?')) {
       await clearTransferHistory();
       setHistory([]);
+      setStats({ sent: 0, received: 0 });
     }
   };
-
-  const formatTime = (ts: number) => {
-    return new Date(ts).toLocaleString(undefined, {
-      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-    });
-  };
-
-  const formatSize = (bytes: number) => {
-    if (!isFinite(bytes) || isNaN(bytes)) return '0 B';
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
-  };
-
-  const totalDataSent = history.filter(h => h.status === 'completed' && h.transferType === 'outgoing').reduce((acc, curr) => acc + curr.totalSize, 0);
-  const totalDataReceived = history.filter(h => h.status === 'completed' && h.transferType === 'incoming').reduce((acc, curr) => acc + curr.totalSize, 0);
 
   return (
     <div className="panel-elevated overflow-hidden flex flex-col mt-6">
@@ -107,11 +109,11 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
                <div className="flex gap-4">
                  <div className="flex flex-col">
                    <span className="text-[10px] text-[#64748B] uppercase font-bold tracking-wider">Total Sent</span>
-                   <span className="text-sm font-semibold text-[#60A5FA]">{formatSize(totalDataSent)}</span>
+                   <span className="text-sm font-semibold text-[#60A5FA]">{formatSize(stats.sent)}</span>
                  </div>
                  <div className="flex flex-col">
                    <span className="text-[10px] text-[#64748B] uppercase font-bold tracking-wider">Total Received</span>
-                   <span className="text-sm font-semibold text-[#34D399]">{formatSize(totalDataReceived)}</span>
+                   <span className="text-sm font-semibold text-[#34D399]">{formatSize(stats.received)}</span>
                  </div>
                </div>
                {history.length > 0 && (
