@@ -25,3 +25,7 @@
 ## 2026-02-25 - Moving Math out of Hot Loops
 **Learning:** Calculating transfer metrics (speed, ETA, progress %) for every incoming/outgoing chunk (64KB) consumes significant CPU on the main thread during high-speed transfers.
 **Action:** Pass raw data to a throttled notification method and perform expensive calculations only when an update is actually being emitted to listeners (e.g., every 100ms).
+
+## 2026-03-06 - Efficient History Retrieval with IndexedDB Cursors
+**Learning:** Fetching an entire IndexedDB store and sorting it in JavaScript (e.g., for a transfer history log) becomes a major performance bottleneck and memory hog as the history grows.
+**Action:** Use IndexedDB cursors with a limit and specify direction (e.g., `openCursor(null, 'prev')`) to fetch only the most recent items directly from the database, and implement an observer pattern to keep the UI reactive without polling.
