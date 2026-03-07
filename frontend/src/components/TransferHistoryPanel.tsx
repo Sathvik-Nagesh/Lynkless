@@ -1,47 +1,59 @@
 'use client';
 
-import { useState, useEffect, memo, useCallback, useRef } from 'react';
+import { useState, useEffect, memo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { TransferHistoryEntry, getTransferHistory, clearTransferHistory } from '@/lib/db/transferHistory';
+import {
+  TransferHistoryEntry,
+  getTransferHistory,
+  clearTransferHistory,
+  onHistoryChange,
+  getTransferStats
+} from '@/lib/db/transferHistory';
 
 const TransferHistoryPanel = memo(function TransferHistoryPanel() {
   const [history, setHistory] = useState<TransferHistoryEntry[]>([]);
+  const [stats, setStats] = useState({ totalSent: 0, totalReceived: 0 });
   const [isExpanded, setIsExpanded] = useState(false);
 
+  /**
+   * Performance optimization: Fetches both history and stats.
+   * Bolt: Moves expensive calculations out of the render cycle.
+   */
   const loadHistory = useCallback(async () => {
-    const data = await getTransferHistory();
+    const [data, aggregateStats] = await Promise.all([
+      getTransferHistory(50),
+      getTransferStats()
+    ]);
     setHistory(data);
+    setStats(aggregateStats);
   }, []);
 
-  /**
-   * Performance optimization: use a Ref to access isExpanded within
-   * the polling effect without triggering re-initialization of the interval.
-   */
-  const isExpandedRef = useRef(isExpanded);
   useEffect(() => {
-    isExpandedRef.current = isExpanded;
     if (isExpanded) {
-      // Use setTimeout to move the state update out of the render/effect cycle
-      // and satisfy the "no-set-state-in-effect" lint rule while preserving functionality.
-      setTimeout(loadHistory, 0);
+      // Subscribe to changes instead of polling
+      // Bolt: Eliminates background DB activity when no changes occur.
+      const unsubscribe = onHistoryChange(() => {
+        loadHistory();
+      });
+      return () => {
+        unsubscribe();
+      };
     }
   }, [isExpanded, loadHistory]);
 
-  // Optionally poll or listen for new history items. Simple interval when expanded:
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // Only perform expensive DB reads if the panel is actually active
-      if (isExpandedRef.current) {
-        loadHistory();
-      }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [loadHistory]);
+  const toggleExpanded = useCallback(() => {
+    const nextState = !isExpanded;
+    setIsExpanded(nextState);
+    if (nextState) {
+      loadHistory();
+    }
+  }, [isExpanded, loadHistory]);
 
   const clearHistory = async () => {
     if (window.confirm('Clear all transfer history?')) {
       await clearTransferHistory();
       setHistory([]);
+      setStats({ totalSent: 0, totalReceived: 0 });
     }
   };
 
@@ -59,13 +71,10 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
     return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
   };
 
-  const totalDataSent = history.filter(h => h.status === 'completed' && h.transferType === 'outgoing').reduce((acc, curr) => acc + curr.totalSize, 0);
-  const totalDataReceived = history.filter(h => h.status === 'completed' && h.transferType === 'incoming').reduce((acc, curr) => acc + curr.totalSize, 0);
-
   return (
     <div className="panel-elevated overflow-hidden flex flex-col mt-6">
       <button
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={toggleExpanded}
         className="flex items-center justify-between p-5 hover:bg-[#1C2433] transition-colors duration-150"
       >
         <div className="flex items-center gap-3">
@@ -107,11 +116,11 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
                <div className="flex gap-4">
                  <div className="flex flex-col">
                    <span className="text-[10px] text-[#64748B] uppercase font-bold tracking-wider">Total Sent</span>
-                   <span className="text-sm font-semibold text-[#60A5FA]">{formatSize(totalDataSent)}</span>
+                   <span className="text-sm font-semibold text-[#60A5FA]">{formatSize(stats.totalSent)}</span>
                  </div>
                  <div className="flex flex-col">
                    <span className="text-[10px] text-[#64748B] uppercase font-bold tracking-wider">Total Received</span>
-                   <span className="text-sm font-semibold text-[#34D399]">{formatSize(totalDataReceived)}</span>
+                   <span className="text-sm font-semibold text-[#34D399]">{formatSize(stats.totalReceived)}</span>
                  </div>
                </div>
                {history.length > 0 && (
