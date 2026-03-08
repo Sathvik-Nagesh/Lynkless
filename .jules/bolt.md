@@ -29,3 +29,7 @@
 ## 2026-03-01 - Efficient Database Polling with Observer Pattern
 **Learning:** Polling IndexedDB with a fixed interval (e.g., 5s) to update history UI is inefficient and drains battery. Furthermore, fetching the entire history and sorting it in JavaScript becomes O(N log N) in the main thread.
 **Action:** Implement an observer pattern for database changes and use an IndexedDB reverse cursor with a limit to fetch only the N most recent items. This keeps UI updates reactive and lightweight.
+
+## 2026-03-05 - Zero-Copy E2EE Buffer Management
+**Learning:** Manual buffer concatenation in E2EE operations (like salt + IV + encrypted data) creates a full copy of the encrypted data, potentially doubling memory usage during large file transfers. Similarly, `ArrayBuffer.slice()` creates unnecessary copies.
+**Action:** Use the `File` constructor's ability to take an array of buffers for zero-copy concatenation, and use `TypedArray.prototype.subarray()` for extraction to create views instead of copies.
