@@ -35,23 +35,48 @@ export const getDB = () => {
   return dbPromise;
 };
 
+// Observer pattern for history changes to eliminate polling
+type HistoryChangeHandler = () => void;
+const changeHandlers = new Set<HistoryChangeHandler>();
+
+export const onHistoryChange = (handler: HistoryChangeHandler) => {
+  changeHandlers.add(handler);
+  return () => changeHandlers.delete(handler);
+};
+
+const notifyChange = () => {
+  changeHandlers.forEach(handler => handler());
+};
+
 export const saveTransferHistory = async (entry: TransferHistoryEntry) => {
   try {
     const db = await getDB();
     if (db) {
       await db.put('transfers', entry);
+      notifyChange();
     }
   } catch (err) {
     console.error('[DB] Failed to save transfer history', err);
   }
 };
 
-export const getTransferHistory = async (): Promise<TransferHistoryEntry[]> => {
+/**
+ * Optimized history fetching using a reverse cursor and limit.
+ * Bolt: Prevents loading the entire database into memory for UI display.
+ */
+export const getTransferHistory = async (limit = 50): Promise<TransferHistoryEntry[]> => {
   try {
     const db = await getDB();
     if (db) {
-      const all = await db.getAllFromIndex('transfers', 'by-timestamp');
-      return all.sort((a, b) => b.timestamp - a.timestamp);
+      const history: TransferHistoryEntry[] = [];
+      let cursor = await db.transaction('transfers').store.index('by-timestamp').openCursor(null, 'prev');
+
+      while (cursor && history.length < limit) {
+        history.push(cursor.value);
+        cursor = await cursor.continue();
+      }
+
+      return history;
     }
   } catch (err) {
     console.error('[DB] Failed to get transfer history', err);
@@ -59,11 +84,42 @@ export const getTransferHistory = async (): Promise<TransferHistoryEntry[]> => {
   return [];
 };
 
+/**
+ * Calculate aggregate statistics in a single O(N) pass.
+ * Bolt: Reduces redundant filter/reduce operations in UI components.
+ */
+export const getTransferStats = async () => {
+  try {
+    const db = await getDB();
+    if (db) {
+      let totalSent = 0;
+      let totalReceived = 0;
+
+      const all = await db.getAll('transfers');
+      for (const entry of all) {
+        if (entry.status === 'completed') {
+          if (entry.transferType === 'outgoing') {
+            totalSent += entry.totalSize;
+          } else {
+            totalReceived += entry.totalSize;
+          }
+        }
+      }
+
+      return { totalSent, totalReceived };
+    }
+  } catch (err) {
+    console.error('[DB] Failed to get transfer stats', err);
+  }
+  return { totalSent: 0, totalReceived: 0 };
+};
+
 export const clearTransferHistory = async () => {
   try {
     const db = await getDB();
     if (db) {
       await db.clear('transfers');
+      notifyChange();
     }
   } catch (err) {
     console.error('[DB] Failed to clear transfer history', err);
