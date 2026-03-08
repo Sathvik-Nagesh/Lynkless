@@ -42,14 +42,9 @@ export class E2EEHelper {
       arrayBuffer
     );
 
-    // Prefix with metadata (salt + iv)
-    const resultBuffer = new Uint8Array(salt.length + iv.length + encryptedData.byteLength);
-    resultBuffer.set(salt, 0);
-    resultBuffer.set(iv, salt.length);
-    resultBuffer.set(new Uint8Array(encryptedData), salt.length + iv.length);
-
-    // Use .encrypted extension and custom mime type to tag it
-    return new File([resultBuffer], `${file.name}.encrypted`, { type: 'application/octet-stream' });
+    // Bolt: Use zero-copy approach by passing an array of buffers to the File constructor.
+    // This avoids creating a full copy of the encrypted data in a new Uint8Array.
+    return new File([salt, iv, encryptedData], `${file.name}.encrypted`, { type: 'application/octet-stream' });
   }
 
   static async decryptFile(file: File, password?: string): Promise<File> {
@@ -60,9 +55,12 @@ export class E2EEHelper {
       throw new Error("Invalid encrypted file: too small");
     }
 
-    const salt = new Uint8Array(arrayBuffer.slice(0, 16));
-    const iv = new Uint8Array(arrayBuffer.slice(16, 28));
-    const encryptedData = arrayBuffer.slice(28);
+    // Bolt: Use subarray() on a Uint8Array view to extract salt, IV and data without copying.
+    // ArrayBuffer.slice() creates a new copy, whereas subarray() creates a new view on the same buffer.
+    const view = new Uint8Array(arrayBuffer);
+    const salt = view.subarray(0, 16);
+    const iv = view.subarray(16, 28);
+    const encryptedData = view.subarray(28);
 
     const key = await this.deriveKey(password, salt, ["decrypt"]);
     
