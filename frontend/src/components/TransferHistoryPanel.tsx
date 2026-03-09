@@ -57,20 +57,6 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
     }
   };
 
-  const formatTime = (ts: number) => {
-    return new Date(ts).toLocaleString(undefined, {
-      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-    });
-  };
-
-  const formatSize = (bytes: number) => {
-    if (!isFinite(bytes) || isNaN(bytes)) return '0 B';
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
-  };
-
   return (
     <div className="panel-elevated overflow-hidden flex flex-col mt-6">
       <button
@@ -162,5 +148,23 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
     </div>
   );
 });
+
+// Bolt: Moved helper functions outside of the component to prevent re-initialization on every render cycle.
+const formatTime = (ts: number) => {
+  return new Date(ts).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const formatSize = (bytes: number) => {
+  if (!isFinite(bytes) || isNaN(bytes)) return '0 B';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+};
 
 export default TransferHistoryPanel;
