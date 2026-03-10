@@ -21,10 +21,24 @@ function generateUUID(): string {
   });
 }
 
-// Constants
-const CHUNK_SIZE = 64 * 1024; // 64KB chunks
-const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB limit
+const CHUNK_SIZE = 256 * 1024; // 256KB chunks for higher throughput
+const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB limit
 const PROGRESS_UPDATE_INTERVAL = 100; // 100ms throttle interval
+
+// Request background sync tag if available
+export const requestBackgroundSync = async () => {
+  if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      if ('sync' in registration) {
+        // @ts-ignore - background sync API is not fully typed in standard DOM libs
+        await registration.sync.register('lynkless-transfer-sync');
+      }
+    } catch (e) {
+      // Background sync not supported or failed
+    }
+  }
+};
 
 export interface FileMetadata {
   id: string;
@@ -411,14 +425,14 @@ class FileTransferManager {
           offset += CHUNK_SIZE;
 
           // Send chunk metadata header
-          this.webrtc.sendToPeer(peerId, JSON.stringify({
+          await this.webrtc.sendToPeer(peerId, JSON.stringify({
             type: 'file-chunk',
             fileId,
             chunkIndex,
           }));
 
           // Send raw binary chunk
-          this.webrtc.sendToPeer(peerId, chunk);
+          await this.webrtc.sendToPeer(peerId, chunk);
 
           transfer.lastChunkIndex = chunkIndex;
           chunkIndex++;
@@ -482,6 +496,9 @@ class FileTransferManager {
     const fileId = generateUUID();
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     const now = Date.now();
+
+    // Request background keepalive sync to prevent browser suspension
+    requestBackgroundSync();
 
     const metadata: FileMetadata = {
       id: fileId,
@@ -559,14 +576,14 @@ class FileTransferManager {
           offset += CHUNK_SIZE;
 
           // Send chunk metadata header
-          this.webrtc.sendToPeer(peerId, JSON.stringify({
+          await this.webrtc.sendToPeer(peerId, JSON.stringify({
             type: 'file-chunk',
             fileId,
             chunkIndex,
           }));
 
           // Send raw binary chunk
-          this.webrtc.sendToPeer(peerId, chunk);
+          await this.webrtc.sendToPeer(peerId, chunk);
 
           if (currentTransfer) {
             currentTransfer.lastChunkIndex = chunkIndex;
@@ -677,6 +694,9 @@ class FileTransferManager {
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     const now = Date.now();
 
+    // Request background keepalive sync for mobile caching
+    requestBackgroundSync();
+
     const metadata: FileMetadata = {
       id: fileId,
       name: file.name,
@@ -742,14 +762,14 @@ class FileTransferManager {
 
             const chunkMetaStr = JSON.stringify({ type: 'file-chunk', fileId, chunkIndex });
 
-            activePeers.forEach(peerId => {
+            for (const peerId of activePeers) {
               const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
               if (tx && !tx.cancelled && !tx.paused) {
-                this.webrtc.sendToPeer(peerId, chunkMetaStr);
-                this.webrtc.sendToPeer(peerId, chunk);
+                await this.webrtc.sendToPeer(peerId, chunkMetaStr);
+                await this.webrtc.sendToPeer(peerId, chunk);
                 tx.lastChunkIndex = chunkIndex;
               }
-            });
+            }
 
             chunkIndex++;
             transferredSize += chunk.length;

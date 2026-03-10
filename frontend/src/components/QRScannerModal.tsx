@@ -190,20 +190,20 @@ export default function QRScannerModal({
 
         {/* Modal */}
         <motion.div
-          className="relative bg-gray-900/95 backdrop-blur-md rounded-2xl border border-purple-500/30 p-6 max-w-sm w-full shadow-2xl"
+          className="relative bg-[#111]/95 backdrop-blur-md rounded-2xl border border-[#27272a] p-6 max-w-sm w-full shadow-2xl"
           initial={{ scale: 0.9, opacity: 0, y: 20 }}
           animate={{ scale: 1, opacity: 1, y: 0 }}
           exit={{ scale: 0.9, opacity: 0, y: 20 }}
         >
           {/* Header */}
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xl font-bold text-white">Scan QR Code</h3>
+            <h3 className="text-xl font-bold text-[#ededed]">Scan QR Code</h3>
             <button
               onClick={() => {
                 stopCamera();
                 onClose();
               }}
-              className="text-gray-400 hover:text-white transition-colors p-1"
+              className="text-[#a1a1aa] hover:text-[#ededed] transition-colors p-1"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -212,49 +212,52 @@ export default function QRScannerModal({
           </div>
 
           {/* Camera View */}
-          <div className="relative rounded-xl overflow-hidden bg-gray-800 mb-4">
-            {hasPermission === false ? (
-              <div className="w-full aspect-square flex flex-col items-center justify-center p-4">
-                <svg className="w-12 h-12 text-gray-600 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <div className="relative rounded-xl overflow-hidden bg-[#1f1f1f] mb-4 border border-[#27272a] aspect-square flex items-center justify-center">
+            {hasPermission === false && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-4 z-20 bg-[#1f1f1f]">
+                <svg className="w-12 h-12 text-[#a1a1aa] mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
-                <p className="text-gray-400 text-sm text-center">{error || 'Camera not available'}</p>
+                <p className="text-[#a1a1aa] text-sm text-center">{error || 'Camera not available'}</p>
                 <button
                   onClick={startCamera}
-                  className="mt-3 px-4 py-2 bg-purple-500 text-white rounded-lg text-sm hover:bg-purple-600 transition-colors"
+                  className="mt-3 px-4 py-2 bg-[#ededed] text-black rounded-lg text-sm hover:bg-[#d4d4d8] transition-colors font-medium"
                 >
                   Try Again
                 </button>
               </div>
-            ) : hasPermission === null ? (
-              <div className="w-full aspect-square flex items-center justify-center">
-                <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+            )}
+            
+            <video
+              ref={videoRef}
+              className={`w-full h-full object-cover transition-opacity duration-300 ${scanning ? 'opacity-100' : 'opacity-0'}`}
+              playsInline
+              muted
+            />
+
+            {!scanning && hasPermission !== false && (
+              <div className="absolute inset-0 flex items-center justify-center z-10 bg-[#1f1f1f]">
+                <div className="w-8 h-8 border-2 border-[#ededed] border-t-transparent rounded-full animate-spin" />
               </div>
-            ) : (
-              <>
-                <video
-                  ref={videoRef}
-                  className="w-full aspect-square object-cover"
-                  playsInline
-                  muted
+            )}
+
+            {/* Scanning overlay */}
+            {scanning && (
+              <div className="absolute inset-0 pointer-events-none z-10">
+                {/* Corner brackets */}
+                <div className="absolute top-4 left-4 w-8 h-8 border-t-2 border-l-2 border-[#ededed]" />
+                <div className="absolute top-4 right-4 w-8 h-8 border-t-2 border-r-2 border-[#ededed]" />
+                <div className="absolute bottom-4 left-4 w-8 h-8 border-b-2 border-l-2 border-[#ededed]" />
+                <div className="absolute bottom-4 right-4 w-8 h-8 border-b-2 border-r-2 border-[#ededed]" />
+                
+                {/* Scanning line */}
+                <motion.div
+                  className="absolute left-4 right-4 h-0.5 bg-gradient-to-r from-transparent via-[#ededed] to-transparent"
+                  animate={{ top: ['10%', '90%', '10%'] }}
+                  transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
                 />
-                {/* Scanning overlay */}
-                <div className="absolute inset-0 pointer-events-none">
-                  {/* Corner brackets */}
-                  <div className="absolute top-4 left-4 w-8 h-8 border-t-2 border-l-2 border-purple-500" />
-                  <div className="absolute top-4 right-4 w-8 h-8 border-t-2 border-r-2 border-purple-500" />
-                  <div className="absolute bottom-4 left-4 w-8 h-8 border-b-2 border-l-2 border-purple-500" />
-                  <div className="absolute bottom-4 right-4 w-8 h-8 border-b-2 border-r-2 border-purple-500" />
-                  
-                  {/* Scanning line */}
-                  <motion.div
-                    className="absolute left-4 right-4 h-0.5 bg-gradient-to-r from-transparent via-purple-500 to-transparent"
-                    animate={{ top: ['10%', '90%', '10%'] }}
-                    transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
-                  />
-                </div>
-              </>
+              </div>
             )}
           </div>
 
@@ -263,14 +266,14 @@ export default function QRScannerModal({
 
           {/* Instructions */}
           <div className="space-y-3">
-            <p className="text-gray-400 text-sm text-center">
+            <p className="text-[#a1a1aa] text-sm text-center">
               Point camera at another device&apos;s QR code
             </p>
             
             {/* Manual input fallback */}
             <button
               onClick={handleManualInput}
-              className="w-full py-2 bg-gray-800 text-gray-300 rounded-lg text-sm hover:bg-gray-700 transition-colors border border-gray-700"
+              className="w-full py-2 bg-[#1f1f1f] text-[#ededed] rounded-lg text-sm hover:bg-[#27272a] transition-colors border border-[#27272a]"
             >
               Enter Peer ID Manually
             </button>

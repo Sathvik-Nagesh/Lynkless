@@ -35,50 +35,50 @@ const formatTime = (seconds: number): string => {
 
 const TransferProgress = memo(function TransferProgress({ transfer, onCancel, onPause, onResume }: TransferProgressProps) {
 
-  const getStatusColor = () => {
-    switch (transfer.status) {
-      case 'completed':
-        return 'from-green-500 to-emerald-500';
-      case 'failed':
-      case 'cancelled':
-        return 'from-red-500 to-rose-500';
-      case 'paused':
-        return 'from-amber-500 to-orange-500';
-      default:
-        return 'from-cyan-500 to-purple-500';
-    }
-  };
+    const getStatusColor = () => {
+      switch (transfer.status) {
+        case 'completed':
+          return 'bg-[#10b981]';
+        case 'failed':
+        case 'cancelled':
+          return 'bg-[#ef4444]';
+        case 'paused':
+          return 'bg-[#f59e0b]';
+        default:
+          return 'bg-[#ededed]';
+      }
+    };
 
   const getStatusIcon = () => {
     switch (transfer.status) {
       case 'completed':
         return (
-          <svg className="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="w-5 h-5 text-[#10b981]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
         );
       case 'failed':
         return (
-          <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="w-5 h-5 text-[#ef4444]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
           </svg>
         );
       case 'cancelled':
         return (
-          <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="w-5 h-5 text-[#a1a1aa]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
           </svg>
         );
       case 'paused':
         return (
-          <svg className="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="w-5 h-5 text-[#f59e0b]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         );
       default:
         return (
           <motion.svg
-            className="w-5 h-5 text-cyan-400"
+            className="w-5 h-5 text-[#ededed]"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -93,21 +93,21 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
 
   return (
     <motion.div
-      className="bg-gray-800/50 backdrop-blur-sm rounded-xl p-4 border border-gray-700/50"
+      className="bg-[#111] rounded-xl p-4 border border-[#27272a] shadow-sm"
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -20 }}
     >
       <div className="flex items-center gap-3 mb-3">
-        <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${getStatusColor()} flex items-center justify-center flex-shrink-0`}>
-          <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className={`w-10 h-10 rounded-lg bg-[#1f1f1f] border border-[#3f3f46] flex items-center justify-center flex-shrink-0`}>
+          <svg className="w-5 h-5 text-[#ededed]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
         </div>
         
         <div className="flex-1 min-w-0">
-          <p className="text-white font-medium truncate">{transfer.fileName}</p>
-          <p className="text-gray-400 text-sm">
+          <p className="text-[#ededed] font-medium truncate">{transfer.fileName}</p>
+          <p className="text-[#a1a1aa] text-sm">
             {formatSize(transfer.transferredSize)} / {formatSize(transfer.totalSize)}
           </p>
         </div>
@@ -119,7 +119,7 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
           {transfer.status === 'transferring' && onPause && (
             <button
               onClick={() => onPause(transfer.fileId)}
-              className="p-1.5 text-gray-400 hover:text-amber-400 transition-colors rounded-lg hover:bg-amber-500/10"
+              className="p-1.5 text-[#a1a1aa] hover:text-[#f59e0b] transition-colors rounded-lg hover:bg-[#f59e0b]/10"
               title="Pause transfer"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -132,7 +132,7 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
           {transfer.status === 'paused' && onResume && (
             <button
               onClick={() => onResume(transfer.fileId)}
-              className="p-1.5 text-gray-400 hover:text-green-400 transition-colors rounded-lg hover:bg-green-500/10"
+              className="p-1.5 text-[#a1a1aa] hover:text-[#10b981] transition-colors rounded-lg hover:bg-[#10b981]/10"
               title="Resume transfer"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -146,7 +146,7 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
           {(transfer.status === 'transferring' || transfer.status === 'paused') && onCancel && (
             <button
               onClick={() => onCancel(transfer.fileId)}
-              className="p-1.5 text-gray-400 hover:text-red-400 transition-colors rounded-lg hover:bg-red-500/10"
+              className="p-1.5 text-[#a1a1aa] hover:text-[#ef4444] transition-colors rounded-lg hover:bg-[#ef4444]/10"
               title="Cancel transfer"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -158,9 +158,9 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
       </div>
 
       {/* Progress bar */}
-      <div className="relative h-2 bg-gray-700 rounded-full overflow-hidden">
+      <div className="relative h-2 bg-[#27272a] rounded-full overflow-hidden mt-4">
         <motion.div
-          className={`absolute inset-y-0 left-0 bg-gradient-to-r ${getStatusColor()}`}
+          className={`absolute inset-y-0 left-0 ${getStatusColor()} rounded-full`}
           initial={{ width: 0 }}
           animate={{ width: `${transfer.progress}%` }}
           transition={{ duration: 0.3 }}
@@ -169,7 +169,7 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
         {/* Shimmer effect for active transfers */}
         {transfer.status === 'transferring' && (
           <motion.div
-            className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent"
+            className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent"
             animate={{ x: ['-100%', '100%'] }}
             transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
           />
@@ -178,7 +178,7 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
 
       {/* Stats */}
       {transfer.status === 'transferring' && (
-        <div className="flex justify-between mt-2 text-xs text-gray-400">
+        <div className="flex justify-between mt-2 text-xs text-[#a1a1aa]">
           <span>{formatSpeed(transfer.speed)}</span>
           <span>{transfer.progress.toFixed(1)}%</span>
           <span>{formatTime(transfer.remainingTime)} remaining</span>
@@ -187,18 +187,18 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
 
       {transfer.status === 'paused' && (
         <div className="flex justify-between mt-2 text-xs">
-          <span className="text-amber-400">⏸ Paused</span>
-          <span className="text-gray-400">{transfer.progress.toFixed(1)}% complete</span>
-          <span className="text-amber-400/70">Click ▶ to resume</span>
+          <span className="text-[#f59e0b]">⏸ Paused</span>
+          <span className="text-[#a1a1aa]">{transfer.progress.toFixed(1)}% complete</span>
+          <span className="text-[#f59e0b]/70">Click ▶ to resume</span>
         </div>
       )}
 
       {transfer.status === 'completed' && (
-        <p className="mt-2 text-xs text-green-400">✓ Transfer complete!</p>
+        <p className="mt-2 text-xs text-[#10b981]">✓ Transfer complete!</p>
       )}
 
       {transfer.status === 'failed' && (
-        <p className="mt-2 text-xs text-red-400">✗ Transfer failed</p>
+        <p className="mt-2 text-xs text-[#ef4444]">✗ Transfer failed</p>
       )}
     </motion.div>
   );

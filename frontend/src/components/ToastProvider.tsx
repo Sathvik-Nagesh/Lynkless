@@ -49,28 +49,28 @@ const TOAST_ICONS: Record<ToastType, React.ReactNode> = {
 
 const TOAST_COLORS: Record<ToastType, { bg: string; border: string; icon: string; text: string }> = {
   success: {
-    bg: 'rgba(34, 197, 94, 0.12)',
-    border: 'rgba(34, 197, 94, 0.3)',
-    icon: '#22C55E',
-    text: '#86EFAC',
+    bg: '#111',
+    border: '#27272a',
+    icon: '#10b981',
+    text: '#ededed',
   },
   error: {
-    bg: 'rgba(239, 68, 68, 0.12)',
-    border: 'rgba(239, 68, 68, 0.3)',
-    icon: '#EF4444',
-    text: '#FCA5A5',
+    bg: '#111',
+    border: '#27272a',
+    icon: '#ef4444',
+    text: '#ededed',
   },
   warning: {
-    bg: 'rgba(245, 158, 11, 0.12)',
-    border: 'rgba(245, 158, 11, 0.3)',
-    icon: '#F59E0B',
-    text: '#FCD34D',
+    bg: '#111',
+    border: '#27272a',
+    icon: '#f59e0b',
+    text: '#ededed',
   },
   info: {
-    bg: 'rgba(34, 211, 238, 0.12)',
-    border: 'rgba(34, 211, 238, 0.3)',
-    icon: '#22D3EE',
-    text: '#A5F3FC',
+    bg: '#111',
+    border: '#27272a',
+    icon: '#ededed',
+    text: '#ededed',
   },
 };
 

@@ -31,6 +31,16 @@ self.addEventListener('activate', (event) => {
 
 // Fetch event - network first, fallback to cache
 self.addEventListener('fetch', (event) => {
+  // Only cache GET requests
+  if (event.request.method !== 'GET') {
+    return;
+  }
+  
+  // Skip WebSocket connections
+  if (event.request.url.includes('ws://') || event.request.url.includes('wss://')) {
+    return;
+  }
+
   event.respondWith(
     fetch(event.request)
       .then((response) => {
@@ -44,5 +54,31 @@ self.addEventListener('fetch', (event) => {
       .catch(() => {
         return caches.match(event.request);
       })
+  );
+});
+
+// Background Sync Event Listener
+// This helps prevent iOS/Android from aggressively suspending the background 
+// process while a file transfer is actively chunking data.
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'lynkless-transfer-sync') {
+    event.waitUntil(
+      self.clients.matchAll({ includeUncontrolled: true }).then((clients) => {
+        clients.forEach((client) => {
+          client.postMessage({ type: 'BACKGROUND_KEEPALIVE', timestamp: Date.now() });
+        });
+      })
+    );
+  }
+});
+
+// Push event for keeping WebSocket alive
+self.addEventListener('push', (event) => {
+  event.waitUntil(
+    self.clients.matchAll().then((clients) => {
+      clients.forEach((client) => {
+        client.postMessage({ type: 'WAKE_UP' });
+      });
+    })
   );
 });

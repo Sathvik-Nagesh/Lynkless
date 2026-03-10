@@ -38,7 +38,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <head>
-        <meta name="theme-color" content="#3B82F6" />
+        <meta name="theme-color" content="#000000" />
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
       </head>
       <body

@@ -69,9 +69,9 @@ const ConnectionStatusBadge = memo(function ConnectionStatusBadge({
       {/* Details */}
       {showDetails && (
         <div className="flex items-center gap-2 text-xs">
-          <span className="text-[#94A3B8]">{config.text}</span>
+          <span className="text-[#a1a1aa]">{config.text}</span>
           {latency !== undefined && latency > 0 && (
-            <span className="text-[#64748B]">({latency}ms)</span>
+            <span className="text-[#71717a]">({latency}ms)</span>
           )}
         </div>
       )}

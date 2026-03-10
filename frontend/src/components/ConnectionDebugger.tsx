@@ -46,16 +46,12 @@ export default function ConnectionDebugger({
     return (
       <motion.button
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-4 right-4 w-12 h-12 rounded-full flex items-center justify-center z-40"
-        style={{
-          background: 'rgba(239, 68, 68, 0.1)',
-          border: '1px solid rgba(239, 68, 68, 0.3)',
-        }}
+        className="fixed bottom-4 right-4 w-12 h-12 rounded-full flex items-center justify-center z-40 bg-black/50 border border-[#27272a]"
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
         title="Connection Debugger"
       >
-        <svg className="w-5 h-5" style={{ color: '#EF4444' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <svg className="w-5 h-5" style={{ color: '#ededed' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
         </svg>
       </motion.button>
@@ -76,12 +72,12 @@ export default function ConnectionDebugger({
         exit={{ opacity: 0, y: 20, scale: 0.95 }}
       >
         {/* Header */}
-        <div className="p-4 border-b border-[#1C2433] flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-[#E6EDF3]">Connection Debugger</h3>
+        <div className="p-4 border-b border-[#27272a] flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-[#ededed]">Connection Debugger</h3>
           <div className="flex gap-2">
             <button
               onClick={copyDebugInfo}
-              className="p-1.5 text-[#64748B] hover:text-[#E6EDF3] transition-colors"
+              className="p-1.5 text-[#a1a1aa] hover:text-[#ededed] transition-colors"
               title="Copy debug info"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -90,7 +86,7 @@ export default function ConnectionDebugger({
             </button>
             <button
               onClick={() => setIsOpen(false)}
-              className="p-1.5 text-[#64748B] hover:text-[#E6EDF3] transition-colors"
+              className="p-1.5 text-[#a1a1aa] hover:text-[#ededed] transition-colors"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -100,39 +96,39 @@ export default function ConnectionDebugger({
         </div>
 
         {/* Status */}
-        <div className="p-4 space-y-2 border-b border-[#1C2433]">
+        <div className="p-4 space-y-2 border-b border-[#27272a]">
           <div className="flex items-center justify-between text-xs">
-            <span className="text-[#64748B]">Client ID:</span>
-            <code className="text-[#22D3EE] font-mono">{clientId || 'None'}</code>
+            <span className="text-[#a1a1aa]">Client ID:</span>
+            <code className="text-[#ededed] font-mono">{clientId || 'None'}</code>
           </div>
           <div className="flex items-center justify-between text-xs">
-            <span className="text-[#64748B]">Signaling:</span>
-            <span className={isSignalingConnected ? 'text-[#22C55E]' : 'text-[#EF4444]'}>
+            <span className="text-[#a1a1aa]">Signaling:</span>
+            <span className={isSignalingConnected ? 'text-[#10b981]' : 'text-[#ef4444]'}>
               {isSignalingConnected ? 'Connected' : 'Disconnected'}
             </span>
           </div>
           <div className="flex items-center justify-between text-xs">
-            <span className="text-[#64748B]">Server:</span>
-            <code className="text-[#94A3B8] font-mono text-[10px]">{signalingUrl}</code>
+            <span className="text-[#a1a1aa]">Server:</span>
+            <code className="text-[#a1a1aa] font-mono text-[10px]">{signalingUrl}</code>
           </div>
           <div className="flex items-center justify-between text-xs">
-            <span className="text-[#64748B]">Peers:</span>
-            <span className="text-[#E6EDF3]">{peers.length}</span>
+            <span className="text-[#a1a1aa]">Peers:</span>
+            <span className="text-[#ededed]">{peers.length}</span>
           </div>
         </div>
 
         {/* Peers List */}
         {peers.length > 0 && (
-          <div className="p-4 border-b border-[#1C2433]">
-            <p className="text-xs font-semibold text-[#E6EDF3] mb-2">Active Peers</p>
+          <div className="p-4 border-b border-[#27272a]">
+            <p className="text-xs font-semibold text-[#ededed] mb-2">Active Peers</p>
             <div className="space-y-1">
               {peers.map(peer => (
                 <div key={peer.id} className="flex items-center justify-between text-xs">
-                  <code className="text-[#94A3B8] font-mono text-[10px]">{peer.id}</code>
+                  <code className="text-[#a1a1aa] font-mono text-[10px]">{peer.id}</code>
                   <span className={`text-[10px] uppercase ${
-                    peer.state === 'connected' ? 'text-[#22C55E]' : 
-                    peer.state === 'connecting' ? 'text-[#F59E0B]' : 
-                    'text-[#64748B]'
+                    peer.state === 'connected' ? 'text-[#10b981]' : 
+                    peer.state === 'connecting' ? 'text-[#f59e0b]' : 
+                    'text-[#a1a1aa]'
                   }`}>
                     {peer.state}
                   </span>
@@ -145,30 +141,30 @@ export default function ConnectionDebugger({
         {/* Logs */}
         <div className="p-4">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-semibold text-[#E6EDF3]">Debug Logs</p>
+            <p className="text-xs font-semibold text-[#ededed]">Debug Logs</p>
             <button
               onClick={clearLogs}
-              className="text-[10px] text-[#64748B] hover:text-[#E6EDF3] transition-colors"
+              className="text-[10px] text-[#a1a1aa] hover:text-[#ededed] transition-colors"
             >
               Clear
             </button>
           </div>
           <div 
             className="h-40 overflow-y-auto rounded-lg p-2 font-mono text-[10px]"
-            style={{ background: '#0B0F14' }}
+            style={{ background: '#111' }}
           >
             {logs.length === 0 ? (
-              <p className="text-[#64748B]">No logs yet...</p>
+              <p className="text-[#a1a1aa]">No logs yet...</p>
             ) : (
               logs.map((log, i) => (
-                <div key={i} className="text-[#94A3B8] mb-1">{log}</div>
+                <div key={i} className="text-[#a1a1aa] mb-1">{log}</div>
               ))
             )}
           </div>
         </div>
 
         {/* Actions */}
-        <div className="p-4 border-t border-[#1C2433] flex gap-2">
+        <div className="p-4 border-t border-[#27272a] flex gap-2">
           <button
             onClick={() => window.location.reload()}
             className="btn-secondary flex-1 py-2 text-xs"

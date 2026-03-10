@@ -11,7 +11,7 @@ const FileIcon = dynamic(() => import('lucide-react').then(mod => ({ default: mo
 interface FilePreviewModalProps {
   files: File[];
   peerCount: number;
-  onConfirm: (password?: string) => void;
+  onConfirm: (password?: string, shouldZip?: boolean) => void;
   onCancel: () => void;
 }
 
@@ -19,6 +19,7 @@ export default function FilePreviewModal({ files, peerCount, onConfirm, onCancel
   const [previews, setPreviews] = useState<{ [key: string]: string }>({});
   const [usePassword, setUsePassword] = useState(false);
   const [password, setPassword] = useState('');
+  const [shouldZip, setShouldZip] = useState(files.length > 1);
 
   // Generate preview for images
   const getPreview = (file: File) => {
@@ -57,26 +58,26 @@ export default function FilePreviewModal({ files, peerCount, onConfirm, onCancel
 
         {/* Modal */}
         <motion.div
-          className="relative bg-gradient-to-br from-[#1E293B] to-[#0F172A] rounded-2xl border border-[#334155]/50 p-6 max-w-2xl w-full max-h-[80vh] overflow-hidden shadow-2xl"
+          className="relative bg-[#111] rounded-2xl border border-[#27272a] p-6 max-w-2xl w-full max-h-[80vh] overflow-hidden shadow-2xl flex flex-col"
           initial={{ scale: 0.9, opacity: 0, y: 20 }}
           animate={{ scale: 1, opacity: 1, y: 0 }}
           exit={{ scale: 0.9, opacity: 0, y: 20 }}
         >
           {/* Header */}
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xl font-bold text-[#E6EDF3]">
+          <div className="flex items-center justify-between mb-4 flex-shrink-0">
+            <h3 className="text-xl font-bold text-[#ededed]">
               Send {files.length} {files.length === 1 ? 'File' : 'Files'}?
             </h3>
             <button
               onClick={onCancel}
-              className="text-[#64748B] hover:text-[#E6EDF3] transition-colors"
+              className="text-[#a1a1aa] hover:text-[#ededed] transition-colors"
             >
               <X size={20} />
             </button>
           </div>
 
           {/* Preview Grid */}
-          <div className="overflow-y-auto max-h-96 mb-4 space-y-2">
+          <div className="overflow-y-auto mb-4 space-y-2 flex-grow">
             {files.map((file, index) => {
               const preview = getPreview(file);
               const isVideo = file.type.startsWith('video/');
@@ -84,13 +85,13 @@ export default function FilePreviewModal({ files, peerCount, onConfirm, onCancel
               return (
                 <motion.div
                   key={`${file.name}-${index}`}
-                  className="flex items-center gap-3 p-3 bg-[#0F172A]/50 rounded-xl border border-[#334155]/30"
+                  className="flex items-center gap-3 p-3 bg-[#1f1f1f] rounded-xl border border-[#27272a]"
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.05 }}
                 >
                   {/* Preview/Icon */}
-                  <div className="flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden bg-[#334155]/30 flex items-center justify-center">
+                  <div className="flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden bg-[#27272a] flex items-center justify-center">
                     {preview ? (
                       <img
                         src={preview}
@@ -100,15 +101,15 @@ export default function FilePreviewModal({ files, peerCount, onConfirm, onCancel
                     ) : isVideo ? (
                       <div className="text-3xl">🎥</div>
                     ) : (
-                      <FileIcon size={32} className="text-[#64748B]" />
+                      <FileIcon size={32} className="text-[#a1a1aa]" />
                     )}
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <p className="text-[#E6EDF3] font-medium truncate" title={(file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name}>
+                    <p className="text-[#ededed] font-medium truncate" title={(file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name}>
                       {(file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name}
                     </p>
-                    <p className="text-[#64748B] text-sm">
+                    <p className="text-[#a1a1aa] text-sm">
                       {formatSize(file.size)} • {file.type || 'Unknown type'}
                     </p>
                   </div>
@@ -117,66 +118,81 @@ export default function FilePreviewModal({ files, peerCount, onConfirm, onCancel
             })}
           </div>
 
-          {/* Summary */}
-          <div className="p-4 bg-[#3B82F6]/10 border border-[#3B82F6]/30 rounded-xl mb-4">
-            <div className="flex justify-between text-sm">
-              <span className="text-[#94A3B8]">Total Size:</span>
-              <span className="text-[#60A5FA] font-semibold">{formatSize(totalSize)}</span>
+          <div className="flex-shrink-0">
+            {/* Summary */}
+            <div className="p-4 bg-[#1f1f1f] border border-[#27272a] rounded-xl mb-4">
+              <div className="flex justify-between text-sm">
+                <span className="text-[#a1a1aa]">Total Size:</span>
+                <span className="text-[#ededed] font-semibold">{formatSize(totalSize)}</span>
+              </div>
+              <div className="flex justify-between text-sm mt-1">
+                <span className="text-[#a1a1aa]">Recipients:</span>
+                <span className="text-[#ededed] font-semibold">
+                  {peerCount} {peerCount === 1 ? 'peer' : 'peers'}
+                </span>
+              </div>
             </div>
-            <div className="flex justify-between text-sm mt-1">
-              <span className="text-[#94A3B8]">Recipients:</span>
-              <span className="text-[#60A5FA] font-semibold">
-                {peerCount} {peerCount === 1 ? 'peer' : 'peers'}
-              </span>
-            </div>
-          </div>
 
-          {/* E2EE Options */}
-          <div className="mb-4">
-            <label className="flex items-center gap-2 text-sm text-[#E6EDF3] cursor-pointer w-fit mb-2">
-              <input 
-                type="checkbox" 
-                className="rounded border-[#334155] bg-[#0F172A]"
-                checked={usePassword}
-                onChange={(e) => setUsePassword(e.target.checked)}
-              />
-              <span>Protect with password (E2EE)</span>
-            </label>
-            <AnimatePresence>
-              {usePassword && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="overflow-hidden"
-                >
-                  <input
-                    type="text"
-                    placeholder="Enter password to encrypt files"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-[#0F172A] border border-[#334155]/50 rounded-xl px-4 py-3 text-sm text-[#E6EDF3] focus:outline-none focus:border-[#3B82F6]"
+            {/* Options */}
+            <div className="mb-4 space-y-3">
+              {files.length > 1 && (
+                <label className="flex items-center gap-2 text-sm text-[#ededed] cursor-pointer w-fit">
+                  <input 
+                    type="checkbox" 
+                    className="rounded border-[#27272a] bg-[#111]"
+                    checked={shouldZip}
+                    onChange={(e) => setShouldZip(e.target.checked)}
                   />
-                </motion.div>
+                  <span>Bundle into strict ZIP archive</span>
+                </label>
               )}
-            </AnimatePresence>
-          </div>
+              
+              <label className="flex items-center gap-2 text-sm text-[#ededed] cursor-pointer w-fit">
+                <input 
+                  type="checkbox" 
+                  className="rounded border-[#27272a] bg-[#111]"
+                  checked={usePassword}
+                  onChange={(e) => setUsePassword(e.target.checked)}
+                />
+                <span>Protect with password (E2EE)</span>
+              </label>
 
-          {/* Actions */}
-          <div className="flex gap-3">
-            <button
-              onClick={onCancel}
-              className="flex-1 px-6 py-3 text-[#94A3B8] font-medium rounded-xl hover:bg-[#1E293B] transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => onConfirm(usePassword ? password : undefined)}
-              className="flex-1 px-6 py-3 bg-gradient-to-r from-[#3B82F6] to-[#2563EB] text-white font-semibold rounded-xl hover:from-[#2563EB] hover:to-[#1D4ED8] transition-all flex items-center justify-center gap-2"
-            >
-              <Send size={18} />
-              Send {files.length > 1 ? 'All' : 'File'}
-            </button>
+              <AnimatePresence>
+                {usePassword && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <input
+                      type="text"
+                      placeholder="Enter password to encrypt files"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full bg-[#111] border border-[#27272a] rounded-xl px-4 py-3 text-sm text-[#ededed] focus:outline-none focus:border-[#ededed] mt-2"
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3">
+              <button
+                onClick={onCancel}
+                className="flex-1 px-6 py-3 text-[#a1a1aa] font-medium rounded-xl hover:bg-[#1f1f1f] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => onConfirm(usePassword ? password : undefined, shouldZip)}
+                className="flex-1 px-6 py-3 bg-[#ededed] text-black font-semibold rounded-xl hover:bg-[#d4d4d8] transition-all flex items-center justify-center gap-2"
+              >
+                <Send size={18} />
+                {shouldZip ? 'Zip & Send' : `Send ${files.length > 1 ? 'All' : 'File'}`}
+              </button>
+            </div>
           </div>
         </motion.div>
       </motion.div>

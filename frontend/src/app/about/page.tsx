@@ -113,8 +113,8 @@ export default function AboutPage() {
       {/* Hero */}
       <section className="relative py-20 px-6 md:px-10 overflow-hidden">
         <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-cyan-500/5 rounded-full blur-3xl" />
-          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/5 rounded-full blur-3xl" />
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-white/5 rounded-full blur-3xl" />
+          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-white/5 rounded-full blur-3xl" />
         </div>
 
         <motion.div
@@ -125,18 +125,18 @@ export default function AboutPage() {
         >
           <Link 
             href="/"
-            className="inline-block mb-8 text-[#64748B] hover:text-[#22D3EE] transition-colors text-sm"
+            className="inline-block mb-8 text-[#a1a1aa] hover:text-[#ededed] transition-colors text-sm"
           >
             ← Back to App
           </Link>
 
           <h1 className="text-4xl md:text-6xl font-bold mb-6">
-            <span className="gradient-text">Lynkless</span>
+            <span className="text-[#ededed]">Lynkless</span>
           </h1>
-          <p className="text-xl md:text-2xl text-[#94A3B8] mb-4">
+          <p className="text-xl md:text-2xl text-[#a1a1aa] mb-4">
             Your files don&apos;t belong in the cloud.
           </p>
-          <p className="text-[#64748B] max-w-2xl mx-auto leading-relaxed">
+          <p className="text-[#a1a1aa] max-w-2xl mx-auto leading-relaxed">
             Lynkless is a zero-storage, peer-to-peer file transfer application. 
             Transfer files directly between devices with end-to-end encryption. 
             No accounts, no uploads, no tracking.
@@ -147,7 +147,7 @@ export default function AboutPage() {
       {/* How It Works */}
       <section className="py-16 px-6 md:px-10">
         <motion.div className="max-w-5xl mx-auto" {...fadeIn}>
-          <h2 className="text-2xl md:text-3xl font-bold text-center mb-12 text-[#E6EDF3]">
+          <h2 className="text-2xl md:text-3xl font-bold text-center mb-12 text-[#ededed]">
             How It Works
           </h2>
 
@@ -167,8 +167,8 @@ export default function AboutPage() {
                 >
                   {item.step}
                 </div>
-                <h3 className="text-lg font-semibold text-[#E6EDF3] mb-2">{item.title}</h3>
-                <p className="text-sm text-[#64748B] leading-relaxed">{item.desc}</p>
+                <h3 className="text-lg font-semibold text-[#ededed] mb-2">{item.title}</h3>
+                <p className="text-sm text-[#a1a1aa] leading-relaxed">{item.desc}</p>
               </motion.div>
             ))}
           </div>
@@ -178,7 +178,7 @@ export default function AboutPage() {
       {/* Features */}
       <section className="py-16 px-6 md:px-10" style={{ background: 'var(--bg-surface)' }}>
         <motion.div className="max-w-5xl mx-auto" {...fadeIn}>
-          <h2 className="text-2xl md:text-3xl font-bold text-center mb-12 text-[#E6EDF3]">
+          <h2 className="text-2xl md:text-3xl font-bold text-center mb-12 text-[#ededed]">
             Features
           </h2>
 
@@ -198,8 +198,8 @@ export default function AboutPage() {
                 whileHover={{ y: -4, transition: { duration: 0.15 } }}
               >
                 <div className="text-2xl mb-3">{feature.icon}</div>
-                <h3 className="text-sm font-semibold text-[#E6EDF3] mb-1">{feature.title}</h3>
-                <p className="text-xs text-[#64748B] leading-relaxed">{feature.desc}</p>
+                <h3 className="text-sm font-semibold text-[#ededed] mb-1">{feature.title}</h3>
+                <p className="text-xs text-[#a1a1aa] leading-relaxed">{feature.desc}</p>
               </motion.div>
             ))}
           </div>
@@ -209,7 +209,7 @@ export default function AboutPage() {
       {/* Architecture */}
       <section className="py-16 px-6 md:px-10">
         <motion.div className="max-w-4xl mx-auto" {...fadeIn}>
-          <h2 className="text-2xl md:text-3xl font-bold text-center mb-12 text-[#E6EDF3]">
+          <h2 className="text-2xl md:text-3xl font-bold text-center mb-12 text-[#ededed]">
             Architecture
           </h2>
 
@@ -217,55 +217,55 @@ export default function AboutPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               <div className="text-center">
                 <div
-                  className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
-                  style={{ background: 'linear-gradient(135deg, #22D3EE, #6366F1)' }}
+                  className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-[#27272a]"
+                  style={{ background: '#111' }}
                 >
-                  <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-8 h-8 text-[#ededed]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                   </svg>
                 </div>
-                <h3 className="text-base font-semibold text-[#E6EDF3] mb-2">Frontend</h3>
-                <p className="text-xs text-[#64748B]">
+                <h3 className="text-base font-semibold text-[#ededed] mb-2">Frontend</h3>
+                <p className="text-xs text-[#a1a1aa]">
                   Next.js + React • TypeScript • Framer Motion • Progressive Web App
                 </p>
               </div>
 
               <div className="text-center">
                 <div
-                  className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
-                  style={{ background: 'linear-gradient(135deg, #6366F1, #EC4899)' }}
+                  className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-[#27272a]"
+                  style={{ background: '#111' }}
                 >
-                  <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-8 h-8 text-[#ededed]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2" />
                   </svg>
                 </div>
-                <h3 className="text-base font-semibold text-[#E6EDF3] mb-2">Signaling Server</h3>
-                <p className="text-xs text-[#64748B]">
+                <h3 className="text-base font-semibold text-[#ededed] mb-2">Signaling Server</h3>
+                <p className="text-xs text-[#a1a1aa]">
                   Node.js • WebSocket • Room Management • Nearby Discovery
                 </p>
               </div>
 
               <div className="text-center">
                 <div
-                  className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
-                  style={{ background: 'linear-gradient(135deg, #EC4899, #22C55E)' }}
+                  className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-[#27272a]"
+                  style={{ background: '#111' }}
                 >
-                  <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-8 h-8 text-[#ededed]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                   </svg>
                 </div>
-                <h3 className="text-base font-semibold text-[#E6EDF3] mb-2">WebRTC</h3>
-                <p className="text-xs text-[#64748B]">
+                <h3 className="text-base font-semibold text-[#ededed] mb-2">WebRTC</h3>
+                <p className="text-xs text-[#a1a1aa]">
                   DTLS Encryption • DataChannel • ICE/STUN/TURN • Chunked Transfer
                 </p>
               </div>
             </div>
 
             <div className="mt-8 p-4 rounded-xl" style={{ background: 'var(--bg-hover)' }}>
-              <p className="text-xs text-[#64748B] text-center leading-relaxed">
+              <p className="text-xs text-[#a1a1aa] text-center leading-relaxed">
                 The signaling server only facilitates the initial handshake between peers (exchanging WebRTC offers/answers/ICE candidates). 
                 Once connected, all data flows directly between devices using WebRTC DataChannels with DTLS encryption.
-                <strong className="text-[#22D3EE]"> Zero data passes through our servers.</strong>
+                <strong className="text-[#ededed]"> Zero data passes through our servers.</strong>
               </p>
             </div>
           </div>
@@ -275,7 +275,7 @@ export default function AboutPage() {
       {/* FAQ */}
       <section className="py-16 px-6 md:px-10" style={{ background: 'var(--bg-surface)' }}>
         <motion.div className="max-w-3xl mx-auto" {...fadeIn}>
-          <h2 className="text-2xl md:text-3xl font-bold text-center mb-12 text-[#E6EDF3]">
+          <h2 className="text-2xl md:text-3xl font-bold text-center mb-12 text-[#ededed]">
             FAQ
           </h2>
 
@@ -293,8 +293,8 @@ export default function AboutPage() {
                 viewport={{ once: true }}
                 transition={{ delay: i * 0.05 }}
               >
-                <h3 className="text-sm font-semibold text-[#E6EDF3] mb-2">{faq.q}</h3>
-                <p className="text-xs text-[#64748B] leading-relaxed">{faq.a}</p>
+                <h3 className="text-sm font-semibold text-[#ededed] mb-2">{faq.q}</h3>
+                <p className="text-xs text-[#a1a1aa] leading-relaxed">{faq.a}</p>
               </motion.div>
             ))}
           </div>
@@ -304,7 +304,7 @@ export default function AboutPage() {
       {/* Tech Stack */}
       <section className="py-16 px-6 md:px-10">
         <motion.div className="max-w-4xl mx-auto text-center" {...fadeIn}>
-          <h2 className="text-2xl md:text-3xl font-bold mb-8 text-[#E6EDF3]">
+          <h2 className="text-2xl md:text-3xl font-bold mb-8 text-[#ededed]">
             Built With
           </h2>
           <div className="flex flex-wrap justify-center gap-3">
@@ -315,7 +315,7 @@ export default function AboutPage() {
             ].map((tech) => (
               <span
                 key={tech}
-                className="px-4 py-2 rounded-xl text-sm font-medium text-[#94A3B8]"
+                className="px-4 py-2 rounded-xl text-sm font-medium text-[#a1a1aa]"
                 style={{
                   background: 'var(--bg-hover)',
                   border: '1px solid var(--border-subtle)',
@@ -330,19 +330,19 @@ export default function AboutPage() {
 
       {/* Footer */}
       <footer className="py-10 px-6 text-center" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-        <p className="text-[#475569] text-sm">
+        <p className="text-[#a1a1aa] text-sm">
           Made with 💙 for college project — 
-          <span className="gradient-text font-semibold"> Lynkless</span>
+          <span className="text-[#ededed] font-semibold"> Lynkless</span>
         </p>
         <div className="mt-4 flex justify-center gap-6">
-          <Link href="/" className="text-xs text-[#64748B] hover:text-[#22D3EE] transition-colors">
+          <Link href="/" className="text-xs text-[#a1a1aa] hover:text-[#ededed] transition-colors">
             Go to App
           </Link>
           <a
             href="https://github.com/Sathvik-Nagesh/Lynkless"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-xs text-[#64748B] hover:text-[#22D3EE] transition-colors"
+            className="text-xs text-[#a1a1aa] hover:text-[#ededed] transition-colors"
           >
             GitHub
           </a>

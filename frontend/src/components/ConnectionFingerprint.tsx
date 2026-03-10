@@ -36,7 +36,7 @@ const ConnectionFingerprint = memo(function ConnectionFingerprint({
     <AnimatePresence>
       {showVerify && (
         <motion.div
-          className="bg-gradient-to-br from-gray-900/95 to-gray-800/95 backdrop-blur-md rounded-xl border border-green-500/30 p-4"
+          className="bg-[#111] backdrop-blur-md rounded-xl border border-[#10b981]/30 p-4"
           initial={{ opacity: 0, y: 10, scale: 0.95 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: -10, scale: 0.95 }}
@@ -44,33 +44,33 @@ const ConnectionFingerprint = memo(function ConnectionFingerprint({
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-3">
               {/* Verified icon */}
-              <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0">
-                <svg className="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="w-10 h-10 rounded-full bg-[#10b981]/20 flex items-center justify-center flex-shrink-0">
+                <svg className="w-5 h-5 text-[#10b981]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                 </svg>
               </div>
               
               <div>
-                <h4 className="text-sm font-medium text-green-400 mb-1">
+                <h4 className="text-sm font-medium text-[#10b981] mb-1">
                   Secure Connection Established
                 </h4>
-                <p className="text-xs text-gray-400 mb-2">
-                  Connected to <span className="text-cyan-400 font-mono">{shortPeerId}</span>
+                <p className="text-xs text-[#a1a1aa] mb-2">
+                  Connected to <span className="text-[#ededed] font-mono">{shortPeerId}</span>
                 </p>
                 
                 {/* Fingerprint display */}
                 <div className="flex items-center gap-2">
-                  <code className="px-3 py-1.5 bg-gray-800 rounded-lg font-mono text-lg tracking-wider text-white border border-gray-700">
+                  <code className="px-3 py-1.5 bg-[#1f1f1f] rounded-lg font-mono text-lg tracking-wider text-[#ededed] border border-[#27272a]">
                     {fingerprint}
                   </code>
                   <motion.button
                     onClick={handleCopy}
-                    className="p-1.5 text-gray-400 hover:text-white transition-colors"
+                    className="p-1.5 text-[#a1a1aa] hover:text-[#ededed] transition-colors"
                     whileTap={{ scale: 0.9 }}
                     title="Copy fingerprint"
                   >
                     {copied ? (
-                      <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="w-4 h-4 text-[#10b981]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
                     ) : (
@@ -81,7 +81,7 @@ const ConnectionFingerprint = memo(function ConnectionFingerprint({
                   </motion.button>
                 </div>
                 
-                <p className="text-xs text-gray-500 mt-2">
+                <p className="text-xs text-[#71717a] mt-2">
                   🔒 Verify this code matches on both devices
                 </p>
               </div>
@@ -90,7 +90,7 @@ const ConnectionFingerprint = memo(function ConnectionFingerprint({
             {/* Close button */}
             <button
               onClick={() => setClosedForFingerprint(fingerprint)}
-              className="text-gray-500 hover:text-white transition-colors"
+              className="text-[#71717a] hover:text-[#ededed] transition-colors"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -99,9 +99,9 @@ const ConnectionFingerprint = memo(function ConnectionFingerprint({
           </div>
 
           {/* Verification tip */}
-          <div className="mt-3 p-2 bg-gray-800/50 rounded-lg border border-gray-700/50">
-            <div className="flex items-center gap-2 text-xs text-gray-400">
-              <svg className="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <div className="mt-3 p-2 bg-[#1f1f1f] rounded-lg border border-[#27272a]">
+            <div className="flex items-center gap-2 text-xs text-[#a1a1aa]">
+              <svg className="w-4 h-4 text-[#f59e0b] flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <span>

@@ -12,20 +12,20 @@ A blazing-fast, zero-storage, peer-to-peer file transfer and chat platform built
 
 ### Core Functionality
 
-- 🚀 **Direct P2P Transfer** — Send files, even up to 500MB, directly between browsers with resuming capabilities.
-- 📡 **Smart Discovery** — Beautiful radar UI to discover nearby peers on your network automatically.
-- 🔐 **Zero Storage & E2EE** — Files never touch any centralized data centers. Enable E2EE custom passwords out of the box using military-grade `AES-GCM` encryption layer processing.
+- 🚀 **Direct P2P Transfer** — Send large files (up to **5GB**) directly between browsers with resuming capabilities and high-throughput chunking (256KB/s WebRTC streaming logic with proper backpressure).
+- 📡 **Smart Discovery** — Beautiful Apple/Vercel-inspired glassmorphic Radar UI to discover nearby peers on your network automatically.
+- 🔐 **Zero Storage & E2EE** — Files never touch any centralized data centers. Enable E2EE custom passwords out of the box using military-grade `AES-GCM` encryption.
 - 📁 **Folder & Clipboard Support** — Drag-and-drop massive nested directories natively, or instantly `CTRL+V` paste images straight from your clipboard.
 - 📺 **Live Screen Sharing** — Securely share your desktop directly over P2P using our pristine Screen-Share interface without interrupting your file-transfers tabs.
-- � **Multi-Peer "Send to All"** — Concurrent mesh broadcast transferring to numerous peers simultaneously within your room.
+- 🔗 **Robust Reconnection Logic** — State-of-the-art WebRTC ICE candidates and buffered data handling that reliably reconnects peers in dynamic setups without corrupting your transfer.
 
 ### User Experience
 
-- � **Ephemeral Chat + Markdown** — Real-time messaging synced seamlessly over WebRTC data channels natively parsing inline code formatting.
-- 📊 **Transfer Analytics Dashboard** — A dedicated history vault locally tracked by IndexedDB rendering granular stats natively covering **Total Sent** and **Total Received** data.
-- 🏎️ **Live Speed & ETA Estimator** — Real-time, math-based speeds displaying elapsed transfer progression gracefully managing `NaN` artifacts natively.
-- � **Room System / QR Connect** — Scan QRs natively inside browsers, or spawn ephemeral 6-digit instances globally crossing subnet frontiers natively resolving STUN ICE gaps.
-- 🎨 **Premium Cyber Aesthetic** — A responsive modern dashboard wrapped inside Framer Motion with automatic chat auto-scroll logic that knows when you're reading!
+- 🎨 **Premium Aesthetic** — A completely revamped UI/UX inspired by minimalist, high-end Apple & Vercel aesthetics. Soft drop-shadows, monochromatic themes, and meticulous visual hierarchies.
+- 💬 **Ephemeral Chat + Markdown** — Real-time messaging synced seamlessly over WebRTC data channels natively parsing inline code formatting.
+- 📊 **Transfer Analytics Dashboard** — A dedicated history vault locally tracked by IndexedDB rendering granular stats comprehensively showing **Total Sent** and **Total Received** data.
+- 🏎️ **Live Speed & ETA Estimator** — Real-time, math-based speeds displaying elapsed transfer progression directly from the WebRTC DataChannel queue, maintaining perfectly accurate sender & receiver syncing.
+- 📸 **Room System / QR Connect** — Scan QRs natively inside browsers or spawn ephemeral 6-digit instances globally crossing subnet frontiers natively resolving STUN ICE gaps.
 - 🍬 **Cute Usernames** — Generates dessert-styled aliases upon joining. (Ex: _PinkGulabCrispy_)
 
 ## 🏗️ Architecture
@@ -93,7 +93,7 @@ A blazing-fast, zero-storage, peer-to-peer file transfer and chat platform built
    - Click a peer to connect
    - Drop a folder or file natively! 🎉
 
-## 🌐 Network Access (Same WiFi)
+## 🌐 Network Access & Remote Connectivity
 
 To access from other devices on your network:
 
@@ -111,6 +111,9 @@ To access from other devices on your network:
 
    ```env
    NEXT_PUBLIC_SIGNALING_URL=ws://YOUR_IP_HERE:8080
+   # To improve connection stability across different networks (e.g. mobile hotspot vs home WiFi)
+   # you can configure a custom TURN server to circumvent Symmetric NAT firewalls:
+   NEXT_PUBLIC_ICE_SERVERS=[{"urls":"turn:your-turn-server.com:3478","username":"user","credential":"password"}]
    ```
 
 3. **Access from other devices**:
@@ -133,38 +136,11 @@ Lynkless/
     │   ├── components/        # React Subcomponents
     │   ├── hooks/             # WebRTC & Signaling hooks
     │   └── lib/
-    │       ├── webrtc/        # Connection Engines & FileTransfer Handlers
+    │       ├── webrtc/        # Connection Engines & FileTransfer Handlers (Chunking/Backpressure)
     │       ├── db/            # IndexedDB Vaults
     │       └── socket/        # WebSocket orchestrations natively
     └── .env.local
 ```
-
-## 🌍 Deployment
-
-### Frontend → Vercel
-
-1. Push to GitHub
-2. Import to [Vercel](https://vercel.com)
-3. Set environment variable:
-   ```
-   NEXT_PUBLIC_SIGNALING_URL=wss://your-signaling-server.com
-   ```
-4. Deploy!
-
-### Signaling Server → Fly.io
-
-```bash
-cd signaling-server
-fly launch
-fly deploy
-```
-
-### Signaling Server → Render
-
-1. New Web Service on [Render](https://render.com)
-2. Root Directory: `signaling-server`
-3. Build: `npm install`
-4. Start: `node server.js`
 
 ## 🛡️ Security & Privacy
 
@@ -190,9 +166,9 @@ MIT License - feel free to use for personal or commercial projects.
 - [x] E2E custom encryption layer
 - [x] Resumable transfers natively parsing byte alignments.
 - [x] Multi-peer mesh transfers
-- [x] Screen sharing pipeline!
-- [x] Folder directory recursively parsing support
+- [x] WebRTC renegotiation hardening (Drop-Free Screen Shares!)
 - [x] Transfer IndexedDB dashboard globally tracking session hashes.
+- [x] Stream buffering logic enabling 5GB+ transfers flawlessly.
 - [x] Inline formatting chat!
 - [ ] Voice/video call support
 - [ ] Mobile native fallback Service Worker
@@ -201,4 +177,4 @@ MIT License - feel free to use for personal or commercial projects.
 
 **Built with ❤️ for privacy advocates and cloud skeptics.**
 
-_Remember: The best place for your files is between you and your friend, not in someone else's computer._
+*Remember: The best place for your files is between you and your friend, not in someone else's computer.*

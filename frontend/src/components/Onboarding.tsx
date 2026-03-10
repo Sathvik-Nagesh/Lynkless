@@ -92,11 +92,11 @@ export default function Onboarding() {
             exit={{ scale: 0.9, opacity: 0 }}
             className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none"
           >
-            <div className="bg-gradient-to-br from-[#1E293B] to-[#0F172A] rounded-3xl border border-[#334155]/50 p-8 max-w-md w-full shadow-2xl pointer-events-auto">
+            <div className="bg-[#111] rounded-3xl border border-[#27272a] p-8 max-w-md w-full shadow-2xl pointer-events-auto">
               {/* Close button */}
               <button
                 onClick={handleSkip}
-                className="absolute top-4 right-4 text-[#64748B] hover:text-[#E6EDF3] transition-colors"
+                className="absolute top-4 right-4 text-[#a1a1aa] hover:text-[#ededed] transition-colors"
               >
                 <X size={20} />
               </button>
@@ -107,9 +107,9 @@ export default function Onboarding() {
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
                 transition={{ type: "spring", stiffness: 200 }}
-                className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#3B82F6] to-[#2563EB] flex items-center justify-center mx-auto mb-6"
+                className="w-16 h-16 rounded-2xl bg-[#ededed] flex items-center justify-center mx-auto mb-6"
               >
-                <Icon size={32} className="text-white" />
+                <Icon size={32} className="text-black" />
               </motion.div>
 
               {/* Content */}
@@ -119,14 +119,14 @@ export default function Onboarding() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.1 }}
               >
-                <h2 className="text-2xl font-bold text-[#E6EDF3] mb-3 text-center">
+                <h2 className="text-2xl font-bold text-[#ededed] mb-3 text-center">
                   {step.title}
                 </h2>
-                <p className="text-[#94A3B8] text-center mb-4 leading-relaxed">
+                <p className="text-[#a1a1aa] text-center mb-4 leading-relaxed">
                   {step.description}
                 </p>
                 <div className="text-center">
-                  <span className="inline-block px-4 py-2 rounded-lg bg-[#3B82F6]/10 border border-[#3B82F6]/30 text-[#60A5FA] text-sm font-medium">
+                  <span className="inline-block px-4 py-2 rounded-lg bg-[#1f1f1f] border border-[#27272a] text-[#ededed] text-sm font-medium">
                     {step.highlight}
                   </span>
                 </div>
@@ -139,10 +139,10 @@ export default function Onboarding() {
                     key={`step-${index}-${step.title}`}
                     className={`w-2 h-2 rounded-full transition-all ${
                       index === currentStep
-                        ? 'bg-[#3B82F6] w-8'
+                        ? 'bg-[#ededed] w-8'
                         : index < currentStep
-                        ? 'bg-[#3B82F6]/50'
-                        : 'bg-[#334155]'
+                        ? 'bg-[#a1a1aa]'
+                        : 'bg-[#27272a]'
                     }`}
                   />
                 ))}
@@ -153,14 +153,14 @@ export default function Onboarding() {
                 {currentStep > 0 && (
                   <button
                     onClick={() => setCurrentStep(currentStep - 1)}
-                    className="flex-1 px-6 py-3 text-[#94A3B8] font-medium rounded-xl hover:bg-[#1E293B] transition-colors"
+                    className="flex-1 px-6 py-3 text-[#a1a1aa] font-medium rounded-xl hover:bg-[#1f1f1f] transition-colors"
                   >
                     Back
                   </button>
                 )}
                 <button
                   onClick={handleNext}
-                  className="flex-1 px-6 py-3 bg-gradient-to-r from-[#3B82F6] to-[#2563EB] text-white font-semibold rounded-xl hover:from-[#2563EB] hover:to-[#1D4ED8] transition-all flex items-center justify-center gap-2"
+                  className="flex-1 px-6 py-3 bg-[#ededed] text-black font-semibold rounded-xl hover:bg-[#d4d4d8] transition-all flex items-center justify-center gap-2"
                 >
                   {currentStep === steps.length - 1 ? "Get Started" : "Next"}
                   <ArrowRight size={18} />
@@ -171,7 +171,7 @@ export default function Onboarding() {
               {currentStep < steps.length - 1 && (
                 <button
                   onClick={handleSkip}
-                  className="w-full mt-3 text-[#64748B] text-sm hover:text-[#94A3B8] transition-colors"
+                  className="w-full mt-3 text-[#71717a] text-sm hover:text-[#a1a1aa] transition-colors"
                 >
                   Skip tutorial
                 </button>

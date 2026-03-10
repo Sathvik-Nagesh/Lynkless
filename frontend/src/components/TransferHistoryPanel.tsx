@@ -66,24 +66,23 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
     <div className="panel-elevated overflow-hidden flex flex-col mt-6">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="flex items-center justify-between p-5 hover:bg-[#1C2433] transition-colors duration-150"
+        className="flex items-center justify-between p-5 hover:bg-[#1f1f1f] transition-colors duration-150"
       >
         <div className="flex items-center gap-3">
           <div 
-            className="w-9 h-9 rounded-xl flex items-center justify-center"
-            style={{ background: 'linear-gradient(135deg, #F59E0B 0%, #EF4444 100%)' }}
+            className="w-9 h-9 rounded-xl flex items-center justify-center bg-[#111] border border-[#27272a]"
           >
-            <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-4 h-4 text-[#ededed]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
           <div className="text-left">
-            <span className="font-semibold text-[#E6EDF3] text-base block">Transfer History</span>
-            <span className="text-[10px] text-[#64748B]">Recent activity log</span>
+            <span className="font-semibold text-[#ededed] text-base block">Transfer History</span>
+            <span className="text-[10px] text-[#a1a1aa]">Recent activity log</span>
           </div>
         </div>
         <motion.svg
-          className="w-4 h-4 text-[#64748B]"
+          className="w-4 h-4 text-[#a1a1aa]"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -106,12 +105,12 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
             <div className="p-4 pt-2 flex items-center justify-between" style={{ borderTop: '1px solid var(--border-subtle)' }}>
                <div className="flex gap-4">
                  <div className="flex flex-col">
-                   <span className="text-[10px] text-[#64748B] uppercase font-bold tracking-wider">Total Sent</span>
-                   <span className="text-sm font-semibold text-[#60A5FA]">{formatSize(totalDataSent)}</span>
+                   <span className="text-[10px] text-[#a1a1aa] uppercase font-bold tracking-wider">Total Sent</span>
+                   <span className="text-sm font-semibold text-[#ededed]">{formatSize(totalDataSent)}</span>
                  </div>
                  <div className="flex flex-col">
-                   <span className="text-[10px] text-[#64748B] uppercase font-bold tracking-wider">Total Received</span>
-                   <span className="text-sm font-semibold text-[#34D399]">{formatSize(totalDataReceived)}</span>
+                   <span className="text-[10px] text-[#a1a1aa] uppercase font-bold tracking-wider">Total Received</span>
+                   <span className="text-sm font-semibold text-[#ededed]">{formatSize(totalDataReceived)}</span>
                  </div>
                </div>
                {history.length > 0 && (
@@ -123,23 +122,23 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
             <div className="h-64 overflow-y-auto px-4 pb-4 space-y-2 mt-2">
               {history.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full">
-                  <p className="text-sm text-[#64748B]">No recent transfers</p>
+                  <p className="text-sm text-[#a1a1aa]">No recent transfers</p>
                 </div>
               ) : (
                 history.map((entry) => (
-                  <div key={entry.id} className="flex flex-col p-3 rounded-lg bg-[#0F172A]/50 border border-[#334155]/30">
+                  <div key={entry.id} className="flex flex-col p-3 rounded-lg bg-[#1f1f1f] border border-[#27272a]">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium text-[#E6EDF3] truncate max-w-[70%]">
+                      <span className="text-sm font-medium text-[#ededed] truncate max-w-[70%]">
                         {entry.transferType === 'incoming' ? '↓' : '↑'} {entry.fileName}
                       </span>
                       <span className={`text-xs ml-2 font-medium ${
-                        entry.status === 'completed' ? 'text-green-400' :
-                        entry.status === 'failed' ? 'text-red-400' : 'text-yellow-400'
+                        entry.status === 'completed' ? 'text-[#10b981]' :
+                        entry.status === 'failed' ? 'text-[#ef4444]' : 'text-[#f59e0b]'
                       }`}>
                         {entry.status.charAt(0).toUpperCase() + entry.status.slice(1)}
                       </span>
                     </div>
-                    <div className="flex justify-between items-center mt-1 text-[10px] text-[#94A3B8]">
+                    <div className="flex justify-between items-center mt-1 text-[10px] text-[#a1a1aa]">
                       <span>{formatSize(entry.totalSize)}</span>
                       <span>{formatTime(entry.timestamp)}</span>
                     </div>

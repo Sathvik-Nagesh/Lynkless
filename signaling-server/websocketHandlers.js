@@ -295,6 +295,14 @@ async function handleMessage(ws, message) {
  * Handle connection request (peer approval)
  */
 function handleConnectionRequest(ws, { targetId }) {
+  if (ws.clientId === targetId) {
+    sendToClient(ws, {
+      type: 'connection-request-failed',
+      targetId,
+      reason: 'Cannot connect to yourself',
+    });
+    return;
+  }
   const targetWs = clients.get(targetId);
 
   if (!targetWs) {

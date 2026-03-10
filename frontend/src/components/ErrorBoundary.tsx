@@ -76,21 +76,21 @@ export class ErrorBoundary extends Component<Props, State> {
                 </svg>
               </div>
               <div>
-                <h2 className="text-lg font-semibold text-[#E6EDF3]">
+                <h2 className="text-lg font-semibold text-[#ededed]">
                   Something went wrong
                 </h2>
-                <p className="text-sm text-[#64748B]">
+                <p className="text-sm text-[#a1a1aa]">
                   The application encountered an error
                 </p>
               </div>
             </div>
 
             {this.state.error && (
-              <div className="mb-4 p-3 rounded-lg bg-[#0B0F14] border border-[#1C2433]">
-                <p className="text-xs font-mono text-[#EF4444] mb-1">
+              <div className="mb-4 p-3 rounded-lg bg-[#111] border border-[#27272a]">
+                <p className="text-xs font-mono text-[#ef4444] mb-1">
                   {this.state.error.name}
                 </p>
-                <p className="text-xs font-mono text-[#94A3B8]">
+                <p className="text-xs font-mono text-[#a1a1aa]">
                   {this.state.error.message}
                 </p>
               </div>
@@ -111,7 +111,7 @@ export class ErrorBoundary extends Component<Props, State> {
               </button>
             </div>
 
-            <p className="text-xs text-[#64748B] mt-4 text-center">
+            <p className="text-xs text-[#a1a1aa] mt-4 text-center">
               If this persists, try refreshing your browser
             </p>
           </div>

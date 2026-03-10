@@ -35,11 +35,9 @@ const renderMessageContent = (content: string) => {
     if (match.index > lastIndex) {
       parts.push(<span key={lastIndex}>{content.slice(lastIndex, match.index)}</span>);
     }
-    parts.push(
-       <pre key={match.index} className="bg-[#020617] p-3 rounded-lg text-[11px] mt-1 mb-1 overflow-x-auto text-[#22D3EE] border border-[#334155]/50 shadow-inner block w-full font-mono">
+       <pre key={match.index} className="bg-[#111] p-3 rounded-lg text-[11px] mt-1 mb-1 overflow-x-auto text-[#ededed] border border-[#27272a] shadow-inner block w-full font-mono">
          <code>{match[1].trim()}</code>
        </pre>
-    );
     lastIndex = match.index + match[0].length;
   }
   if (lastIndex < content.length) {
@@ -59,7 +57,7 @@ const ChatMessageItem = memo(function ChatMessageItem({ msg, showTimestamp, isSa
       {showTimestamp && (
         <div className="flex items-center gap-3 my-3">
           <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
-          <span className="text-[10px] text-[#475569] font-medium">
+          <span className="text-[10px] text-[#71717a] font-medium">
             {formatTime(msg.timestamp)}
           </span>
           <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
@@ -77,31 +75,31 @@ const ChatMessageItem = memo(function ChatMessageItem({ msg, showTimestamp, isSa
         <div
           className="max-w-[80%] rounded-2xl px-4 py-2 relative group"
           style={msg.isOwn ? {
-            background: 'linear-gradient(135deg, rgba(34, 211, 238, 0.15), rgba(99, 102, 241, 0.15))',
-            border: '1px solid rgba(34, 211, 238, 0.2)',
+            background: '#1f1f1f',
+            border: '1px solid #27272a',
             borderBottomRightRadius: isSameSender ? '8px' : '20px',
           } : {
-            background: 'var(--bg-hover)',
+            background: 'transparent',
             border: '1px solid var(--border-subtle)',
             borderBottomLeftRadius: isSameSender ? '8px' : '20px',
           }}
         >
           {/* Sender name (only for received, and only if different from previous) */}
           {!msg.isOwn && !isSameSender && (
-            <p className="text-[10px] font-semibold mb-1 flex items-center gap-1" style={{ color: '#6366F1' }}>
+            <p className="text-[10px] font-semibold mb-1 flex items-center gap-1" style={{ color: '#ededed' }}>
               <span>{getEmojiForPeer(msg.fromId)}</span>
               <span>{getPeerName(msg.fromId)}</span>
             </p>
           )}
           <div
             className="break-words text-sm leading-relaxed"
-            style={{ color: msg.isOwn ? '#E6EDF3' : '#CBD5E1' }}
+            style={{ color: msg.isOwn ? '#ededed' : '#a1a1aa' }}
           >
             {renderMessageContent(msg.content)}
           </div>
           {/* Timestamp on hover */}
           <span
-            className="text-[9px] opacity-0 group-hover:opacity-100 transition-opacity absolute -bottom-4 text-[#475569]"
+            className="text-[9px] opacity-0 group-hover:opacity-100 transition-opacity absolute -bottom-4 text-[#71717a]"
             style={{ [msg.isOwn ? 'right' : 'left']: '8px' }}
           >
             {formatTime(msg.timestamp)}
@@ -194,21 +192,20 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
             setLastReadCount(messages.length);
           }
         }}
-        className="flex items-center justify-between p-5 hover:bg-[#1C2433] transition-colors duration-150"
+        className="flex items-center justify-between p-5 hover:bg-[#1f1f1f] transition-colors duration-150"
       >
         <div className="flex items-center gap-3">
           <div 
-            className="w-9 h-9 rounded-xl flex items-center justify-center"
-            style={{ background: 'linear-gradient(135deg, #6366F1 0%, #EC4899 100%)' }}
+            className="w-9 h-9 rounded-xl flex items-center justify-center bg-[#111] border border-[#27272a]"
           >
-            <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-4 h-4 text-[#ededed]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
           </div>
           <div className="text-left">
-            <span className="font-semibold text-[#E6EDF3] text-base block">Chat</span>
+            <span className="font-semibold text-[#ededed] text-base block">Chat</span>
             {connectedPeers.length > 0 && (
-              <span className="text-[10px] text-[#64748B]">
+              <span className="text-[10px] text-[#a1a1aa]">
                 {connectedPeers.length} peer{connectedPeers.length !== 1 ? 's' : ''} connected
               </span>
             )}
@@ -216,8 +213,7 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
           {/* Unread badge */}
           {unreadCount > 0 && !isExpanded && (
             <motion.span 
-              className="px-2 py-0.5 text-xs rounded-full font-bold text-white"
-              style={{ background: '#EF4444' }}
+              className="px-2 py-0.5 text-xs rounded-full font-bold text-black bg-[#ededed]"
               initial={{ scale: 0 }}
               animate={{ scale: 1 }}
               transition={{ type: 'spring', stiffness: 500 }}
@@ -228,14 +224,14 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
           {messages.length > 0 && unreadCount === 0 && (
             <span 
               className="px-2 py-0.5 text-xs rounded-md font-medium"
-              style={{ background: 'rgba(99, 102, 241, 0.15)', color: '#6366F1' }}
+              style={{ background: '#1f1f1f', color: '#ededed', border: '1px solid #27272a' }}
             >
               {messages.length}
             </span>
           )}
         </div>
         <motion.svg
-          className="w-4 h-4 text-[#64748B]"
+          className="w-4 h-4 text-[#a1a1aa]"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -263,13 +259,13 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
             >
               {messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full">
-                  <svg className="w-10 h-10 mb-2 text-[#475569]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-10 h-10 mb-2 text-[#71717a]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                   </svg>
-                  <p className="text-sm text-[#64748B]">No messages yet</p>
-                  <p className="text-xs text-[#475569]">Messages are ephemeral & encrypted</p>
+                  <p className="text-sm text-[#a1a1aa]">No messages yet</p>
+                  <p className="text-xs text-[#71717a]">Messages are ephemeral & encrypted</p>
                   {disabled && (
-                    <p className="text-xs text-[#EF4444] mt-2">Connect to a peer to start chatting</p>
+                    <p className="text-xs text-red-500 mt-2">Connect to a peer to start chatting</p>
                   )}
                 </div>
               ) : (
@@ -301,20 +297,20 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
                   animate={{ opacity: 1, height: 'auto' }}
                   exit={{ opacity: 0, height: 0 }}
                 >
-                  <div className="flex items-center gap-2 text-xs text-[#64748B]">
+                  <div className="flex items-center gap-2 text-xs text-[#a1a1aa]">
                     <span className="flex gap-1">
                       <motion.span
-                        className="w-1.5 h-1.5 bg-[#64748B] rounded-full"
+                        className="w-1.5 h-1.5 bg-[#a1a1aa] rounded-full"
                         animate={{ opacity: [0.3, 1, 0.3] }}
                         transition={{ repeat: Infinity, duration: 1, delay: 0 }}
                       />
                       <motion.span
-                        className="w-1.5 h-1.5 bg-[#64748B] rounded-full"
+                        className="w-1.5 h-1.5 bg-[#a1a1aa] rounded-full"
                         animate={{ opacity: [0.3, 1, 0.3] }}
                         transition={{ repeat: Infinity, duration: 1, delay: 0.2 }}
                       />
                       <motion.span
-                        className="w-1.5 h-1.5 bg-[#64748B] rounded-full"
+                        className="w-1.5 h-1.5 bg-[#a1a1aa] rounded-full"
                         animate={{ opacity: [0.3, 1, 0.3] }}
                         transition={{ repeat: Infinity, duration: 1, delay: 0.4 }}
                       />
@@ -346,12 +342,12 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
                 <motion.button
                   type="submit"
                   disabled={disabled || !input.trim()}
-                  className="px-4 py-2 rounded-xl font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="px-4 py-2 rounded-xl font-medium disabled:opacity-40 disabled:cursor-not-allowed border border-transparent transition-colors"
                   style={{
-                    background: disabled || !input.trim() ? 'var(--bg-hover)' : 'linear-gradient(135deg, #22D3EE, #6366F1)',
-                    color: disabled || !input.trim() ? '#64748B' : '#FFFFFF',
+                    background: disabled || !input.trim() ? 'var(--bg-hover)' : '#ededed',
+                    color: disabled || !input.trim() ? '#71717a' : '#000000',
                   }}
-                  whileHover={disabled ? {} : { transform: 'translateY(-1px)' }}
+                  whileHover={disabled ? {} : { transform: 'translateY(-1px)', background: '#d4d4d8' }}
                   whileTap={disabled ? {} : { transform: 'translateY(0)' }}
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -360,7 +356,7 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
                 </motion.button>
               </div>
               {!disabled && (
-                <p className="text-[10px] text-[#475569] mt-1.5 text-right">
+                <p className="text-[10px] text-[#71717a] mt-1.5 text-right">
                   Press Enter to send • Esc to minimize
                 </p>
               )}

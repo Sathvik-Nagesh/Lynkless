@@ -26,6 +26,9 @@ import { useToast } from '@/components/ToastProvider';
 import { E2EEHelper } from '@/lib/webrtc/e2ee';
 import DecryptionTool from '@/components/DecryptionTool';
 import Link from 'next/link';
+import { createZipFromFiles } from '@/lib/utils/zipper';
+import { processEntry } from '@/lib/utils/fileUpload';
+import { MAX_FILE_SIZE } from '@/lib/webrtc/fileTransfer';
 
 const SIGNALING_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || 'ws://localhost:8080';
 
@@ -37,6 +40,8 @@ export default function Home() {
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [showFilePreview, setShowFilePreview] = useState(false);
   const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
+  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
+  const dragCounter = useRef(0);
   const sounds = useRef(getSounds());
   const { showToast } = useToast();
 
@@ -174,16 +179,29 @@ export default function Home() {
   }, [peers]);
 
   // Confirm and send files
-  const handleConfirmSend = useCallback(async (password?: string) => {
+  const handleConfirmSend = useCallback(async (password?: string, shouldZip?: boolean) => {
     setShowFilePreview(false);
     const connectedPeers = peers.filter(p => p.state === 'connected');
 
     sounds.current.playTransferStart();
 
     try {
+      let finalFiles = pendingFiles;
+      
+      if (shouldZip && finalFiles.length > 1) {
+        showToast('Zipping files...', 'info');
+        try {
+          const zippedFile = await createZipFromFiles(finalFiles, `Lynkless_Bundle_${Date.now()}.zip`);
+          finalFiles = [zippedFile];
+        } catch (e) {
+          console.error('Zipping failed', e);
+          showToast('Zipping failed, sending individually', 'error');
+        }
+      }
+
       const filesToSend = password 
-        ? await Promise.all(pendingFiles.map(f => E2EEHelper.encryptFile(f, password)))
-        : pendingFiles;
+        ? await Promise.all(finalFiles.map(f => E2EEHelper.encryptFile(f, password)))
+        : finalFiles;
 
       if (connectedPeers.length > 1) {
         // Send to all via Mesh broadcast
@@ -340,7 +358,94 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen p-6 md:p-10">
+    <main 
+      className="min-h-screen p-6 md:p-10 relative"
+      onDragEnter={(e) => {
+        e.preventDefault();
+        dragCounter.current++;
+        if (e.dataTransfer.types.includes('Files')) {
+          setIsGlobalDragging(true);
+        }
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        dragCounter.current--;
+        if (dragCounter.current === 0) {
+          setIsGlobalDragging(false);
+        }
+      }}
+      onDragOver={(e) => {
+        e.preventDefault(); // necessary to allow drop
+      }}
+      onDrop={async (e) => {
+        e.preventDefault();
+        dragCounter.current = 0;
+        setIsGlobalDragging(false);
+
+        if (!canSendFile) {
+          showToast('No peer selected. Select a peer from the Radar to send files.', 'error');
+          return;
+        }
+
+        let files: File[] = [];
+        if (e.dataTransfer.items) {
+          const items = Array.from(e.dataTransfer.items);
+          for (const item of items) {
+            if (item.kind === 'file') {
+              const entry = item.webkitGetAsEntry();
+              if (entry) {
+                const entryFiles = await processEntry(entry);
+                files = files.concat(entryFiles);
+              }
+            }
+          }
+        } else {
+          files = Array.from(e.dataTransfer.files);
+        }
+
+        const validFiles: File[] = [];
+        for (const file of files) {
+          if (file.size <= MAX_FILE_SIZE) {
+            validFiles.push(file);
+          }
+        }
+
+        if (validFiles.length < files.length) {
+          showToast(`Some files were skipped because they exceed the ${MAX_FILE_SIZE / (1024 * 1024)}MB limit`, 'error');
+        }
+
+        if (validFiles.length > 0) {
+          handleFileDrop(validFiles);
+        }
+      }}
+    >
+      {/* Global Drag Overlay */}
+      <AnimatePresence>
+        {isGlobalDragging && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-[#111]/80 backdrop-blur-md border-4 border-[#ededed] border-dashed m-4 rounded-3xl"
+            style={{ pointerEvents: 'none' }}
+          >
+            <div className="flex flex-col items-center gap-6 p-10 bg-[#1f1f1f]/90 rounded-3xl shadow-2xl">
+              <div className="w-24 h-24 rounded-full bg-[#111] flex items-center justify-center animate-bounce border border-[#27272a]">
+                <span className="text-5xl">📁</span>
+              </div>
+              <div className="text-center">
+                <h2 className="text-3xl font-bold text-white mb-2">Drop files anywhere to send!</h2>
+                <p className="text-[#a1a1aa] text-lg">
+                  {canSendFile 
+                    ? `Sending to connected peers` 
+                    : 'Select a peer from the Radar first'}
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Connection Request Modal */}
       <ConnectionRequestModal
         requests={incomingRequests}
@@ -388,9 +493,9 @@ export default function Home() {
             animate={{ opacity: 1, x: 0 }}
           >
             <h1 className="text-2xl md:text-4xl font-semibold tracking-tight">
-              <span className="gradient-text">Lynkless</span>
+              <span className="text-[#ededed]">Lynkless</span>
             </h1>
-            <p className="text-[#64748B] text-xs md:text-sm mt-1">
+            <p className="text-[#a1a1aa] text-xs md:text-sm mt-1">
               Your files don&apos;t belong in the cloud.
             </p>
           </motion.div>
@@ -402,7 +507,7 @@ export default function Home() {
           >
             <Link
               href="/about"
-              className="text-xs text-[#64748B] hover:text-[#22D3EE] transition-colors px-3 py-1.5 rounded-lg hover:bg-[#1C2433]"
+              className="text-xs text-[#a1a1aa] hover:text-[#ededed] transition-colors px-3 py-1.5 rounded-lg hover:bg-[#1f1f1f]"
             >
               About
             </Link>
@@ -439,7 +544,7 @@ export default function Home() {
 
             {/* Tabs for switching Views */}
             <motion.div
-              className="flex gap-2 p-1 bg-[#0F172A] rounded-xl border border-[#334155]/50"
+              className="flex gap-1 p-1 bg-[#111] rounded-xl border border-[#27272a]"
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ delay: 0.15 }}
@@ -448,8 +553,8 @@ export default function Home() {
                 onClick={() => setActiveView('files')}
                 className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${
                   activeView === 'files' 
-                    ? 'bg-[#1E293B] text-white shadow-sm' 
-                    : 'text-[#64748B] hover:text-[#E6EDF3] hover:bg-[#1E293B]/50'
+                    ? 'bg-[#27272a] text-white shadow-sm' 
+                    : 'text-[#a1a1aa] hover:text-[#ededed] hover:bg-[#1f1f1f]'
                 }`}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -461,8 +566,8 @@ export default function Home() {
                 onClick={() => setActiveView('screen')}
                 className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${
                   activeView === 'screen' 
-                    ? 'bg-[#1E293B] text-white shadow-sm' 
-                    : 'text-[#64748B] hover:text-[#E6EDF3] hover:bg-[#1E293B]/50'
+                    ? 'bg-[#27272a] text-white shadow-sm' 
+                    : 'text-[#a1a1aa] hover:text-[#ededed] hover:bg-[#1f1f1f]'
                 }`}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -489,16 +594,15 @@ export default function Home() {
                   <div className="panel-elevated p-6">
                     <div className="flex items-center gap-3 mb-5">
                       <div
-                        className="w-9 h-9 rounded-xl flex items-center justify-center"
-                        style={{ background: 'linear-gradient(135deg, #22D3EE 0%, #6366F1 100%)' }}
+                        className="w-9 h-9 rounded-xl flex items-center justify-center border border-[#27272a] shadow-sm bg-[#111]"
                       >
-                        <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="w-4 h-4 text-[#ededed]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
                         </svg>
                       </div>
                 <div className="flex-1">
-                  <h2 className="text-base font-semibold text-[#E6EDF3]">Discovery Radar</h2>
-                  <p className="text-xs text-[#64748B]">
+                  <h2 className="text-base font-semibold text-[#ededed]">Discovery Radar</h2>
+                  <p className="text-xs text-[#a1a1aa]">
                     {roomState.code
                       ? `Room ${roomState.code} • ${roomState.users.length} peer${roomState.users.length !== 1 ? 's' : ''}`
                       : nearbyPeers.length > 0
@@ -510,23 +614,23 @@ export default function Home() {
                 <div className="flex gap-2">
                   <motion.button
                     onClick={() => setShowQRCode(true)}
-                    className="btn-icon"
+                    className="btn-icon text-[#ededed]"
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     title="Show my QR code"
                   >
-                    <svg className="w-4 h-4" style={{ color: '#22D3EE' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
                     </svg>
                   </motion.button>
                   <motion.button
                     onClick={() => setShowQRScanner(true)}
-                    className="btn-icon"
+                    className="btn-icon text-[#ededed]"
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     title="Scan QR code"
                   >
-                    <svg className="w-4 h-4" style={{ color: '#6366F1' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
@@ -549,8 +653,8 @@ export default function Home() {
                   <motion.div
                     className="mt-5 p-3 rounded-xl"
                     style={{
-                      background: 'rgba(34, 211, 238, 0.08)',
-                      border: '1px solid rgba(34, 211, 238, 0.15)'
+                      background: 'var(--bg-elevated)',
+                      border: '1px solid var(--border-default)'
                     }}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -560,9 +664,9 @@ export default function Home() {
                       <div className="flex items-center gap-2">
                         <div
                           className="w-2 h-2 rounded-full"
-                          style={{ backgroundColor: canSendFile ? '#22C55E' : '#F59E0B' }}
+                          style={{ backgroundColor: canSendFile ? 'var(--state-success)' : 'var(--state-warning)' }}
                         />
-                        <span className="text-sm flex items-center gap-1.5" style={{ color: '#22D3EE' }}>
+                        <span className="text-sm flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
                           <span className="text-base">{getEmojiForPeer(selectedPeer)}</span>
                           <span className="font-medium">{getPeerName(selectedPeer)}</span>
                         </span>
@@ -575,7 +679,7 @@ export default function Home() {
                       <div className="flex gap-2">
                         <button
                           onClick={() => setSelectedPeer(null)}
-                          className="text-[#64748B] hover:text-[#E6EDF3] text-xs transition-colors px-2 py-1"
+                          className="text-[#71717a] hover:text-[#ededed] text-xs transition-colors px-2 py-1"
                         >
                           Deselect
                         </button>
@@ -585,14 +689,14 @@ export default function Home() {
                               disconnectFromPeer(selectedPeer);
                               setSelectedPeer(null);
                             }}
-                            className="text-[#EF4444] hover:text-[#F87171] text-xs transition-colors px-2 py-1"
+                            className="text-[#ef4444] hover:text-[#f87171] text-xs transition-colors px-2 py-1"
                           >
                             Disconnect
                           </button>
                         )}
                       </div>
                     </div>
-                    <p className="text-[10px] text-[#64748B]">
+                    <p className="text-[10px] text-[#71717a]">
                       {canSendFile ? 'Ready to transfer files and chat' : 'Waiting for connection...'}
                     </p>
                   </motion.div>
@@ -616,7 +720,7 @@ export default function Home() {
                   className="mt-5 p-3 rounded-xl"
                   style={{ background: 'var(--bg-hover)' }}
                 >
-                  <p className="text-[#64748B] text-sm text-center">
+                  <p className="text-[#a1a1aa] text-sm text-center">
                     💡 Create or join a room to connect with remote peers, or wait for nearby peers to be detected automatically.
                   </p>
                 </div>
@@ -656,16 +760,15 @@ export default function Home() {
               >
                 <div className="flex items-center gap-3 mb-4">
                   <div
-                    className="w-9 h-9 rounded-xl flex items-center justify-center"
-                    style={{ background: 'linear-gradient(135deg, #22C55E 0%, #10B981 100%)' }}
+                    className="w-9 h-9 rounded-xl flex items-center justify-center border border-[#27272a] shadow-sm bg-[#111]"
                   >
-                    <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="w-4 h-4 text-[#ededed]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                     </svg>
                   </div>
                   <div>
-                    <h2 className="text-base font-semibold text-[#E6EDF3]">Connected Devices</h2>
-                    <p className="text-[10px] text-[#64748B]">
+                    <h2 className="text-base font-semibold text-[#ededed]">Connected Devices</h2>
+                    <p className="text-[10px] text-[#a1a1aa]">
                       {connectedPeersCount} active connection{connectedPeersCount !== 1 ? 's' : ''}
                     </p>
                   </div>
@@ -678,25 +781,25 @@ export default function Home() {
                       className="flex items-center justify-between p-3 rounded-xl cursor-pointer transition-colors"
                       style={{
                         background: selectedPeer === peer.id
-                          ? 'rgba(34, 211, 238, 0.1)'
-                          : 'var(--bg-hover)',
+                          ? 'var(--bg-elevated)'
+                          : 'transparent',
                         border: selectedPeer === peer.id
-                          ? '1px solid rgba(34, 211, 238, 0.2)'
+                          ? '1px solid var(--border-default)'
                           : '1px solid transparent'
                       }}
                       onClick={() => setSelectedPeer(peer.id)}
                       whileHover={{
-                        background: 'rgba(34, 211, 238, 0.08)',
+                        background: 'var(--bg-hover)',
                       }}
                       layout
                     >
                       <div className="flex items-center gap-3">
                         <span className="text-xl">{getEmojiForPeer(peer.id)}</span>
                         <div>
-                          <p className="text-sm font-medium text-[#E6EDF3]">
+                          <p className="text-sm font-medium text-[#ededed]">
                             {getPeerName(peer.id)}
                           </p>
-                          <p className="text-[10px] text-[#64748B]">
+                          <p className="text-[10px] text-[#a1a1aa]">
                             {peer.isNearby ? '📡 Local Network' : '🌐 Remote'}
                           </p>
                         </div>
@@ -707,7 +810,7 @@ export default function Home() {
                           showDetails={true}
                         />
                         {selectedPeer === peer.id && (
-                          <span className="text-[10px] text-[#22D3EE] font-medium">Active</span>
+                          <span className="text-[10px] text-[#ededed] font-medium">Active</span>
                         )}
                       </div>
                     </motion.div>
@@ -724,14 +827,13 @@ export default function Home() {
             >
               <div className="flex items-center gap-3 mb-5">
                 <div
-                  className="w-9 h-9 rounded-xl flex items-center justify-center"
-                  style={{ background: 'linear-gradient(135deg, #6366F1 0%, #EC4899 100%)' }}
+                  className="w-9 h-9 rounded-xl flex items-center justify-center border border-[#27272a] shadow-sm bg-[#111]"
                 >
-                  <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-4 h-4 text-[#ededed]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                   </svg>
                 </div>
-                <h2 className="text-base font-semibold text-[#E6EDF3]">Send Files</h2>
+                <h2 className="text-base font-semibold text-[#ededed]">Send Files</h2>
               </div>
 
               <FileDropZone

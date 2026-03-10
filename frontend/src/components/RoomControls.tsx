@@ -70,17 +70,17 @@ const RoomControls = memo(function RoomControls({
       >
         <div className="flex items-center justify-between mb-4">
           <div>
-            <p className="text-[#64748B] text-xs mb-1">Room Code</p>
+            <p className="text-[#a1a1aa] text-xs mb-1">Room Code</p>
             <div className="flex items-center gap-3">
               <span 
-                className="text-2xl font-mono font-semibold tracking-wider gradient-text"
+                className="text-2xl font-mono font-semibold tracking-wider text-[#ededed]"
               >
                 {roomCode}
               </span>
               {isCreator && (
                 <span 
                   className="px-2 py-0.5 text-[10px] rounded-md font-medium"
-                  style={{ background: 'rgba(99, 102, 241, 0.15)', color: '#6366F1' }}
+                  style={{ background: 'var(--border-default)', color: 'var(--text-primary)' }}
                 >
                   Host
                 </span>
@@ -119,7 +119,7 @@ const RoomControls = memo(function RoomControls({
               </>
             ) : (
               <>
-                <svg className="w-4 h-4 text-[#94A3B8]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-4 h-4 text-[#a1a1aa]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
                 Copy Code
@@ -131,11 +131,11 @@ const RoomControls = memo(function RoomControls({
             onClick={copyShareLink}
             className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-all"
             style={{
-              background: 'rgba(34, 211, 238, 0.08)',
-              color: '#22D3EE',
-              border: '1px solid rgba(34, 211, 238, 0.15)',
+              background: '#111',
+              color: '#ededed',
+              border: '1px solid #27272a',
             }}
-            whileHover={{ background: 'rgba(34, 211, 238, 0.12)', transform: 'translateY(-1px)' }}
+            whileHover={{ background: '#1f1f1f', transform: 'translateY(-1px)' }}
             whileTap={{ transform: 'translateY(0)' }}
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -168,7 +168,7 @@ const RoomControls = memo(function RoomControls({
             <motion.button
               onClick={() => setMode('create')}
               className="btn-primary w-full py-3.5 flex items-center justify-center gap-3"
-              whileHover={{ transform: 'translateY(-1px)', boxShadow: '0 4px 16px rgba(34, 211, 238, 0.15)' }}
+              whileHover={{ transform: 'translateY(-1px)' }}
               whileTap={{ transform: 'translateY(0)' }}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -201,17 +201,17 @@ const RoomControls = memo(function RoomControls({
             <div className="flex items-center gap-2 mb-4">
               <button
                 onClick={() => setMode('idle')}
-                className="p-2 text-[#64748B] hover:text-[#E6EDF3] transition-colors"
+                className="p-2 text-[#a1a1aa] hover:text-[#ededed] transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
               </button>
-              <h3 className="text-base font-semibold text-[#E6EDF3]">Create Room</h3>
+              <h3 className="text-base font-semibold text-[#ededed]">Create Room</h3>
             </div>
 
             <div>
-              <label className="block text-xs text-[#64748B] mb-2">Password (optional)</label>
+              <label className="block text-xs text-[#a1a1aa] mb-2">Password (optional)</label>
               <div className="relative">
                 <input
                   type={showPassword ? 'text' : 'password'}
@@ -223,7 +223,7 @@ const RoomControls = memo(function RoomControls({
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#64748B] hover:text-[#E6EDF3] transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#a1a1aa] hover:text-[#ededed] transition-colors"
                 >
                   {showPassword ? (
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -242,7 +242,7 @@ const RoomControls = memo(function RoomControls({
             <motion.button
               onClick={handleCreate}
               className="btn-primary w-full py-3"
-              whileHover={{ transform: 'translateY(-1px)', boxShadow: '0 4px 16px rgba(34, 211, 238, 0.15)' }}
+              whileHover={{ transform: 'translateY(-1px)' }}
               whileTap={{ transform: 'translateY(0)' }}
             >
               Create Room
@@ -260,17 +260,17 @@ const RoomControls = memo(function RoomControls({
             <div className="flex items-center gap-2 mb-4">
               <button
                 onClick={() => setMode('idle')}
-                className="p-2 text-[#64748B] hover:text-[#E6EDF3] transition-colors"
+                className="p-2 text-[#a1a1aa] hover:text-[#ededed] transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
               </button>
-              <h3 className="text-base font-semibold text-[#E6EDF3]">Join Room</h3>
+              <h3 className="text-base font-semibold text-[#ededed]">Join Room</h3>
             </div>
 
             <div>
-              <label className="block text-xs text-[#64748B] mb-2">Room Code</label>
+              <label className="block text-xs text-[#a1a1aa] mb-2">Room Code</label>
               <input
                 type="text"
                 value={code}
@@ -282,7 +282,7 @@ const RoomControls = memo(function RoomControls({
             </div>
 
             <div>
-              <label className="block text-xs text-[#64748B] mb-2">Password (if required)</label>
+              <label className="block text-xs text-[#a1a1aa] mb-2">Password (if required)</label>
               <input
                 type="password"
                 value={password}
@@ -296,7 +296,7 @@ const RoomControls = memo(function RoomControls({
               onClick={handleJoin}
               disabled={!code.trim()}
               className="btn-primary w-full py-3 disabled:opacity-40 disabled:cursor-not-allowed"
-              whileHover={code.trim() ? { transform: 'translateY(-1px)', boxShadow: '0 4px 16px rgba(34, 211, 238, 0.15)' } : {}}
+              whileHover={code.trim() ? { transform: 'translateY(-1px)' } : {}}
               whileTap={code.trim() ? { transform: 'translateY(0)' } : {}}
             >
               Join Room

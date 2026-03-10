@@ -3,41 +3,12 @@
 import { useState, useCallback, memo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { MAX_FILE_SIZE } from '@/lib/webrtc/fileTransfer';
+import { processEntry } from '@/lib/utils/fileUpload';
 
 interface FileDropZoneProps {
   onFileDrop: (files: File[]) => void;
   disabled?: boolean;
 }
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const processEntry = async (entry: any, path = ''): Promise<File[]> => {
-  if (entry.isFile) {
-    return new Promise((resolve) => {
-      entry.file((file: File) => {
-        // Add the path to the file object as a custom property for reference
-        Object.defineProperty(file, 'webkitRelativePath', {
-          value: path + file.name,
-          writable: false,
-        });
-        resolve([file]);
-      });
-    });
-  } else if (entry.isDirectory) {
-    const dirReader = entry.createReader();
-    return new Promise((resolve) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      dirReader.readEntries(async (entries: any[]) => {
-        let files: File[] = [];
-        for (const child of entries) {
-          const childFiles = await processEntry(child, path + entry.name + '/');
-          files = files.concat(childFiles);
-        }
-        resolve(files);
-      });
-    });
-  }
-  return [];
-};
 
 const FileDropZone = memo(function FileDropZone({ onFileDrop, disabled }: FileDropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
@@ -161,15 +132,15 @@ const FileDropZone = memo(function FileDropZone({ onFileDrop, disabled }: FileDr
         className="relative overflow-hidden rounded-xl transition-all duration-150"
         style={{
           border: isDragging 
-            ? '1px solid #22D3EE' 
+            ? '1px solid #ededed' 
             : disabled 
-              ? '1px dashed rgba(255,255,255,0.06)' 
-              : '1px dashed rgba(255,255,255,0.12)',
+              ? '1px dashed #27272a' 
+              : '1px dashed #3f3f46',
           background: isDragging
-            ? 'rgba(34, 211, 238, 0.06)'
+            ? 'var(--border-subtle)'
             : disabled
               ? 'rgba(255, 255, 255, 0.01)'
-              : 'rgba(255, 255, 255, 0.03)',
+              : 'rgba(255, 255, 255, 0.02)',
         }}
         onDrop={handleDrop}
         onDragOver={handleDragOver}
@@ -200,7 +171,7 @@ const FileDropZone = memo(function FileDropZone({ onFileDrop, disabled }: FileDr
               {!disabled && (
                 <label
                   htmlFor="file-input"
-                  className="mt-2 px-6 py-2 bg-gradient-to-r from-cyan-500/10 to-purple-500/10 text-cyan-400 rounded-lg cursor-pointer hover:from-cyan-500/20 hover:to-purple-500/20 transition-all"
+                  className="mt-2 px-6 py-2 bg-[#111] text-[#ededed] border border-[#27272a] rounded-lg cursor-pointer hover:bg-[#1f1f1f] hover:border-[#3f3f46] transition-all text-sm font-medium"
                 >
                   Choose Files
                 </label>
@@ -239,7 +210,7 @@ const FileDropZone = memo(function FileDropZone({ onFileDrop, disabled }: FileDr
                 <button
                   onClick={handleSend}
                   disabled={disabled}
-                  className="flex-1 px-4 py-2 bg-gradient-to-r from-cyan-500 to-purple-500 text-white rounded-lg hover:from-cyan-600 hover:to-purple-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 px-4 py-2 bg-[#ededed] text-[#000] border border-transparent rounded-lg hover:bg-[#d4d4d8] transition-all disabled:opacity-50 disabled:cursor-not-allowed font-medium text-sm"
                 >
                   Send {selectedFiles.length > 1 ? 'All' : 'File'}
                 </button>

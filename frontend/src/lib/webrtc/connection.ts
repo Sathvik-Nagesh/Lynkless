@@ -152,20 +152,28 @@ class WebRTCManager {
   private async handleOffer(fromId: string, offer: RTCSessionDescriptionInit, isNearby: boolean = false): Promise<void> {
     console.log('[WebRTC] Received offer from:', fromId, isNearby ? '(nearby)' : '(remote)');
 
-    // Initialize buffer and tracking for this peer
-    this.iceCandidateBuffer.set(fromId, []);
-    this.remoteDescriptionSet.set(fromId, false);
+    let peerConnection = this.peers.get(fromId);
+    
+    // If we don't have an existing connection, create one
+    if (!peerConnection) {
+      // Initialize buffer and tracking for this peer
+      this.iceCandidateBuffer.set(fromId, []);
+      this.remoteDescriptionSet.set(fromId, false);
+      peerConnection = this.createPeerConnection(fromId, isNearby);
 
-    const peerConnection = this.createPeerConnection(fromId, isNearby);
+      // Handle incoming data channel ONLY for new connections
+      peerConnection.connection.ondatachannel = (event) => {
+        this.setupDataChannel(fromId, event.channel);
+        peerConnection!.dataChannel = event.channel;
+      };
+    } else {
+      // For renegotiation on an existing connection, reset tracking
+      this.iceCandidateBuffer.set(fromId, []);
+      this.remoteDescriptionSet.set(fromId, false);
+    }
 
     // Store remote SDP
     peerConnection.remoteSdp = offer.sdp;
-
-    // Handle incoming data channel
-    peerConnection.connection.ondatachannel = (event) => {
-      this.setupDataChannel(fromId, event.channel);
-      peerConnection.dataChannel = event.channel;
-    };
 
     await peerConnection.connection.setRemoteDescription(offer);
     // Mark remote description as set and flush buffered candidates
@@ -350,6 +358,7 @@ class WebRTCManager {
    */
   private setupDataChannel(peerId: string, channel: RTCDataChannel): void {
     channel.binaryType = 'arraybuffer';
+    channel.bufferedAmountLowThreshold = 512 * 1024; // 512KB
 
     channel.onopen = () => {
       console.log('[WebRTC] Data channel opened with:', peerId);
@@ -384,14 +393,43 @@ class WebRTCManager {
   }
 
   /**
-   * Send data to a specific peer
+   * Send data to a specific peer (with backpressure support)
    */
-  sendToPeer(peerId: string, data: string | ArrayBuffer | ArrayBufferView): boolean {
+  async sendToPeer(peerId: string, data: string | ArrayBuffer | ArrayBufferView): Promise<boolean> {
     const peer = this.peers.get(peerId);
-    if (peer?.dataChannel?.readyState === 'open') {
-      peer.dataChannel.send(data as Parameters<RTCDataChannel['send']>[0]);
-      return true;
+    if (!peer || !peer.dataChannel || peer.dataChannel.readyState !== 'open') {
+      return false;
     }
+
+    const channel = peer.dataChannel;
+
+    // Buffer limit ~1MB, if exceeded wait for bufferedAmountLow
+    if (channel.bufferedAmount > 1024 * 1024) {
+      await new Promise<void>((resolve) => {
+        const onLow = () => {
+          channel.removeEventListener('bufferedamountlow', onLow);
+          resolve();
+        };
+        channel.addEventListener('bufferedamountlow', onLow);
+        
+        // Timeout to prevent hanging if connection drops unexpectedly
+        setTimeout(() => {
+          channel.removeEventListener('bufferedamountlow', onLow);
+          resolve(); 
+        }, 3000);
+      });
+    }
+
+    try {
+      // It might have closed while we were waiting
+      if (channel.readyState === 'open') {
+        channel.send(data as Parameters<RTCDataChannel['send']>[0]);
+        return true;
+      }
+    } catch (e) {
+      console.error('[WebRTC] Data channel send error:', e);
+    }
+    
     return false;
   }
 

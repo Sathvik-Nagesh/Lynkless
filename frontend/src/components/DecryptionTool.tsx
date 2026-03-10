@@ -50,16 +50,15 @@ export default function DecryptionTool() {
     <div className="panel-elevated p-6 mt-6">
       <div className="flex items-center gap-3 mb-5">
         <div 
-          className="w-9 h-9 rounded-xl flex items-center justify-center"
-          style={{ background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)' }}
+          className="w-9 h-9 rounded-xl flex items-center justify-center bg-[#111] border border-[#27272a]"
         >
-          <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="w-4 h-4 text-[#ededed]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
           </svg>
         </div>
         <div className="text-left">
-          <span className="font-semibold text-[#E6EDF3] text-base block">Decryption Tool</span>
-          <span className="text-[10px] text-[#64748B]">Decrypt received .encrypted files</span>
+          <span className="font-semibold text-[#ededed] text-base block">Decryption Tool</span>
+          <span className="text-[10px] text-[#a1a1aa]">Decrypt received .encrypted files</span>
         </div>
       </div>
 
@@ -74,7 +73,7 @@ export default function DecryptionTool() {
           />
           <button 
             onClick={() => fileInputRef.current?.click()}
-            className="w-full py-4 px-4 bg-[#0F172A] border border-dashed border-[#334155] rounded-xl text-sm text-[#94A3B8] hover:border-[#10B981] hover:text-[#10B981] transition-colors"
+            className="w-full py-4 px-4 bg-[#111] border border-dashed border-[#27272a] rounded-xl text-sm text-[#a1a1aa] hover:border-[#ededed] hover:text-[#ededed] transition-colors"
           >
             {encryptedFile ? encryptedFile.name : 'Click to select .encrypted file'}
           </button>
@@ -93,12 +92,12 @@ export default function DecryptionTool() {
                 placeholder="Enter password..."
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-[#0F172A] border border-[#334155]/50 rounded-xl px-4 py-3 text-sm text-[#E6EDF3] focus:outline-none focus:border-[#10B981]"
+                className="w-full bg-[#111] border border-[#27272a] rounded-xl px-4 py-3 text-sm text-[#ededed] focus:outline-none focus:border-[#ededed]"
               />
               <button
                 onClick={handleDecrypt}
                 disabled={!password || isDecrypting}
-                className="w-full py-3 bg-gradient-to-r from-[#10B981] to-[#059669] text-white font-semibold rounded-xl hover:from-[#059669] hover:to-[#047857] disabled:opacity-50 transition-all flex justify-center items-center gap-2"
+                className="w-full py-3 bg-[#ededed] text-black font-semibold rounded-xl hover:bg-[#d4d4d8] disabled:opacity-50 transition-all flex justify-center items-center gap-2"
               >
                 {isDecrypting ? 'Decrypting...' : 'Decrypt File'}
               </button>

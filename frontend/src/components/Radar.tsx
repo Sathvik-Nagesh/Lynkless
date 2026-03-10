@@ -84,7 +84,7 @@ const Radar = memo(function Radar({
       ctx.stroke();
 
       // Draw subtle grid lines
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.02)';
+      ctx.strokeStyle = '#27272a';
       for (let i = 0; i < 8; i++) {
         const angle = (Math.PI * 2 * i) / 8;
         ctx.beginPath();
@@ -99,10 +99,10 @@ const Radar = memo(function Radar({
       // Draw radar sweep - subtle gradient
       const sweepAngle = angleRef.current;
       const gradient = ctx.createConicGradient(sweepAngle, centerX, centerY);
-      gradient.addColorStop(0, 'rgba(34, 211, 238, 0.12)');
-      gradient.addColorStop(0.08, 'rgba(34, 211, 238, 0.04)');
-      gradient.addColorStop(0.15, 'rgba(34, 211, 238, 0)');
-      gradient.addColorStop(1, 'rgba(34, 211, 238, 0)');
+      gradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
+      gradient.addColorStop(0.08, 'rgba(255, 255, 255, 0.03)');
+      gradient.addColorStop(0.15, 'rgba(255, 255, 255, 0)');
+      gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
 
       ctx.fillStyle = gradient;
       ctx.beginPath();
@@ -112,7 +112,7 @@ const Radar = memo(function Radar({
       ctx.fill();
 
       // Draw sweep line - subtle
-      ctx.strokeStyle = 'rgba(34, 211, 238, 0.4)';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(centerX, centerY);
@@ -153,45 +153,45 @@ const Radar = memo(function Radar({
     switch (state) {
       case 'connected':
         return {
-          bgColor: '#22C55E',
-          borderColor: 'rgba(34, 197, 94, 0.3)',
-          shadowColor: 'rgba(34, 197, 94, 0.2)',
+          bgColor: '#10b981',
+          borderColor: 'transparent',
+          shadowColor: 'rgba(16, 185, 129, 0.2)',
           pulse: false,
         };
       case 'request-sent':
         return {
-          bgColor: '#22D3EE',
-          borderColor: 'rgba(34, 211, 238, 0.3)',
-          shadowColor: 'rgba(34, 211, 238, 0.2)',
+          bgColor: '#3f3f46',
+          borderColor: '#52525b',
+          shadowColor: 'rgba(255, 255, 255, 0.1)',
           pulse: true,
         };
       case 'request-received':
         return {
-          bgColor: '#F472B6',
-          borderColor: 'rgba(244, 114, 182, 0.3)',
-          shadowColor: 'rgba(244, 114, 182, 0.2)',
+          bgColor: '#ededed',
+          borderColor: '#ffffff',
+          shadowColor: 'rgba(255, 255, 255, 0.2)',
           pulse: true,
         };
       case 'rejected':
         return {
-          bgColor: '#64748B',
-          borderColor: 'rgba(100, 116, 139, 0.3)',
+          bgColor: '#3f3f46',
+          borderColor: 'transparent',
           shadowColor: 'transparent',
           pulse: false,
         };
       default: // idle
         if (isNearby) {
           return {
-            bgColor: '#F59E0B',
-            borderColor: 'rgba(245, 158, 11, 0.3)',
+            bgColor: '#f59e0b',
+            borderColor: 'transparent',
             shadowColor: 'rgba(245, 158, 11, 0.15)',
             pulse: false,
           };
         }
         return {
-          bgColor: '#6366F1',
-          borderColor: 'rgba(99, 102, 241, 0.3)',
-          shadowColor: 'rgba(99, 102, 241, 0.15)',
+          bgColor: '#3b82f6',
+          borderColor: 'transparent',
+          shadowColor: 'rgba(59, 130, 246, 0.15)',
           pulse: false,
         };
     }
@@ -215,10 +215,29 @@ const Radar = memo(function Radar({
   };
 
   // Combine room users and nearby peers (without duplicates)
-  const allNearbyUsers = useMemo(() => isInRoom
-    ? users.filter(u => u.isNearby && u.id !== currentUserId)
-    : nearbyPeers.filter(u => u.id !== currentUserId),
-  [isInRoom, users, currentUserId, nearbyPeers]);
+  const allNearbyUsers = useMemo(() => {
+    const combined = new Map<string, RadarUser>();
+    
+    // Always show available nearby peers
+    nearbyPeers.forEach(p => {
+      if (p.id !== currentUserId) {
+        combined.set(p.id, { ...p });
+      }
+    });
+
+    // Include room members that are also nearby
+    if (isInRoom) {
+      users.forEach(u => {
+        if (u.isNearby && u.id !== currentUserId) {
+          if (!combined.has(u.id)) {
+            combined.set(u.id, { ...u });
+          }
+        }
+      });
+    }
+
+    return Array.from(combined.values());
+  }, [isInRoom, users, currentUserId, nearbyPeers]);
 
   const remoteUsers = useMemo(() =>
     users.filter(u => !u.isNearby && u.id !== currentUserId),
@@ -236,26 +255,35 @@ const Radar = memo(function Radar({
 
       {/* Center node (current user) - cleaner design */}
       <motion.div
-        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10"
+        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 flex flex-col items-center"
         initial={{ scale: 0 }}
         animate={{ scale: 1 }}
         transition={{ type: 'spring', duration: 0.5 }}
       >
-        <div
-          className="w-11 h-11 rounded-full flex items-center justify-center"
-          style={{
-            background: 'linear-gradient(135deg, #22D3EE 0%, #6366F1 100%)',
-            boxShadow: '0 0 20px rgba(34, 211, 238, 0.2)',
-          }}
-        >
-          <span className="text-white font-semibold text-xs tracking-wide">YOU</span>
+        <div className="relative">
+          <div
+            className="w-11 h-11 rounded-full flex items-center justify-center relative z-20"
+            style={{
+              background: '#111',
+              border: '1px solid #27272a',
+              boxShadow: '0 0 10px rgba(0, 0, 0, 0.5)',
+            }}
+          >
+            <span className="text-[#ededed] font-semibold text-xs tracking-wide">YOU</span>
+          </div>
+          {/* Subtle pulse ring */}
+          <motion.div
+            className="absolute inset-0 rounded-full border border-[#27272a] z-10"
+            animate={{ scale: [1, 1.6, 1], opacity: [0.5, 0, 0.5] }}
+            transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
+          />
         </div>
-        {/* Subtle pulse ring */}
-        <motion.div
-          className="absolute inset-0 rounded-full border border-cyan-400/30"
-          animate={{ scale: [1, 1.3, 1], opacity: [0.5, 0, 0.5] }}
-          transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
-        />
+        {currentUserId && (
+          <span className="mt-2 text-[10px] whitespace-nowrap font-medium text-[#10b981] drop-shadow-md flex items-center gap-1">
+            <span>{getEmojiForPeer(currentUserId)}</span>
+            <span>{getPeerName(currentUserId).slice(0, 12)} ({currentUserId.replace('client_', '').substring(0, 6).toUpperCase()})</span>
+          </span>
+        )}
       </motion.div>
 
       {/* Nearby users (inner circle) */}
@@ -302,10 +330,10 @@ const Radar = memo(function Radar({
               className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] whitespace-nowrap font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-1"
               style={{
                 color: stateLabel
-                  ? (getNodeState(user.id) === 'connected' ? '#22C55E' :
-                    getNodeState(user.id) === 'request-sent' ? '#22D3EE' :
-                      getNodeState(user.id) === 'request-received' ? '#F472B6' : '#94A3B8')
-                  : '#F59E0B'
+                  ? (getNodeState(user.id) === 'connected' ? '#10b981' :
+                    getNodeState(user.id) === 'request-sent' ? '#a1a1aa' :
+                      getNodeState(user.id) === 'request-received' ? '#ededed' : '#71717a')
+                  : '#f59e0b'
               }}
             >
               <span>{getEmojiForPeer(user.id)}</span>
@@ -359,10 +387,10 @@ const Radar = memo(function Radar({
               className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] whitespace-nowrap font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-1"
               style={{
                 color: stateLabel
-                  ? (getNodeState(user.id) === 'connected' ? '#22C55E' :
-                    getNodeState(user.id) === 'request-sent' ? '#22D3EE' :
-                      getNodeState(user.id) === 'request-received' ? '#F472B6' : '#94A3B8')
-                  : '#6366F1'
+                  ? (getNodeState(user.id) === 'connected' ? '#10b981' :
+                    getNodeState(user.id) === 'request-sent' ? '#a1a1aa' :
+                      getNodeState(user.id) === 'request-received' ? '#ededed' : '#71717a')
+                  : '#3b82f6'
               }}
             >
               <span>{getEmojiForPeer(user.id)}</span>
@@ -375,7 +403,7 @@ const Radar = memo(function Radar({
       {/* Empty state message */}
       {!hasAnyPeers && (
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          <p className="text-[#64748B] text-sm text-center mt-20">
+          <p className="text-[#a1a1aa] text-sm text-center mt-20">
             {isInRoom ? 'Waiting for peers to join...' : 'Scanning for nearby peers...'}
           </p>
         </div>
@@ -384,16 +412,16 @@ const Radar = memo(function Radar({
       {/* Legend - cleaner design */}
       <div className="absolute bottom-1 left-3 flex items-center gap-3 text-[10px]">
         <div className="flex items-center gap-1.5">
-          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: '#F59E0B' }} />
-          <span className="text-[#64748B]">Local</span>
+          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: '#f59e0b' }} />
+          <span className="text-[#a1a1aa]">Local</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: '#6366F1' }} />
-          <span className="text-[#64748B]">Remote</span>
+          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: '#3b82f6' }} />
+          <span className="text-[#a1a1aa]">Remote</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: '#22C55E' }} />
-          <span className="text-[#64748B]">Connected</span>
+          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: '#10b981' }} />
+          <span className="text-[#a1a1aa]">Connected</span>
         </div>
       </div>
     </div>
