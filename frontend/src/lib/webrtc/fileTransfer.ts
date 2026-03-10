@@ -707,7 +707,8 @@ class FileTransferManager {
 
     this.meshTransfers.set(meshId, { file, peerIds, transfers });
 
-    peerIds.forEach(peerId => {
+    // Bolt: Parallelize initial metadata sends
+    Promise.all(peerIds.map(async (peerId) => {
       transfers.set(peerId, `${fileId}-${peerId}`);
 
       this.outgoingTransfers.set(`${fileId}-${peerId}`, {
@@ -734,8 +735,8 @@ class FileTransferManager {
         startOffset: 0,
       });
 
-      this.webrtc.sendToPeer(peerId, JSON.stringify({ type: 'file-meta', fileId, metadata }));
-    });
+      return this.webrtc.sendToPeer(peerId, JSON.stringify({ type: 'file-meta', fileId, metadata }));
+    })).catch(err => console.error('[FileTransfer] Mesh init failed', err));
 
     const reader = file.stream().getReader();
     let chunkIndex = 0;
@@ -762,14 +763,15 @@ class FileTransferManager {
 
             const chunkMetaStr = JSON.stringify({ type: 'file-chunk', fileId, chunkIndex });
 
-            for (const peerId of activePeers) {
+            // Bolt: Parallelize chunk broadcasting to prevent a slow peer from blocking others (head-of-line blocking)
+            await Promise.all(activePeers.map(async (peerId) => {
               const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
               if (tx && !tx.cancelled && !tx.paused) {
                 await this.webrtc.sendToPeer(peerId, chunkMetaStr);
                 await this.webrtc.sendToPeer(peerId, chunk);
                 tx.lastChunkIndex = chunkIndex;
               }
-            }
+            }));
 
             chunkIndex++;
             transferredSize += chunk.length;
@@ -788,16 +790,17 @@ class FileTransferManager {
           }
         }
 
-        peerIds.forEach(peerId => {
+        // Bolt: Parallelize completion notifications
+        await Promise.all(peerIds.map(async (peerId) => {
           const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
           if (tx && !tx.cancelled && !tx.paused) {
-            this.webrtc.sendToPeer(peerId, JSON.stringify({ type: 'file-complete', fileId }));
+            await this.webrtc.sendToPeer(peerId, JSON.stringify({ type: 'file-complete', fileId }));
             this.notifyProgress(`${fileId}-${peerId}`, 'completed', {
               transferredSize: file.size,
             });
             this.outgoingTransfers.delete(`${fileId}-${peerId}`);
           }
-        });
+        }));
       } catch (error) {
         console.error('[FileTransfer] Error in mesh broadcast:', error);
         peerIds.forEach(peerId => {
