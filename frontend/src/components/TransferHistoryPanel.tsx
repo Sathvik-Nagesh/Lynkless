@@ -10,6 +10,25 @@ import {
   getTransferStats
 } from '@/lib/db/transferHistory';
 
+// Helper functions moved outside of the component to avoid redundant recreation
+// Bolt: Improves performance by reducing the number of objects created on each render.
+const formatTime = (ts: number) => {
+  return new Date(ts).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
+const formatSize = (bytes: number) => {
+  if (!isFinite(bytes) || isNaN(bytes)) return '0 B';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+};
+
 const TransferHistoryPanel = memo(function TransferHistoryPanel() {
   const [history, setHistory] = useState<TransferHistoryEntry[]>([]);
   const [stats, setStats] = useState({ totalSent: 0, totalReceived: 0 });
@@ -55,20 +74,6 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
       setHistory([]);
       setStats({ totalSent: 0, totalReceived: 0 });
     }
-  };
-
-  const formatTime = (ts: number) => {
-    return new Date(ts).toLocaleString(undefined, {
-      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-    });
-  };
-
-  const formatSize = (bytes: number) => {
-    if (!isFinite(bytes) || isNaN(bytes)) return '0 B';
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
   };
 
   return (

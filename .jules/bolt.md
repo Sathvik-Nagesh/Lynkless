@@ -33,3 +33,11 @@
 ## 2026-03-05 - Zero-Copy E2EE Buffer Management
 **Learning:** Manual buffer concatenation in E2EE operations (like salt + IV + encrypted data) creates a full copy of the encrypted data, potentially doubling memory usage during large file transfers. Similarly, `ArrayBuffer.slice()` creates unnecessary copies.
 **Action:** Use the `File` constructor's ability to take an array of buffers for zero-copy concatenation, and use `TypedArray.prototype.subarray()` for extraction to create views instead of copies.
+
+## 2026-03-06 - Parallelizing Mesh Broadcasting
+**Learning:** Sending file chunks to multiple peers sequentially in a loop (using `await` in a `for` loop) causes head-of-line blocking. A single slow peer with backpressure will bottleneck the entire transfer for all other connected peers.
+**Action:** Parallelize the sending of metadata, chunks, and completion signals to all active peers using `Promise.all`. This ensures that faster peers receive data as quickly as possible.
+
+## 2026-03-06 - O(1) Database Aggregates with Cursors
+**Learning:** Using `IDBObjectStore.getAll()` to calculate aggregate statistics (e.g., total bytes sent/received) loads the entire dataset into memory. As history grows, this causes memory spikes and UI hangs.
+**Action:** Use an IndexedDB cursor (`openCursor`) to iterate through records one by one. This achieves O(1) space complexity and maintains consistent performance regardless of database size.
