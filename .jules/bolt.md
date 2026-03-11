@@ -33,3 +33,7 @@
 ## 2026-03-05 - Zero-Copy E2EE Buffer Management
 **Learning:** Manual buffer concatenation in E2EE operations (like salt + IV + encrypted data) creates a full copy of the encrypted data, potentially doubling memory usage during large file transfers. Similarly, `ArrayBuffer.slice()` creates unnecessary copies.
 **Action:** Use the `File` constructor's ability to take an array of buffers for zero-copy concatenation, and use `TypedArray.prototype.subarray()` for extraction to create views instead of copies.
+
+## 2026-03-10 - O(1) Space Complexity for DB Aggregates
+**Learning:** Using `db.getAll()` to calculate aggregate statistics (like total bytes transferred) on a growing dataset creates a memory bottleneck that scales O(N) with history size. This can lead to main-thread jank or OOM crashes as the database grows.
+**Action:** Use an IndexedDB cursor to iterate through records for aggregation. This maintains O(1) space complexity regardless of the number of entries in the database.
