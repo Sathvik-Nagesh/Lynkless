@@ -12,7 +12,7 @@ A blazing-fast, zero-storage, peer-to-peer file transfer and chat platform built
 
 ### Core Functionality
 
-- 🚀 **Direct P2P Transfer** — Send large files (up to **5GB**) directly between browsers with resuming capabilities and high-throughput chunking (256KB/s WebRTC streaming logic with proper backpressure).
+- 🚀 **Direct P2P Transfer** — Send large files (up to **5GB**) directly between browsers with resuming capabilities, high-throughput chunking (256KB/s WebRTC streaming logic with proper backpressure), and robust ARQ (Automatic Repeat Request) for missing chunk recovery.
 - 📡 **Smart Discovery** — Beautiful Apple/Vercel-inspired glassmorphic Radar UI to discover nearby peers on your network automatically.
 - 🔐 **Zero Storage & E2EE** — Files never touch any centralized data centers. Enable E2EE custom passwords out of the box using military-grade `AES-GCM` encryption.
 - 📁 **Folder & Clipboard Support** — Drag-and-drop massive nested directories natively, or instantly `CTRL+V` paste images straight from your clipboard.

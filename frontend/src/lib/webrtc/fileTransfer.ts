@@ -80,7 +80,7 @@ export type MeshProgressHandler = (progress: MeshTransferProgress) => void;
 
 // Message types for file transfer protocol
 interface FileMessage {
-  type: 'file-meta' | 'file-chunk' | 'file-complete' | 'file-cancel' | 'file-resume-request' | 'file-resume-response';
+  type: 'file-meta' | 'file-chunk' | 'file-complete' | 'file-cancel' | 'file-resume-request' | 'file-resume-response' | 'file-request-missing-chunks';
   fileId: string;
   [key: string]: unknown;
 }
@@ -104,6 +104,11 @@ interface FileResumeResponseMessage extends FileMessage {
   type: 'file-resume-response';
   resumeFromChunk: number;
   canResume: boolean;
+}
+
+interface FileRequestMissingChunksMessage extends FileMessage {
+  type: 'file-request-missing-chunks';
+  missingChunks: number[];
 }
 
 // Transfer state for resume support
@@ -135,7 +140,7 @@ class FileTransferManager {
   private fileReceivedHandlers: Set<FileReceivedHandler> = new Set();
   private meshProgressHandlers: Set<MeshProgressHandler> = new Set();
   private incomingFiles: Map<string, IncomingTransferState> = new Map();
-  private pendingChunkMetadata: Map<string, { fileId: string; chunkIndex: number }> = new Map();
+  private pendingChunkMetadata: Map<string, Array<{ fileId: string; chunkIndex: number }>> = new Map();
   private outgoingTransfers: Map<string, OutgoingTransferState> = new Map();
   private lastUpdateTimes: Map<string, number> = new Map();
   private meshTransfers: Map<string, { file: File; peerIds: string[]; transfers: Map<string, string> }> = new Map();
@@ -213,6 +218,9 @@ class FileTransferManager {
       case 'file-resume-response':
         this.handleResumeResponse(peerId, message as FileResumeResponseMessage);
         break;
+      case 'file-request-missing-chunks':
+        this.handleRequestMissingChunks(peerId, message as FileRequestMissingChunksMessage);
+        break;
     }
   }
 
@@ -244,8 +252,13 @@ class FileTransferManager {
     const incoming = this.incomingFiles.get(message.fileId);
     if (!incoming) return;
 
-    // Store metadata for the next incoming binary chunk
-    this.pendingChunkMetadata.set(peerId, {
+    // Queue metadata for the upcoming binary chunks to handle interleaving
+    let queue = this.pendingChunkMetadata.get(peerId);
+    if (!queue) {
+      queue = [];
+      this.pendingChunkMetadata.set(peerId, queue);
+    }
+    queue.push({
       fileId: message.fileId,
       chunkIndex: message.chunkIndex,
     });
@@ -255,11 +268,12 @@ class FileTransferManager {
    * Process a raw binary chunk from a peer
    */
   private handleBinaryChunk(peerId: string, data: ArrayBuffer): void {
-    const metadata = this.pendingChunkMetadata.get(peerId);
-    if (!metadata) return;
+    const queue = this.pendingChunkMetadata.get(peerId);
+    if (!queue || queue.length === 0) return;
 
-    // Clear metadata immediately to prepare for next chunk
-    this.pendingChunkMetadata.delete(peerId);
+    // Dequeue the oldest pending metadata
+    const metadata = queue.shift();
+    if (!metadata) return;
 
     const incoming = this.incomingFiles.get(metadata.fileId);
     if (!incoming) return;
@@ -283,11 +297,26 @@ class FileTransferManager {
     const incoming = this.incomingFiles.get(fileId);
     if (!incoming) return;
 
-    // Bolt: Avoid unnecessary array filtering if all chunks are present
-    const validChunks = incoming.receivedChunks === incoming.metadata.totalChunks
-      ? (incoming.chunks as ArrayBuffer[])
-      : incoming.chunks.filter((c): c is ArrayBuffer => c !== null);
+    // ARQ: Request missing chunks if incomplete
+    if (incoming.receivedChunks !== incoming.metadata.totalChunks) {
+      console.warn(`[FileTransfer] Missing chunks detected. Received ${incoming.receivedChunks} out of ${incoming.metadata.totalChunks} chunks. Requesting replacements...`);
+      
+      const missingChunks: number[] = [];
+      for (let i = 0; i < incoming.metadata.totalChunks; i++) {
+        if (incoming.chunks[i] === null) {
+          missingChunks.push(i);
+        }
+      }
 
+      this.webrtc.sendToPeer(incoming.peerId, JSON.stringify({
+        type: 'file-request-missing-chunks',
+        fileId,
+        missingChunks,
+      }));
+      return;
+    }
+
+    const validChunks = incoming.chunks as ArrayBuffer[];
     const blob = new Blob(validChunks, { type: incoming.metadata.type });
 
     // Notify handlers
@@ -311,6 +340,58 @@ class FileTransferManager {
     if (incoming) {
       this.notifyProgress(fileId, 'cancelled');
       this.incomingFiles.delete(fileId);
+    }
+  }
+
+  /**
+   * Handle request from receiver for missing chunks (ARQ)
+   */
+  private async handleRequestMissingChunks(peerId: string, message: FileRequestMissingChunksMessage): Promise<void> {
+    const transfer = this.outgoingTransfers.get(message.fileId);
+    if (!transfer) return;
+
+    const { file } = transfer;
+    const fileId = message.fileId;
+    const { missingChunks } = message;
+
+    console.log(`[FileTransfer] Resending ${missingChunks.length} missing chunks for file: ${file.name}`);
+
+    try {
+      for (const chunkIndex of missingChunks) {
+        if (transfer.cancelled || transfer.paused) break;
+
+        const startOffset = chunkIndex * CHUNK_SIZE;
+        // Don't read past the end of the file
+        const endOffset = Math.min(startOffset + CHUNK_SIZE, file.size);
+        
+        const chunkBlob = file.slice(startOffset, endOffset);
+        const chunkBuffer = await chunkBlob.arrayBuffer();
+
+        // Send chunk metadata header
+        await this.webrtc.sendToPeer(peerId, JSON.stringify({
+          type: 'file-chunk',
+          fileId,
+          chunkIndex,
+        }));
+
+        // Send raw binary chunk
+        await this.webrtc.sendToPeer(peerId, chunkBuffer);
+
+        // Yield strictly so we don't block other transfers or UI
+        if (chunkIndex % 16 === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+      }
+
+      // Re-issue 'file-complete' once all missing chunks are sent
+      if (!transfer.cancelled && !transfer.paused) {
+        this.webrtc.sendToPeer(peerId, JSON.stringify({
+          type: 'file-complete',
+          fileId,
+        }));
+      }
+    } catch (error) {
+      console.error('[FileTransfer] Failed to resend missing chunks:', error);
     }
   }
 
