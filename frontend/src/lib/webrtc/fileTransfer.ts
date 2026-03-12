@@ -31,7 +31,7 @@ export const requestBackgroundSync = async () => {
     try {
       const registration = await navigator.serviceWorker.ready;
       if ('sync' in registration) {
-        // @ts-ignore - background sync API is not fully typed in standard DOM libs
+        // @ts-expect-error - background sync API is not fully typed in standard DOM libs
         await registration.sync.register('lynkless-transfer-sync');
       }
     } catch (e) {
@@ -843,14 +843,16 @@ class FileTransferManager {
 
             const chunkMetaStr = JSON.stringify({ type: 'file-chunk', fileId, chunkIndex });
 
-            for (const peerId of activePeers) {
+            // Bolt: Parallelize delivery to all peers. This prevents a slow peer's
+            // WebRTC backpressure from bottlenecking the entire broadcast.
+            await Promise.all(activePeers.map(async (peerId) => {
               const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
               if (tx && !tx.cancelled && !tx.paused) {
                 await this.webrtc.sendToPeer(peerId, chunkMetaStr);
                 await this.webrtc.sendToPeer(peerId, chunk);
                 tx.lastChunkIndex = chunkIndex;
               }
-            }
+            }));
 
             chunkIndex++;
             transferredSize += chunk.length;
