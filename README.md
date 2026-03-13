@@ -17,11 +17,15 @@ A blazing-fast, zero-storage, peer-to-peer file transfer and chat platform built
 - 🔐 **Zero Storage & E2EE** — Files never touch any centralized data centers. Enable E2EE custom passwords out of the box using military-grade `AES-GCM` encryption.
 - 📁 **Folder & Clipboard Support** — Drag-and-drop massive nested directories natively, or instantly `CTRL+V` paste images straight from your clipboard.
 - 📺 **Live Screen Sharing** — Securely share your desktop directly over P2P using our pristine Screen-Share interface without interrupting your file-transfers tabs.
-- 🔗 **Robust Reconnection Logic** — State-of-the-art WebRTC ICE candidates and buffered data handling that reliably reconnects peers in dynamic setups without corrupting your transfer.
+- 🔗 **Robust Reconnection & Network Hopping** — State-of-the-art WebRTC ICE restarts seamlessly recover active transfers when switching from Wi-Fi to 5G LTE without dropping the data channel.
+- 🛡️ **Advanced Edge-Case Defenses** — Automatic OPFS Storage Quota verification, WakeLock API to prevent mobile screen sleep, and "Magic Byte" file spoofing prevention natively.
 
 ### User Experience
 
 - 🎨 **Premium Aesthetic** — A completely revamped UI/UX inspired by minimalist, high-end Apple & Vercel aesthetics. Soft drop-shadows, monochromatic themes, and meticulous visual hierarchies.
+- 📱 **Installable PWA** — Native, crisp SVG icons allow installing Lynkless directly to your computer or phone home screen for a full native app experience.
+- ⚡ **Deep Link Auto-Join** — Send an invite URL (`/?room=CODE`) to a friend and Lynkless automatically bridges the signaling process transparently.
+- 🖼️ **On-The-Fly Image Compression** — Automatically scales down massive high-res photos natively inside the browser before sending them to dramatically accelerate transfer speeds over slow networks.
 - 💬 **Ephemeral Chat + Markdown** — Real-time messaging synced seamlessly over WebRTC data channels natively parsing inline code formatting.
 - 📊 **Transfer Analytics Dashboard** — A dedicated history vault locally tracked by IndexedDB rendering granular stats comprehensively showing **Total Sent** and **Total Received** data.
 - 🏎️ **Live Speed & ETA Estimator** — Real-time, math-based speeds displaying elapsed transfer progression directly from the WebRTC DataChannel queue, maintaining perfectly accurate sender & receiver syncing.
@@ -145,9 +149,11 @@ Lynkless/
 ## 🛡️ Security & Privacy
 
 - ✅ **WebRTC DTLS** — All connections encrypted natively.
-- ✅ **AES-GCM File Encoding** — Protect native folder matrices over a custom User Input password completely out of the box dynamically natively.
+- ✅ **AES-GCM File Encoding** — Protect native folder matrices over a custom User Input password completely out of the box dynamically natively. (Includes OOM safety limits for files >250MB).
 - ✅ **Zero Server Storage** — Files never stored natively.
 - ✅ **Connection Fingerprints** — SHA-256 validation verifying man-in-the-middle attacks.
+- ✅ **Magic Bytes Verification** — Natively verifies File Headers to stop remote `.exe` spoofing masquerading as safe images.
+- ✅ **TURN Relay Detection** — Automatically warns users in the UI if strict corporate NAT firewalls are forcing the connection through a throttled relay server.
 
 ## 🤝 Contributing
 
@@ -170,8 +176,10 @@ MIT License - feel free to use for personal or commercial projects.
 - [x] Transfer IndexedDB dashboard globally tracking session hashes.
 - [x] Stream buffering logic enabling 5GB+ transfers flawlessly.
 - [x] Inline formatting chat!
+- [x] Network Hopping (Seamless ICE Restarts) & Edge-Case Stability 
+- [x] Mobile PWA SVG icon standardisation
 - [ ] Voice/video call support
-- [ ] Mobile native fallback Service Worker
+- [ ] Web Worker background threading for transfer processing under heavily throttled tabs
 
 ---
 
