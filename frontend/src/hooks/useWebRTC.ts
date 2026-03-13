@@ -19,6 +19,7 @@ export interface PeerState {
   id: string;
   state: ConnectionState;
   isNearby: boolean;
+  isRelay?: boolean;
 }
 
 export interface PeerFingerprint {
@@ -110,6 +111,13 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
       });
     });
 
+    // Handle relay detection
+    const unsubRelay = webrtc.onRelayMode((peerId, isRelay) => {
+      setPeers((prev) => {
+        return prev.map((p) => (p.id === peerId ? { ...p, isRelay } : p));
+      });
+    });
+
     // Handle transfer progress
     const unsubProgress = fileTransfer.onProgress((progress) => {
       setTransfers((prev) => {
@@ -169,6 +177,7 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
     return () => {
       unsubState();
       unsubFingerprint();
+      unsubRelay();
       unsubProgress();
       unsubChat();
       unsubTrack();

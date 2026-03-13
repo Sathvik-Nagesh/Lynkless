@@ -60,6 +60,7 @@ class WebRTCManager {
   private stateHandlers: Set<StateChangeHandler> = new Set();
   private fingerprintHandlers: Set<FingerprintHandler> = new Set();
   private trackHandlers: Set<TrackHandler> = new Set();
+  private relayHandlers: Set<(peerId: string, isRelay: boolean) => void> = new Set();
   private signaling = getSignalingClient();
   private cleanupHandler: (() => void) | null = null;
   // Buffer ICE candidates that arrive before remote description is set
@@ -125,7 +126,8 @@ class WebRTCManager {
 
     // Create data channel (initiator creates it)
     const dataChannel = peerConnection.connection.createDataChannel('lynkless', {
-      ordered: true,
+      ordered: false,
+      maxRetransmits: 0,
     });
     this.setupDataChannel(peerId, dataChannel);
     peerConnection.dataChannel = dataChannel;
@@ -297,9 +299,11 @@ class WebRTCManager {
     connection.oniceconnectionstatechange = () => {
       console.log('[WebRTC] ICE connection state for', peerId, ':', connection.iceConnectionState);
 
-      // If ICE fails, try restarting ICE
-      if (connection.iceConnectionState === 'failed') {
-        console.log('[WebRTC] ICE failed for', peerId, '- attempting ICE restart');
+      // EDGE CASE #1: ICE Restarts (Network Hopping)
+      // When a user walks out the door and switches from WiFi to 5G, ICE disconnects.
+      // We trigger a restart immediately to gracefully recover the data channel without destroying logic.
+      if (connection.iceConnectionState === 'disconnected' || connection.iceConnectionState === 'failed') {
+        console.log(`[WebRTC] ICE ${connection.iceConnectionState} for`, peerId, '- attempting Seamless ICE Restart');
         connection.restartIce();
       }
     };
@@ -312,6 +316,7 @@ class WebRTCManager {
 
       if (state === 'connected') {
         console.log('[WebRTC] Successfully connected to', peerId);
+        this.checkIfRelay(peerId); // EDGE CASE #4: Detect TURN Relays
       } else if (state === 'failed' || state === 'disconnected') {
         console.log('[WebRTC] Connection to', peerId, 'is', state);
       }
@@ -517,6 +522,14 @@ class WebRTCManager {
   }
 
   /**
+   * Register relay mode handler
+   */
+  onRelayMode(handler: (peerId: string, isRelay: boolean) => void): () => void {
+    this.relayHandlers.add(handler);
+    return () => this.relayHandlers.delete(handler);
+  }
+
+  /**
    * Register fingerprint handler
    */
   onFingerprint(handler: FingerprintHandler): () => void {
@@ -575,6 +588,34 @@ class WebRTCManager {
         return 'disconnected';
       default:
         return 'new';
+    }
+  }
+
+  // EDGE CASE #4: TURN Relay Detection
+  private async checkIfRelay(peerId: string): Promise<void> {
+    const peer = this.peers.get(peerId);
+    if (!peer) return;
+
+    try {
+      const stats = await peer.connection.getStats();
+      let isRelay = false;
+      
+      stats.forEach(report => {
+        if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) {
+          const localCandidate = stats.get(report.localCandidateId);
+          const remoteCandidate = stats.get(report.remoteCandidateId);
+          if (localCandidate?.candidateType === 'relay' || remoteCandidate?.candidateType === 'relay') {
+            isRelay = true;
+          }
+        }
+      });
+      
+      if (isRelay) {
+        console.warn(`[WebRTC] Strict Firewall Detected. Peer ${peerId} connected via TURN Relay.`);
+      }
+      this.relayHandlers.forEach(handler => handler(peerId, isRelay));
+    } catch (err) {
+      console.log('Failed to check relay stat', err);
     }
   }
 

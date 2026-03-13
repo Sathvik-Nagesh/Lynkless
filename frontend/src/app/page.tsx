@@ -29,6 +29,7 @@ import Link from 'next/link';
 import { createZipFromFiles } from '@/lib/utils/zipper';
 import { processEntry } from '@/lib/utils/fileUpload';
 import { MAX_FILE_SIZE } from '@/lib/webrtc/fileTransfer';
+import { compressImage } from '@/lib/utils/imageCompression';
 
 const SIGNALING_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || 'ws://localhost:8080';
 
@@ -95,6 +96,85 @@ export default function Home() {
 
     initConnection();
   }, [connect]);
+
+  // Handle URL deep-linking for auto-joining rooms
+  // Supports both /?room=A1B2C3 and /room/A1B2C3 redirecting here
+  useEffect(() => {
+    if (!isConnected || isLoading || roomState.code) return;
+    
+    const params = new URLSearchParams(window.location.search);
+    const urlRoom = params.get('room');
+    const pendingRoom = sessionStorage.getItem('pendingRoomCode');
+    
+    let roomToJoin = urlRoom || pendingRoom;
+    
+    if (roomToJoin && roomToJoin.length === 6) {
+      console.log('[Routing] Auto-joining room from deep link:', roomToJoin);
+      joinRoom(roomToJoin.toUpperCase());
+      
+      // Clean up the URL and session storage
+      window.history.replaceState({}, document.title, window.location.pathname);
+      sessionStorage.removeItem('pendingRoomCode');
+    }
+  }, [isConnected, isLoading, roomState.code, joinRoom]);
+
+  // Handle Edge Case: Prevent accidental tab closure or mobile screen sleep during active transfers
+  const activeTransfersCount = useMemo(() => 
+    transfers.filter(t => t.status === 'transferring').length, 
+  [transfers]);
+
+  useEffect(() => {
+    // 1. Tab Close Warning
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (activeTransfersCount > 0) {
+        e.preventDefault();
+        e.returnValue = 'You have active file transfers. They will be canceled if you leave.';
+        return e.returnValue;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    // 2. Mobile / Desktop Screen WakeLock API
+    let wakeLock: WakeLockSentinel | null = null;
+    const requestWakeLock = async () => {
+      if ('wakeLock' in navigator && activeTransfersCount > 0) {
+        try {
+          wakeLock = await navigator.wakeLock.request('screen');
+          console.log('[WakeLock] Screen locked active to prevent file transfer drop');
+        } catch (err: any) {
+          console.log('[WakeLock] System denied lock:', err.message);
+        }
+      }
+    };
+
+    const releaseWakeLock = async () => {
+      if (wakeLock !== null) {
+        await wakeLock.release();
+        wakeLock = null;
+        console.log('[WakeLock] Screen lock released');
+      }
+    };
+
+    if (activeTransfersCount > 0) {
+      requestWakeLock();
+    } else {
+      releaseWakeLock();
+    }
+
+    // Re-request if visibility changes (user switches tabs to text someone and comes back)
+    const handleVisibilityChange = () => {
+      if (wakeLock !== null && document.visibilityState === 'visible') {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      releaseWakeLock();
+    };
+  }, [activeTransfersCount]);
 
   // Handle user click on radar - now sends connection REQUEST
   const handleUserClick = useCallback(async (userId: string) => {
@@ -179,7 +259,7 @@ export default function Home() {
   }, [peers]);
 
   // Confirm and send files
-  const handleConfirmSend = useCallback(async (password?: string, shouldZip?: boolean) => {
+  const handleConfirmSend = useCallback(async (password?: string, shouldZip?: boolean, compressImagesFlag?: boolean) => {
     setShowFilePreview(false);
     const connectedPeers = peers.filter(p => p.state === 'connected');
 
@@ -187,6 +267,18 @@ export default function Home() {
 
     try {
       let finalFiles = pendingFiles;
+      
+      if (compressImagesFlag && finalFiles.some(f => f.type.startsWith('image/'))) {
+        showToast('Compressing images...', 'info');
+        finalFiles = await Promise.all(
+          finalFiles.map(async (file) => {
+            if (file.type.startsWith('image/')) {
+              return await compressImage(file, 0.75); // 75% quality sweet spot
+            }
+            return file;
+          })
+        );
+      }
       
       if (shouldZip && finalFiles.length > 1) {
         showToast('Zipping files...', 'info');
@@ -491,13 +583,45 @@ export default function Home() {
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
+            className="flex items-center gap-4"
           >
-            <h1 className="text-2xl md:text-4xl font-semibold tracking-tight">
-              <span className="text-[#ededed]">Lynkless</span>
-            </h1>
-            <p className="text-[#a1a1aa] text-xs md:text-sm mt-1">
-              Your files don&apos;t belong in the cloud.
-            </p>
+            {/* Animated Mesh SVG */}
+            <motion.div 
+              className="w-12 h-12 md:w-16 md:h-16 hidden sm:flex items-center justify-center bg-blue-500/10 rounded-2xl border border-blue-500/20 flex-shrink-0 relative overflow-hidden"
+            >
+              <motion.svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400 absolute"
+                animate={{ rotate: 360 }}
+                transition={{ duration: 20, repeat: Infinity, ease: 'linear' }}
+              >
+                <circle cx="12" cy="12" r="3" />
+                <path d="M18.364 5.636l-2.121 2.121" />
+                <path d="M5.636 18.364l2.121-2.121" />
+                <path d="M5.636 5.636l2.121 2.121" />
+                <path d="M18.364 18.364l-2.121-2.121" />
+                <circle cx="5" cy="5" r="2" />
+                <circle cx="19" cy="19" r="2" />
+                <circle cx="5" cy="19" r="2" />
+                <circle cx="19" cy="5" r="2" />
+              </motion.svg>
+              {/* Pulse effect overlay */}
+              <motion.div
+                className="absolute inset-0 bg-gradient-to-tr from-blue-500/0 via-blue-400/20 to-indigo-500/0 mix-blend-overlay"
+                animate={{ opacity: [0, 1, 0] }}
+                transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+              />
+            </motion.div>
+
+            <div>
+              <h1 className="text-2xl md:text-5xl font-bold tracking-tight mb-2">
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-500">Lynkless</span>
+              </h1>
+              <p className="text-[#a1a1aa] text-sm md:text-base font-medium flex items-center gap-2">
+                Your files don&apos;t belong in the cloud.
+                <span className="px-2 py-0.5 rounded flex items-center text-[10px] uppercase font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20">
+                  P2P Secure
+                </span>
+              </p>
+            </div>
           </motion.div>
 
           <motion.div
@@ -674,6 +798,7 @@ export default function Home() {
                         <ConnectionStatusBadge
                           quality={canSendFile ? 'excellent' : 'disconnected'}
                           showDetails={true}
+                          isRelay={peers.find(p => p.id === selectedPeer)?.isRelay}
                         />
                       </div>
                       <div className="flex gap-2">

@@ -7,12 +7,14 @@ interface ConnectionStatusBadgeProps {
   quality: ConnectionQuality;
   latency?: number;
   showDetails?: boolean;
+  isRelay?: boolean;
 }
 
 const ConnectionStatusBadge = memo(function ConnectionStatusBadge({
   quality, 
   latency, 
-  showDetails = false 
+  showDetails = false,
+  isRelay = false
 }: ConnectionStatusBadgeProps) {
   const getQualityConfig = (q: ConnectionQuality) => {
     switch (q) {
@@ -72,6 +74,14 @@ const ConnectionStatusBadge = memo(function ConnectionStatusBadge({
           <span className="text-[#a1a1aa]">{config.text}</span>
           {latency !== undefined && latency > 0 && (
             <span className="text-[#71717a]">({latency}ms)</span>
+          )}
+          {isRelay && (
+            <span 
+              className="text-[#f59e0b] bg-[#f59e0b20] px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider font-semibold group cursor-help relative"
+              title="Direct connection blocked by firewall. Speeds may be limited by Relay Server."
+            >
+              Relay
+            </span>
           )}
         </div>
       )}

@@ -11,7 +11,7 @@ const FileIcon = dynamic(() => import('lucide-react').then(mod => ({ default: mo
 interface FilePreviewModalProps {
   files: File[];
   peerCount: number;
-  onConfirm: (password?: string, shouldZip?: boolean) => void;
+  onConfirm: (password?: string, shouldZip?: boolean, compressImages?: boolean) => void;
   onCancel: () => void;
 }
 
@@ -20,6 +20,14 @@ export default function FilePreviewModal({ files, peerCount, onConfirm, onCancel
   const [usePassword, setUsePassword] = useState(false);
   const [password, setPassword] = useState('');
   const [shouldZip, setShouldZip] = useState(files.length > 1);
+  const [compressImages, setCompressImages] = useState(false);
+
+  // E2EE & Zipping Memory safety limit (e.g., 250MB) 
+  const MEMORY_LIMIT = 250 * 1024 * 1024;
+  const isTooLargeForE2EE = files.some(f => f.size > MEMORY_LIMIT);
+  const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+  const isTooLargeForZip = totalSize > MEMORY_LIMIT;
+  const hasImages = files.some(f => f.type.startsWith('image/'));
 
   // Generate preview for images
   const getPreview = (file: File) => {
@@ -39,8 +47,6 @@ export default function FilePreviewModal({ files, peerCount, onConfirm, onCancel
     if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
   };
-
-  const totalSize = files.reduce((sum, file) => sum + file.size, 0);
 
   return (
     <AnimatePresence>
@@ -136,29 +142,57 @@ export default function FilePreviewModal({ files, peerCount, onConfirm, onCancel
             {/* Options */}
             <div className="mb-4 space-y-3">
               {files.length > 1 && (
+                <div className="flex flex-col gap-1">
+                  <label className={`flex items-center gap-2 text-sm cursor-pointer w-fit ${isTooLargeForZip ? 'text-[#a1a1aa] cursor-not-allowed' : 'text-[#ededed]'}`}>
+                    <input 
+                      type="checkbox" 
+                      className="rounded border-[#27272a] bg-[#111]"
+                      checked={shouldZip && !isTooLargeForZip}
+                      disabled={isTooLargeForZip}
+                      onChange={(e) => setShouldZip(e.target.checked)}
+                    />
+                    <span>Bundle into strict ZIP archive</span>
+                  </label>
+                  {isTooLargeForZip && (
+                    <span className="text-xs text-[#f59e0b] ml-6">
+                      ⚠️ Disabled to prevent crash. ZIP bundling is limited to 250MB.
+                    </span>
+                  )}
+                </div>
+              )}
+              
+              {hasImages && (
                 <label className="flex items-center gap-2 text-sm text-[#ededed] cursor-pointer w-fit">
                   <input 
                     type="checkbox" 
                     className="rounded border-[#27272a] bg-[#111]"
-                    checked={shouldZip}
-                    onChange={(e) => setShouldZip(e.target.checked)}
+                    checked={compressImages}
+                    onChange={(e) => setCompressImages(e.target.checked)}
                   />
-                  <span>Bundle into strict ZIP archive</span>
+                  <span>Compress Images (Faster Transfer)</span>
                 </label>
               )}
               
-              <label className="flex items-center gap-2 text-sm text-[#ededed] cursor-pointer w-fit">
-                <input 
-                  type="checkbox" 
-                  className="rounded border-[#27272a] bg-[#111]"
-                  checked={usePassword}
-                  onChange={(e) => setUsePassword(e.target.checked)}
-                />
-                <span>Protect with password (E2EE)</span>
-              </label>
+              <div className="flex flex-col gap-1">
+                <label className={`flex items-center gap-2 text-sm cursor-pointer w-fit ${isTooLargeForE2EE ? 'text-[#a1a1aa] cursor-not-allowed' : 'text-[#ededed]'}`}>
+                  <input 
+                    type="checkbox" 
+                    className="rounded border-[#27272a] bg-[#111]"
+                    checked={usePassword && !isTooLargeForE2EE}
+                    disabled={isTooLargeForE2EE}
+                    onChange={(e) => setUsePassword(e.target.checked)}
+                  />
+                  <span>Protect with password (E2EE)</span>
+                </label>
+                {isTooLargeForE2EE && (
+                  <span className="text-xs text-[#f59e0b] ml-6">
+                    ⚠️ Disabled to prevent browser crash. E2EE is limited to files &lt; 250MB.
+                  </span>
+                )}
+              </div>
 
               <AnimatePresence>
-                {usePassword && (
+                {usePassword && !isTooLargeForE2EE && (
                   <motion.div
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: 'auto', opacity: 1 }}
@@ -186,11 +220,11 @@ export default function FilePreviewModal({ files, peerCount, onConfirm, onCancel
                 Cancel
               </button>
               <button
-                onClick={() => onConfirm(usePassword ? password : undefined, shouldZip)}
+                onClick={() => onConfirm(usePassword && !isTooLargeForE2EE ? password : undefined, shouldZip && !isTooLargeForZip, compressImages)}
                 className="flex-1 px-6 py-3 bg-[#ededed] text-black font-semibold rounded-xl hover:bg-[#d4d4d8] transition-all flex items-center justify-center gap-2"
               >
                 <Send size={18} />
-                {shouldZip ? 'Zip & Send' : `Send ${files.length > 1 ? 'All' : 'File'}`}
+                {shouldZip && !isTooLargeForZip ? 'Zip & Send' : `Send ${files.length > 1 ? 'All' : 'File'}`}
               </button>
             </div>
           </div>

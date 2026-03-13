@@ -15,27 +15,21 @@ const ArrowRight = dynamic(() => import('lucide-react').then(mod => ({ default: 
 const steps = [
   {
     icon: Zap,
-    title: "Welcome to Lynkless!",
-    description: "Your files don't belong in the cloud. Send files directly between browsers with zero server storage.",
-    highlight: "Zero Storage. Complete Privacy.",
+    title: "No clouds. Just peers.",
+    description: "Send files securely right from your browser. We don't use servers to store your data—everything goes directly to the recipient.",
+    highlight: "Zero Storage. Absolute Privacy.",
   },
   {
     icon: Radar,
-    title: "Discover Peers",
-    description: "Create a room or join with a 6-digit code. Nearby devices on your WiFi are auto-detected!",
-    highlight: "Auto-connect to room members",
-  },
-  {
-    icon: Shield,
-    title: "Secure Connection",
-    description: "All connections use WebRTC encryption. Verify the fingerprint code matches on both devices.",
-    highlight: "End-to-end encrypted",
+    title: "Instant Connection ⚡",
+    description: "Devices on the same WiFi auto-detect each other instantly! Or, create a 6-digit room code to connect with anyone, anywhere in the world.",
+    highlight: "Auto-discovery & Mesh Networking",
   },
   {
     icon: MessagesSquare,
-    title: "Transfer & Chat",
-    description: "Drop files to send to all connected peers. Chat in real-time. Everything disappears when you disconnect.",
-    highlight: "Ephemeral by design",
+    title: "Drag. Drop. Done.",
+    description: "Drop files of any size to send them to everyone in the room simultaneously. Chat in real-time. Everything vanishes the second you leave.",
+    highlight: "Ephemeral & Limitless",
   },
 ];
 

@@ -35,19 +35,25 @@ const formatTime = (seconds: number): string => {
 
 const TransferProgress = memo(function TransferProgress({ transfer, onCancel, onPause, onResume }: TransferProgressProps) {
 
-    const getStatusColor = () => {
-      switch (transfer.status) {
-        case 'completed':
-          return 'bg-[#10b981]';
-        case 'failed':
-        case 'cancelled':
-          return 'bg-[#ef4444]';
-        case 'paused':
-          return 'bg-[#f59e0b]';
-        default:
-          return 'bg-[#ededed]';
-      }
-    };
+  const isRecovering = transfer.status === 'transferring' && transfer.speed === 0 && transfer.progress > 0 && transfer.progress < 100;
+  const isSlow = transfer.status === 'transferring' && transfer.speed > 0 && transfer.speed < 50 * 1024; // < 50 KB/s
+
+  const getStatusColor = () => {
+    if (isRecovering) return 'bg-[#f43f5e]'; // Rose/Red
+    if (isSlow) return 'bg-[#f59e0b]';       // Amber
+
+    switch (transfer.status) {
+      case 'completed':
+        return 'bg-[#10b981]';
+      case 'failed':
+      case 'cancelled':
+        return 'bg-[#ef4444]';
+      case 'paused':
+        return 'bg-[#f59e0b]';
+      default:
+        return 'bg-[#ededed]';
+    }
+  };
 
   const getStatusIcon = () => {
     switch (transfer.status) {
@@ -179,9 +185,15 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
       {/* Stats */}
       {transfer.status === 'transferring' && (
         <div className="flex justify-between mt-2 text-xs text-[#a1a1aa]">
-          <span>{formatSpeed(transfer.speed)}</span>
+          {isRecovering ? (
+            <span className="text-[#f43f5e] animate-pulse">Recovering connection...</span>
+          ) : isSlow ? (
+            <span className="text-[#f59e0b]">{formatSpeed(transfer.speed)} (Slow)</span>
+          ) : (
+            <span>{formatSpeed(transfer.speed)}</span>
+          )}
           <span>{transfer.progress.toFixed(1)}%</span>
-          <span>{formatTime(transfer.remainingTime)} remaining</span>
+          <span>{isRecovering ? '-- remaining' : `${formatTime(transfer.remainingTime)} remaining`}</span>
         </div>
       )}
 
