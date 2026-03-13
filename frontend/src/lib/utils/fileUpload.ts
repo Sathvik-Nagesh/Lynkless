@@ -13,10 +13,14 @@ export const processEntry = async (entry: any, path = ''): Promise<File[]> => {
     const dirReader = entry.createReader();
     return new Promise((resolve) => {
       dirReader.readEntries(async (entries: any[]) => {
-        let files: File[] = [];
+        const files: File[] = [];
         for (const child of entries) {
           const childFiles = await processEntry(child, path + entry.name + '/');
-          files = files.concat(childFiles);
+          // Bolt: Using for...of with push is O(N) and avoids both the intermediate array
+          // creation of concat() AND the stack-size limits of spread (...).
+          for (const file of childFiles) {
+            files.push(file);
+          }
         }
         resolve(files);
       });
