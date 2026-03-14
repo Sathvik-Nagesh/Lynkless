@@ -9,7 +9,7 @@ export const createZipFromFiles = async (files: File[], zipName = 'Archive.zip')
     // Read all files asynchronously
     for (const file of files) {
       // Determine the path. fallback to just the file name
-      const path = (file as any).webkitRelativePath || file.name;
+      const path = file.webkitRelativePath || file.name;
       
       const reader = new FileReader();
       reader.onload = (e) => {
