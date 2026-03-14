@@ -125,10 +125,7 @@ class WebRTCManager {
     const peerConnection = this.createPeerConnection(peerId, isNearby);
 
     // Create data channel (initiator creates it)
-    const dataChannel = peerConnection.connection.createDataChannel('lynkless', {
-      ordered: false,
-      maxRetransmits: 0,
-    });
+    const dataChannel = peerConnection.connection.createDataChannel('lynkless');
     this.setupDataChannel(peerId, dataChannel);
     peerConnection.dataChannel = dataChannel;
 

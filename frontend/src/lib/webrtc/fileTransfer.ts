@@ -80,7 +80,7 @@ export type MeshProgressHandler = (progress: MeshTransferProgress) => void;
 
 // Message types for file transfer protocol
 interface FileMessage {
-  type: 'file-meta' | 'file-chunk' | 'file-complete' | 'file-cancel' | 'file-resume-request' | 'file-resume-response' | 'file-request-missing-chunks' | 'file-ack';
+  type: 'file-meta' | 'file-chunk' | 'file-complete' | 'file-cancel' | 'file-resume-request' | 'file-resume-response';
   fileId: string;
   [key: string]: unknown;
 }
@@ -106,17 +106,6 @@ interface FileResumeResponseMessage extends FileMessage {
   canResume: boolean;
 }
 
-interface FileRequestMissingChunksMessage extends FileMessage {
-  type: 'file-request-missing-chunks';
-  missingChunks: number[];
-}
-
-interface FileAckMessage extends FileMessage {
-  type: 'file-ack';
-  receivedUpTo: number; // Highest chunk received + 1
-  missingChunks: number[];
-}
-
 // Transfer state for resume support
 interface OutgoingTransferState {
   file: File;
@@ -138,7 +127,6 @@ interface IncomingTransferState {
   startTime: number;
   startOffset: number;
   peerId: string;
-  lastAckIndex?: number;
 }
 
 class FileTransferManager {
@@ -225,12 +213,6 @@ class FileTransferManager {
       case 'file-resume-response':
         this.handleResumeResponse(peerId, message as FileResumeResponseMessage);
         break;
-      case 'file-request-missing-chunks':
-        this.handleRequestMissingChunks(peerId, message as FileRequestMissingChunksMessage);
-        break;
-      case 'file-ack':
-        this.handleAck(peerId, message as FileAckMessage);
-        break;
     }
   }
 
@@ -316,66 +298,11 @@ class FileTransferManager {
     const incoming = this.incomingFiles.get(metadata.fileId);
     if (!incoming) return;
 
-    // EDGE CASE #5: Magic Bytes Verification (File Spoofing / Malware prevention)
-    if (metadata.chunkIndex === 0 && incoming.metadata.type) {
-      const type = incoming.metadata.type.toLowerCase();
-      const bytes = new Uint8Array(data.slice(0, 4));
-      const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
-      
-      let isSpoofed = false;
-      // Just check the most commonly spoofed/weaponized ones: Images & PDFs
-      if (type.startsWith('image/jpeg') && !hex.startsWith('FFD8FF')) isSpoofed = true;
-      else if (type.startsWith('image/png') && !hex.startsWith('89504E47')) isSpoofed = true;
-      else if (type === 'application/pdf' && !hex.startsWith('25504446')) isSpoofed = true;
-      // Skip check for E2EE files since they're heavily randomized by IVs, or generic binary
-      if (incoming.metadata.name.endsWith('.encrypted')) isSpoofed = false;
-
-      if (isSpoofed) {
-        console.error(`[FileTransfer] Security Alert: File spoofing detected for type ${type}. Header: ${hex}. Rejecting file.`);
-        this.webrtc.sendToPeer(peerId, JSON.stringify({
-          type: 'file-cancel',
-          fileId: metadata.fileId,
-        }));
-        this.incomingFiles.delete(metadata.fileId);
-        this.notifyProgress(metadata.fileId, 'failed', {
-          fileName: incoming.metadata.name,
-          totalSize: incoming.metadata.size,
-          transferredSize: incoming.receivedChunks * CHUNK_SIZE,
-          type: 'incoming',
-          peerId,
-        });
-        return;
-      }
-    }
-
     // Store the raw buffer
     if (incoming.chunks[metadata.chunkIndex] === null) {
       incoming.chunks[metadata.chunkIndex] = data;
       incoming.receivedChunks++;
       incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, metadata.chunkIndex);
-    }
-
-    if (incoming.lastAckIndex === undefined) incoming.lastAckIndex = 0;
-    
-    // Send a progressive ACK every 64 chunks to request missing packets early
-    if (metadata.chunkIndex % 64 === 0 && metadata.chunkIndex > incoming.lastAckIndex) {
-      const missingChunks: number[] = [];
-      const receivedUpTo = metadata.chunkIndex;
-      
-      for (let i = incoming.lastAckIndex; i < receivedUpTo; i++) {
-        if (incoming.chunks[i] === null) {
-          missingChunks.push(i);
-        }
-      }
-      
-      incoming.lastAckIndex = receivedUpTo;
-      
-      this.webrtc.sendToPeer(peerId, JSON.stringify({
-        type: 'file-ack',
-        fileId: metadata.fileId,
-        receivedUpTo,
-        missingChunks,
-      }));
     }
 
     // Bolt: Throttled progress update with lazy metrics calculation
@@ -389,25 +316,6 @@ class FileTransferManager {
   private handleFileComplete(fileId: string): void {
     const incoming = this.incomingFiles.get(fileId);
     if (!incoming) return;
-
-    // ARQ: Request missing chunks if incomplete
-    if (incoming.receivedChunks !== incoming.metadata.totalChunks) {
-      console.warn(`[FileTransfer] Missing chunks detected. Received ${incoming.receivedChunks} out of ${incoming.metadata.totalChunks} chunks. Requesting replacements...`);
-      
-      const missingChunks: number[] = [];
-      for (let i = 0; i < incoming.metadata.totalChunks; i++) {
-        if (incoming.chunks[i] === null) {
-          missingChunks.push(i);
-        }
-      }
-
-      this.webrtc.sendToPeer(incoming.peerId, JSON.stringify({
-        type: 'file-request-missing-chunks',
-        fileId,
-        missingChunks,
-      }));
-      return;
-    }
 
     const validChunks = incoming.chunks as ArrayBuffer[];
     const blob = new Blob(validChunks, { type: incoming.metadata.type });
@@ -433,99 +341,6 @@ class FileTransferManager {
     if (incoming) {
       this.notifyProgress(fileId, 'cancelled');
       this.incomingFiles.delete(fileId);
-    }
-  }
-
-  /**
-   * Handle request from receiver for missing chunks (ARQ)
-   */
-  private async handleRequestMissingChunks(peerId: string, message: FileRequestMissingChunksMessage): Promise<void> {
-    const transfer = this.outgoingTransfers.get(message.fileId);
-    if (!transfer) return;
-
-    const { file } = transfer;
-    const fileId = message.fileId;
-    const { missingChunks } = message;
-
-    console.log(`[FileTransfer] Resending ${missingChunks.length} missing chunks for file: ${file.name}`);
-
-    try {
-      for (const chunkIndex of missingChunks) {
-        if (transfer.cancelled || transfer.paused) break;
-
-        const startOffset = chunkIndex * CHUNK_SIZE;
-        // Don't read past the end of the file
-        const endOffset = Math.min(startOffset + CHUNK_SIZE, file.size);
-        
-        const chunkBlob = file.slice(startOffset, endOffset);
-        const chunkBuffer = await chunkBlob.arrayBuffer();
-
-        // Send chunk metadata header
-        await this.webrtc.sendToPeer(peerId, JSON.stringify({
-          type: 'file-chunk',
-          fileId,
-          chunkIndex,
-        }));
-
-        // Send raw binary chunk
-        await this.webrtc.sendToPeer(peerId, chunkBuffer);
-
-        // Yield strictly so we don't block other transfers or UI
-        if (chunkIndex % 16 === 0) {
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-      }
-
-      // Re-issue 'file-complete' once all missing chunks are sent
-      if (!transfer.cancelled && !transfer.paused) {
-        this.webrtc.sendToPeer(peerId, JSON.stringify({
-          type: 'file-complete',
-          fileId,
-        }));
-      }
-    } catch (error) {
-      console.error('[FileTransfer] Failed to resend missing chunks:', error);
-    }
-  }
-
-  /**
-   * Handle progressive ACK from receiver
-   */
-  private async handleAck(peerId: string, message: FileAckMessage): Promise<void> {
-    const transfer = this.outgoingTransfers.get(message.fileId);
-    if (!transfer) return;
-
-    if (message.missingChunks.length > 0) {
-      console.log(`[FileTransfer] Progressive ARQ: Resending ${message.missingChunks.length} missing chunks up to index ${message.receivedUpTo}`);
-      
-      const fileId = message.fileId;
-      const file = transfer.file;
-      
-      try {
-        for (const chunkIndex of message.missingChunks) {
-          if (transfer.cancelled || transfer.paused) break;
-
-          const startOffset = chunkIndex * CHUNK_SIZE;
-          const endOffset = Math.min(startOffset + CHUNK_SIZE, file.size);
-          
-          const chunkBlob = file.slice(startOffset, endOffset);
-          const chunkBuffer = await chunkBlob.arrayBuffer();
-
-          await this.webrtc.sendToPeer(peerId, JSON.stringify({
-            type: 'file-chunk',
-            fileId,
-            chunkIndex,
-          }));
-
-          await this.webrtc.sendToPeer(peerId, chunkBuffer);
-
-          if (chunkIndex % 16 === 0) {
-            await new Promise((resolve) => setTimeout(resolve, 0));
-          }
-        }
-      } catch (error) {
-        console.error('[FileTransfer] Failed to resend chunks via ACK:', error);
-      }
     }
   }
 
