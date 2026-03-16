@@ -33,3 +33,7 @@
 ## 2026-03-05 - Zero-Copy E2EE Buffer Management
 **Learning:** Manual buffer concatenation in E2EE operations (like salt + IV + encrypted data) creates a full copy of the encrypted data, potentially doubling memory usage during large file transfers. Similarly, `ArrayBuffer.slice()` creates unnecessary copies.
 **Action:** Use the `File` constructor's ability to take an array of buffers for zero-copy concatenation, and use `TypedArray.prototype.subarray()` for extraction to create views instead of copies.
+
+## 2026-03-10 - Robust and Efficient Directory Traversal
+**Learning:** The FileSystem API's `readEntries()` method can return partial results (often capped at 100 entries). Relying on a single call results in incomplete directory uploads. Additionally, using `Array.prototype.concat` for recursive accumulation creates O(N²) memory pressure in deep structures.
+**Action:** Always call `readEntries()` in a loop until it returns an empty array to ensure completeness. Use a shared result array with `push()` to achieve O(N) performance and avoid redundant memory allocations during traversal.
