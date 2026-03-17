@@ -95,8 +95,13 @@ export const getTransferStats = async () => {
       let totalSent = 0;
       let totalReceived = 0;
 
-      const all = await db.getAll('transfers');
-      for (const entry of all) {
+      /**
+       * Bolt: Use a cursor instead of getAll() to avoid loading the entire database into memory.
+       * This ensures O(1) space complexity regardless of the number of history entries.
+       */
+      let cursor = await db.transaction('transfers').store.openCursor();
+      while (cursor) {
+        const entry = cursor.value;
         if (entry.status === 'completed') {
           if (entry.transferType === 'outgoing') {
             totalSent += entry.totalSize;
@@ -104,6 +109,7 @@ export const getTransferStats = async () => {
             totalReceived += entry.totalSize;
           }
         }
+        cursor = await cursor.continue();
       }
 
       return { totalSent, totalReceived };
