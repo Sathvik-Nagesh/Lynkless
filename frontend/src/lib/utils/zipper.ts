@@ -1,4 +1,4 @@
-import { zip, strToU8 } from 'fflate';
+import { zip } from 'fflate';
 
 export const createZipFromFiles = async (files: File[], zipName = 'Archive.zip'): Promise<File> => {
   return new Promise((resolve, reject) => {
@@ -9,7 +9,8 @@ export const createZipFromFiles = async (files: File[], zipName = 'Archive.zip')
     // Read all files asynchronously
     for (const file of files) {
       // Determine the path. fallback to just the file name
-      const path = (file as any).webkitRelativePath || file.name;
+      // @ts-expect-error - webkitRelativePath is non-standard but provided by the browser
+      const path = file.webkitRelativePath || file.name;
       
       const reader = new FileReader();
       reader.onload = (e) => {
