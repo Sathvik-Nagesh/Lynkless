@@ -30,6 +30,10 @@
 **Learning:** Polling IndexedDB with a fixed interval (e.g., 5s) to update history UI is inefficient and drains battery. Furthermore, fetching the entire history and sorting it in JavaScript becomes O(N log N) in the main thread.
 **Action:** Implement an observer pattern for database changes and use an IndexedDB reverse cursor with a limit to fetch only the N most recent items. This keeps UI updates reactive and lightweight.
 
+## 2026-03-08 - O(1) Space for Database Aggregations
+**Learning:** Using `IDBObjectStore.getAll()` to calculate aggregate statistics (like total bytes sent/received) loads every single record into memory. As history grows, this causes linear memory growth and potential OOMs.
+**Action:** Use `openCursor()` for aggregations to process records one by one, ensuring constant $O(1)$ space complexity regardless of database size.
+
 ## 2026-03-05 - Zero-Copy E2EE Buffer Management
 **Learning:** Manual buffer concatenation in E2EE operations (like salt + IV + encrypted data) creates a full copy of the encrypted data, potentially doubling memory usage during large file transfers. Similarly, `ArrayBuffer.slice()` creates unnecessary copies.
 **Action:** Use the `File` constructor's ability to take an array of buffers for zero-copy concatenation, and use `TypedArray.prototype.subarray()` for extraction to create views instead of copies.
