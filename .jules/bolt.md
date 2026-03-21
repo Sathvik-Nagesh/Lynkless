@@ -37,3 +37,7 @@
 ## 2026-03-08 - O(N) Directory Traversal & Spec Compliance
 **Learning:** `Array.prototype.concat()` in a recursive directory traversal creates $O(N^2)$ time/memory complexity due to repeated array copying. Additionally, the FileSystem API's `readEntries()` may only return partial results and MUST be called in a loop until it returns an empty array to ensure all items are processed.
 **Action:** Use a recursive helper with a shared results array and `push()` for $O(N)$ traversal. Always wrap `readEntries()` in a loop to guarantee complete directory reading according to the specification.
+
+## 2026-03-12 - $O(1)$ Space for Database Aggregations
+**Learning:** Using `db.getAll()` to fetch all records from an IndexedDB store for aggregation (e.g., calculating total transfer stats) loads the entire dataset into memory. This can lead to memory exhaustion or UI jank as the history grows over time.
+**Action:** Use an IndexedDB cursor (`openCursor()`) to iterate over records. This maintains $O(1)$ space complexity regardless of the database size, ensuring long-term scalability.
