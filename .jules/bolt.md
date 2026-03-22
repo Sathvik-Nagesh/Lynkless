@@ -37,3 +37,7 @@
 ## 2026-03-08 - O(N) Directory Traversal & Spec Compliance
 **Learning:** `Array.prototype.concat()` in a recursive directory traversal creates $O(N^2)$ time/memory complexity due to repeated array copying. Additionally, the FileSystem API's `readEntries()` may only return partial results and MUST be called in a loop until it returns an empty array to ensure all items are processed.
 **Action:** Use a recursive helper with a shared results array and `push()` for $O(N)$ traversal. Always wrap `readEntries()` in a loop to guarantee complete directory reading according to the specification.
+
+## 2026-03-09 - Faster Image Loading with Object URLs
+**Learning:** `FileReader.readAsDataURL()` encodes file data into a Base64 string, which is ~33% larger than the original binary and requires significant CPU cycles to encode/decode. `URL.createObjectURL()` creates a direct reference to the Blob in memory, providing a nearly instantaneous way to load images into the DOM with minimal overhead.
+**Action:** Use `URL.createObjectURL(file)` instead of `FileReader` for client-side image processing. Always ensure `URL.revokeObjectURL(url)` is called once the reference is no longer needed (e.g., in `onload` and `onerror`) to prevent memory leaks.
