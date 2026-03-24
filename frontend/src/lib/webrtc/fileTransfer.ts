@@ -31,10 +31,10 @@ export const requestBackgroundSync = async () => {
     try {
       const registration = await navigator.serviceWorker.ready;
       if ('sync' in registration) {
-        // @ts-ignore - background sync API is not fully typed in standard DOM libs
+        // @ts-expect-error - background sync API is not fully typed in standard DOM libs
         await registration.sync.register('lynkless-transfer-sync');
       }
-    } catch (e) {
+    } catch {
       // Background sync not supported or failed
     }
   }
