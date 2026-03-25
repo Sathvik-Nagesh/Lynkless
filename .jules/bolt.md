@@ -41,3 +41,7 @@
 ## 2026-03-12 - O(1) Memory Aggregation with IndexedDB Cursors
 **Learning:** Using `db.getAll()` to calculate aggregate statistics (like total size) on an IndexedDB store loads all records into memory at once. As transfer history grows, this causes significant, unnecessary memory spikes in the main thread.
 **Action:** Use `openCursor()` to iterate through records one by one for $O(1)$ space complexity when performing aggregate calculations on large datasets.
+
+## 2026-03-25 - Zero-Copy Image Processing with Object URLs
+**Learning:** Using `FileReader.readAsDataURL` for image compression creates a Base64 string that consumes ~33% more memory than the raw binary and spikes CPU for encoding. `URL.createObjectURL` provides a zero-copy reference that is significantly more efficient for the main thread.
+**Action:** Use `URL.createObjectURL(file)` for image/media processing. Always revoke the URL in both `onload` and `onerror` handlers to prevent memory leaks, and ensure `img.src` is assigned AFTER the handlers are attached.
