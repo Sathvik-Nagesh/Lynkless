@@ -1,42 +1,39 @@
-import { zip, strToU8 } from 'fflate';
+import { zip } from 'fflate';
 
+/**
+ * Creates a zip archive from a list of files.
+ * Bolt: Optimized using Promise.all and file.arrayBuffer() for concurrent processing
+ * and cleaner asynchronous code compared to legacy FileReader.
+ */
 export const createZipFromFiles = async (files: File[], zipName = 'Archive.zip'): Promise<File> => {
+  const zippedFiles: Record<string, Uint8Array> = {};
+
+  // Read all files concurrently using modern arrayBuffer() API
+  await Promise.all(
+    files.map(async (file) => {
+      try {
+        const path = (file as any).webkitRelativePath || file.name;
+        const buffer = await file.arrayBuffer();
+        zippedFiles[path] = new Uint8Array(buffer);
+      } catch (err) {
+        throw new Error(`Failed to read file: ${file.name}`);
+      }
+    })
+  );
+
   return new Promise((resolve, reject) => {
-    const zippedFiles: Record<string, Uint8Array | [Uint8Array, { level: 6 }]> = {};
-    
-    let processedRawFiles = 0;
-    
-    // Read all files asynchronously
-    for (const file of files) {
-      // Determine the path. fallback to just the file name
-      const path = (file as any).webkitRelativePath || file.name;
-      
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        if (e.target && e.target.result) {
-          const buffer = new Uint8Array(e.target.result as ArrayBuffer);
-          zippedFiles[path] = buffer;
-        }
-        processedRawFiles++;
-        
-        // Once all files are read, compress them
-        if (processedRawFiles === files.length) {
-          zip(zippedFiles, { level: 6 }, (err, zippedData) => {
-            if (err) {
-              reject(err);
-            } else {
-              const zipBlob = new Blob([zippedData.buffer as ArrayBuffer], { type: 'application/zip' });
-              const zipFile = new File([zipBlob], zipName, {
-                type: 'application/zip',
-                lastModified: Date.now()
-              });
-              resolve(zipFile);
-            }
-          });
-        }
-      };
-      reader.onerror = () => reject(new Error('Failed to read file: ' + file.name));
-      reader.readAsArrayBuffer(file);
-    }
+    zip(zippedFiles, { level: 6 }, (err, zippedData) => {
+      if (err) {
+        reject(err);
+      } else {
+        // Bolt: Use type assertion to avoid SharedArrayBuffer compatibility issues in Next.js environment
+        const zipBlob = new Blob([zippedData as any], { type: 'application/zip' });
+        const zipFile = new File([zipBlob], zipName, {
+          type: 'application/zip',
+          lastModified: Date.now()
+        });
+        resolve(zipFile);
+      }
+    });
   });
 };
