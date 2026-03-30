@@ -50,7 +50,21 @@ class SignalingClientImpl implements SignalingClient {
 
   private initWebSocket(): void {
     try {
-      this.ws = new WebSocket(this.url);
+      let persistentId = 'client_' + Math.random().toString(36).substring(2, 15);
+      if (typeof window !== 'undefined') {
+        const stored = localStorage.getItem('lynkless_identity');
+        if (stored) {
+          persistentId = stored;
+        } else {
+          localStorage.setItem('lynkless_identity', persistentId);
+        }
+      }
+      
+      // Ensure the URL is fully qualified for URL parser
+      const urlObj = new URL(this.url, typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080');
+      urlObj.searchParams.set('id', persistentId);
+      
+      this.ws = new WebSocket(urlObj.toString());
 
       this.ws.onopen = () => {
         console.log('[Signaling] Connected to server');

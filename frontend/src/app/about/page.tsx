@@ -123,7 +123,7 @@ export default function AboutPage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
         >
-          <Link 
+          <Link
             href="/"
             className="inline-block mb-8 text-[#a1a1aa] hover:text-[#ededed] transition-colors text-sm"
           >
@@ -137,8 +137,8 @@ export default function AboutPage() {
             Your files don&apos;t belong in the cloud.
           </p>
           <p className="text-[#a1a1aa] max-w-2xl mx-auto leading-relaxed">
-            Lynkless is a zero-storage, peer-to-peer file transfer application. 
-            Transfer files directly between devices with end-to-end encryption. 
+            Lynkless is a zero-storage, peer-to-peer file transfer application.
+            Transfer files directly between devices with end-to-end encryption.
             No accounts, no uploads, no tracking.
           </p>
         </motion.div>
@@ -263,7 +263,7 @@ export default function AboutPage() {
 
             <div className="mt-8 p-4 rounded-xl" style={{ background: 'var(--bg-hover)' }}>
               <p className="text-xs text-[#a1a1aa] text-center leading-relaxed">
-                The signaling server only facilitates the initial handshake between peers (exchanging WebRTC offers/answers/ICE candidates). 
+                The signaling server only facilitates the initial handshake between peers (exchanging WebRTC offers/answers/ICE candidates).
                 Once connected, all data flows directly between devices using WebRTC DataChannels with DTLS encryption.
                 <strong className="text-[#ededed]"> Zero data passes through our servers.</strong>
               </p>
@@ -331,7 +331,7 @@ export default function AboutPage() {
       {/* Footer */}
       <footer className="py-10 px-6 text-center" style={{ borderTop: '1px solid var(--border-subtle)' }}>
         <p className="text-[#a1a1aa] text-sm">
-          Made with 💙 for college project — 
+          Made with 💙 for Privacy —
           <span className="text-[#ededed] font-semibold"> Lynkless</span>
         </p>
         <div className="mt-4 flex justify-center gap-6">
