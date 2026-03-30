@@ -140,7 +140,23 @@ function broadcastNearbyUpdate(clientIp, excludeClientId = null) {
 function initializeHandlers(wss) {
   wss.on('connection', (ws, req) => {
     const clientIp = getClientIp(req);
-    const clientId = generateClientId();
+    
+    // Parse persistent ID if provided by frontend
+    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    let clientId = url.searchParams.get('id');
+    
+    // Validate format (prevent injection/weird characters)
+    if (!clientId || !/^client_[a-zA-Z0-9_-]{5,50}$/.test(clientId)) {
+      clientId = generateClientId();
+    }
+    
+    // If somehow an exact collision happens and they are still connected, generate a new one
+    if (clients.has(clientId)) {
+      const existingWs = clients.get(clientId);
+      if (existingWs.readyState === 1) { // 1 = OPEN
+        clientId = generateClientId();
+      }
+    }
 
     // Store client reference
     ws.clientId = clientId;

@@ -9,6 +9,7 @@ import {
   onHistoryChange,
   getTransferStats
 } from '@/lib/db/transferHistory';
+import { getPeerName } from '@/lib/utils/nameGenerator';
 
 const TransferHistoryPanel = memo(function TransferHistoryPanel() {
   const [history, setHistory] = useState<TransferHistoryEntry[]>([]);
@@ -137,9 +138,14 @@ const TransferHistoryPanel = memo(function TransferHistoryPanel() {
                 history.map((entry) => (
                   <div key={entry.id} className="flex flex-col p-3 rounded-lg bg-[#1f1f1f] border border-[#27272a]">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium text-[#ededed] truncate max-w-[70%]">
-                        {entry.transferType === 'incoming' ? '↓' : '↑'} {entry.fileName}
-                      </span>
+                      <div className="flex flex-col max-w-[70%]">
+                        <span className="text-sm font-medium text-[#ededed] truncate">
+                          {entry.transferType === 'incoming' ? '↓' : '↑'} {entry.fileName}
+                        </span>
+                        <span className="text-[10px] text-[#a1a1aa] mt-0.5 truncate">
+                          {entry.transferType === 'incoming' ? 'From' : 'To'} {getPeerName(entry.peerId)}
+                        </span>
+                      </div>
                       <span className={`text-xs ml-2 font-medium ${
                         entry.status === 'completed' ? 'text-[#10b981]' :
                         entry.status === 'failed' ? 'text-[#ef4444]' : 'text-[#f59e0b]'
