@@ -121,12 +121,13 @@ interface OutgoingTransferState {
 
 interface IncomingTransferState {
   metadata: FileMetadata;
-  chunks: (ArrayBuffer | null)[];
   receivedChunks: number;
   lastReceivedIndex: number;
   startTime: number;
   startOffset: number;
   peerId: string;
+  useWorker?: boolean;
+  chunks?: (ArrayBuffer | null)[]; // RAM fallback
 }
 
 class FileTransferManager {
@@ -141,10 +142,41 @@ class FileTransferManager {
   private meshTransfers: Map<string, { file: File; peerIds: string[]; transfers: Map<string, string> }> = new Map();
   private cleanupHandler: (() => void) | null = null;
   private stateCleanupHandler: (() => void) | null = null;
+  private worker: Worker | null = null;
 
   constructor() {
     this.setupDataHandler();
     this.setupConnectionMonitor();
+
+    if (typeof window !== 'undefined' && Worker) {
+      try {
+        this.worker = new Worker(new URL('./fileTransfer.worker.ts', import.meta.url));
+        this.worker.onmessage = this.handleWorkerMessage.bind(this);
+      } catch (err) {
+        console.warn('[FileTransfer] Failed to initialize Web Worker:', err);
+      }
+    }
+  }
+
+  private handleWorkerMessage(e: MessageEvent): void {
+    const msg = e.data;
+    if (msg.type === 'progress') {
+      const incoming = this.incomingFiles.get(msg.fileId);
+      if (incoming) {
+        incoming.receivedChunks = msg.receivedChunks;
+        incoming.lastReceivedIndex = msg.lastReceivedIndex;
+        // Bolt: Throttled progress update with lazy metrics calculation
+        const transferredSize = incoming.receivedChunks * CHUNK_SIZE;
+        this.notifyProgress(msg.fileId, 'transferring', {
+          transferredSize: Math.min(transferredSize, incoming.metadata.size),
+          resumable: true,
+        });
+      }
+    } else if (msg.type === 'complete-success') {
+      this.finalizeDownload(msg.fileId);
+    } else if (msg.type === 'error') {
+      console.error('[FileTransfer] Worker Error:', msg.error);
+    }
   }
 
   private setupDataHandler(): void {
@@ -249,15 +281,25 @@ class FileTransferManager {
     }
 
     const now = Date.now();
-    this.incomingFiles.set(metadata.id, {
+    const incomingState: IncomingTransferState = {
       metadata,
-      chunks: new Array(metadata.totalChunks).fill(null),
       receivedChunks: 0,
       lastReceivedIndex: -1,
       startTime: now,
       startOffset: 0,
       peerId,
-    });
+    };
+
+    if (this.worker && typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.getDirectory === 'function') {
+      incomingState.useWorker = true;
+      this.worker.postMessage({ type: 'init', fileId: metadata.id, payload: { metadata } });
+      console.log('[FileTransfer] Initialized Web Worker for OPFS stream operations.');
+    } else {
+      console.warn('[FileTransfer] Web Workers or OPFS not supported, falling back to RAM buffer mapping...');
+      incomingState.chunks = new Array(metadata.totalChunks).fill(null);
+    }
+
+    this.incomingFiles.set(metadata.id, incomingState);
 
     this.notifyProgress(metadata.id, 'transferring', {
       fileName: metadata.name,
@@ -298,47 +340,80 @@ class FileTransferManager {
     const incoming = this.incomingFiles.get(metadata.fileId);
     if (!incoming) return;
 
-    // Store the raw buffer
-    if (incoming.chunks[metadata.chunkIndex] === null) {
+    if (incoming.useWorker && this.worker) {
+      // Zero-Copy Transfer to Web Worker
+      this.worker.postMessage({ 
+        type: 'write', 
+        fileId: metadata.fileId, 
+        payload: { chunkIndex: metadata.chunkIndex, data } 
+      }, [data]);
+      // Progress UI is handled asynchronously by the worker's reply
+    } else if (incoming.chunks && incoming.chunks[metadata.chunkIndex] === null) {
+      // RAM Fallback
       incoming.chunks[metadata.chunkIndex] = data;
       incoming.receivedChunks++;
       incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, metadata.chunkIndex);
+      
+      const transferredSize = incoming.receivedChunks * CHUNK_SIZE;
+      this.notifyProgress(metadata.fileId, 'transferring', {
+        transferredSize: Math.min(transferredSize, incoming.metadata.size),
+        resumable: true,
+      });
     }
-
-    // Bolt: Throttled progress update with lazy metrics calculation
-    const transferredSize = incoming.receivedChunks * CHUNK_SIZE;
-    this.notifyProgress(metadata.fileId, 'transferring', {
-      transferredSize: Math.min(transferredSize, incoming.metadata.size),
-      resumable: true,
-    });
   }
 
-  private handleFileComplete(fileId: string): void {
+  private async handleFileComplete(fileId: string): Promise<void> {
     const incoming = this.incomingFiles.get(fileId);
     if (!incoming) return;
 
-    const validChunks = incoming.chunks as ArrayBuffer[];
-    const blob = new Blob(validChunks, { type: incoming.metadata.type });
+    if (incoming.useWorker && this.worker) {
+      this.worker.postMessage({ type: 'complete', fileId });
+      // The finalization blob grab happens async in finalizeDownload 
+    } else {
+      const validChunks = (incoming.chunks || []) as ArrayBuffer[];
+      const blob = new Blob(validChunks, { type: incoming.metadata.type });
+      
+      this.fileReceivedHandlers.forEach((h) => h(blob, incoming.metadata));
+      this.notifyProgress(fileId, 'completed', { transferredSize: incoming.metadata.size });
+      this.downloadFile(blob, incoming.metadata.name);
+      this.incomingFiles.delete(fileId);
+    }
+  }
 
-    // Notify handlers
-    this.fileReceivedHandlers.forEach((handler) =>
-      handler(blob, incoming.metadata)
-    );
+  private async finalizeDownload(fileId: string): Promise<void> {
+    const incoming = this.incomingFiles.get(fileId);
+    if (!incoming) return;
 
-    this.notifyProgress(fileId, 'completed', {
-      transferredSize: incoming.metadata.size,
-    });
-
-    // Auto-download the file
-    this.downloadFile(blob, incoming.metadata.name);
-
-    // Cleanup
+    try {
+      const root = await navigator.storage.getDirectory();
+      const fileHandle = await root.getFileHandle(`lynkless-${incoming.metadata.id}`);
+      const file = await fileHandle.getFile();
+      
+      // Blob casting for compatibility
+      const blob = new Blob([file], { type: incoming.metadata.type });
+      
+      this.fileReceivedHandlers.forEach((h) => h(blob, incoming.metadata));
+      this.notifyProgress(fileId, 'completed', { transferredSize: incoming.metadata.size });
+      this.downloadFile(blob, incoming.metadata.name);
+      
+      setTimeout(async () => {
+        try {
+          await root.removeEntry(`lynkless-${incoming.metadata.id}`);
+        } catch (e) {}
+      }, 60000); // Clean OPFS file after 60s
+    } catch (err) {
+      console.error('[FileTransfer] Failed to download OPFS file:', err);
+    }
+    
     this.incomingFiles.delete(fileId);
   }
 
-  private handleFileCancel(fileId: string): void {
+  private async handleFileCancel(fileId: string): Promise<void> {
     const incoming = this.incomingFiles.get(fileId);
     if (incoming) {
+      if (incoming.useWorker && this.worker) {
+        this.worker.postMessage({ type: 'abort', fileId });
+      }
       this.notifyProgress(fileId, 'cancelled');
       this.incomingFiles.delete(fileId);
     }
@@ -353,8 +428,12 @@ class FileTransferManager {
     if (incoming) {
       // Find the first missing chunk after the sender's last known chunk
       let resumeFrom = message.lastChunkIndex;
-      while (resumeFrom < incoming.chunks.length && incoming.chunks[resumeFrom] !== null) {
-        resumeFrom++;
+      if (incoming.chunks) {
+        while (resumeFrom < incoming.chunks.length && incoming.chunks[resumeFrom] !== null) {
+          resumeFrom++;
+        }
+      } else {
+        resumeFrom = Math.max(resumeFrom, incoming.lastReceivedIndex + 1);
       }
       
       this.webrtc.sendToPeer(peerId, JSON.stringify({
@@ -532,7 +611,7 @@ class FileTransferManager {
 
     const metadata: FileMetadata = {
       id: fileId,
-      name: file.name,
+      name: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
       size: file.size,
       type: file.type || 'application/octet-stream',
       totalChunks,
@@ -729,7 +808,7 @@ class FileTransferManager {
 
     const metadata: FileMetadata = {
       id: fileId,
-      name: file.name,
+      name: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
       size: file.size,
       type: file.type || 'application/octet-stream',
       totalChunks,
