@@ -4,13 +4,24 @@ export const compressImage = async (file: File, quality = 0.7): Promise<File> =>
   // Don't compress small images or GIFs
   if (file.type === 'image/gif' || file.size < 500 * 1024) return file;
 
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = (event) => {
-      const img = new Image();
-      img.src = event.target?.result as string;
-      img.onload = () => {
+  // Bolt: Use URL.createObjectURL instead of FileReader.readAsDataURL to avoid
+  // CPU-heavy Base64 encoding and reduce memory overhead by ~33%.
+  const url = URL.createObjectURL(file);
+
+  return new Promise((resolve) => {
+    const img = new Image();
+
+    // Helper for cleanup and resolving
+    const cleanupAndResolve = (result: File) => {
+      URL.revokeObjectURL(url);
+      resolve(result);
+    };
+
+    img.src = url;
+
+    // Bolt: img.decode() provides non-blocking, off-main-thread image decoding.
+    img.decode()
+      .then(() => {
         // Calculate new dimensions (max 1920x1080 bounding box roughly)
         const MAX_WIDTH = 1920;
         const MAX_HEIGHT = 1080;
@@ -35,7 +46,7 @@ export const compressImage = async (file: File, quality = 0.7): Promise<File> =>
 
         const ctx = canvas.getContext('2d');
         if (!ctx) {
-          resolve(file); // Fallback to original
+          cleanupAndResolve(file); // Fallback to original
           return;
         }
 
@@ -43,7 +54,7 @@ export const compressImage = async (file: File, quality = 0.7): Promise<File> =>
 
         canvas.toBlob((blob) => {
           if (!blob) {
-            resolve(file);
+            cleanupAndResolve(file);
             return;
           }
           // Convert back to File
@@ -54,14 +65,15 @@ export const compressImage = async (file: File, quality = 0.7): Promise<File> =>
           
           // Return the compressed file ONLY if it's actually smaller
           if (compressedFile.size < file.size) {
-            resolve(compressedFile);
+            cleanupAndResolve(compressedFile);
           } else {
-            resolve(file);
+            cleanupAndResolve(file);
           }
         }, 'image/jpeg', quality);
-      };
-      img.onerror = () => resolve(file); // Fallback on error
-    };
-    reader.onerror = () => resolve(file); // Fallback on error
+      })
+      .catch((err) => {
+        console.warn('[ImageCompression] Decode failed, falling back to original:', err);
+        cleanupAndResolve(file); // Fallback on error
+      });
   });
 };
