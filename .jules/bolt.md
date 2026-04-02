@@ -42,6 +42,6 @@
 **Learning:** Using `db.getAll()` to calculate aggregate statistics (like total size) on an IndexedDB store loads all records into memory at once. As transfer history grows, this causes significant, unnecessary memory spikes in the main thread.
 **Action:** Use `openCursor()` to iterate through records one by one for $O(1)$ space complexity when performing aggregate calculations on large datasets.
 
-## 2026-04-02 - Off-Thread Image Decoding and Zero-Copy URLs
-**Learning:** Using `FileReader.readAsDataURL` for image compression creates large Base64 strings, increasing memory pressure by ~33% and causing CPU spikes. Furthermore, image decoding on the main thread during `canvas.drawImage` can cause visible UI jank.
-**Action:** Use `URL.createObjectURL` for zero-copy file referencing and `img.decode()` to move the heavy decoding work to a background thread before drawing to the canvas. Always remember to call `URL.revokeObjectURL` to prevent memory leaks.
+## 2026-03-24 - Zero-Copy Image Loading & Off-Main-Thread Decoding
+**Learning:** `FileReader.readAsDataURL` is extremely inefficient for image processing as it encodes the entire file into a Base64 string, consuming significant CPU and doubling memory usage. Using `URL.createObjectURL` provides a direct reference to the blob, and `img.decode()` allows the browser to handle decoding off the main thread.
+**Action:** Use `URL.createObjectURL` for loading images into `<img>` or `Image()` objects, and always await `img.decode()` before drawing to a canvas to keep the UI responsive. Revoke the URL immediately after use.
