@@ -1,4 +1,4 @@
-## 2026-02-12 - UI Thrashing during High-Speed Transfers
+## 2026-02-12 - UI Thraging during High-Speed Transfers
 **Learning:** High-frequency state updates (e.g., file transfer progress every 64KB chunk) can cause massive UI thrashing and block the main thread, especially when multiple heavy components are listening to these updates.
 **Action:** Implement throttling for progress notifications (100ms interval is a good balance) and memoize components that receive these updates to prevent redundant re-renders.
 
@@ -41,3 +41,7 @@
 ## 2026-03-12 - O(1) Memory Aggregation with IndexedDB Cursors
 **Learning:** Using `db.getAll()` to calculate aggregate statistics (like total size) on an IndexedDB store loads all records into memory at once. As transfer history grows, this causes significant, unnecessary memory spikes in the main thread.
 **Action:** Use `openCursor()` to iterate through records one by one for $O(1)$ space complexity when performing aggregate calculations on large datasets.
+
+## 2026-03-15 - Off-Thread Image Decoding & Zero-Copy Base64 Avoidance
+**Learning:** Using `FileReader.readAsDataURL` for image processing creates a Base64 string that is 33% larger than the original data and decoded on the main thread, causing memory spikes and UI jank.
+**Action:** Use `URL.createObjectURL` to create a lightweight O(1) reference and `img.decode()` to move image decoding off the main thread. Always call `URL.revokeObjectURL` to prevent memory leaks.
