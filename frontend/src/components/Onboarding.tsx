@@ -97,7 +97,7 @@ export default function Onboarding() {
 
               {/* Icon */}
               <motion.div
-                key={currentStep}
+                key={`onboarding-icon-${currentStep}`}
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
                 transition={{ type: "spring", stiffness: 200 }}
@@ -108,7 +108,7 @@ export default function Onboarding() {
 
               {/* Content */}
               <motion.div
-                key={currentStep}
+                key={`onboarding-content-${currentStep}`}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.1 }}

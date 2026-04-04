@@ -152,7 +152,7 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
     const isOwnMessage = lastMessage?.isOwn;
     const isFirstLoad = lastMessageCountRef.current === 0 && messages.length > 0;
 
-    if (isNearBottom || isOwnMessage || isFirstLoad) {
+    if (messages.length > 0 && (isNearBottom || isOwnMessage || isFirstLoad)) {
       setTimeout(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, 50);
