@@ -498,7 +498,7 @@ export default function Home() {
 
   return (
     <main 
-      className="min-h-screen p-6 md:p-10 relative overflow-hidden"
+      className="min-h-screen p-4 md:p-10 relative overflow-hidden"
       onDragEnter={(e) => {
         e.preventDefault();
         dragCounter.current++;
@@ -680,7 +680,7 @@ export default function Home() {
               animate={{ scale: 1, opacity: 1 }}
               transition={{ duration: 0.8 }}
             >
-              <h1 className="text-4xl md:text-6xl font-black mb-2 tracking-tighter italic">
+              <h1 className="text-3xl sm:text-4xl md:text-6xl font-black mb-2 tracking-tight italic pt-2">
                 <span className="text-white drop-shadow-[0_0_20px_rgba(255,255,255,0.2)]">LYNK</span>
                 <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-500 to-purple-500">LESS</span>
               </h1>
@@ -796,7 +796,7 @@ export default function Home() {
                   exit={{ opacity: 0, y: -10 }}
                   transition={{ duration: 0.2 }}
                 >
-                  <div className="panel-elevated p-6">
+                  <div className="panel-elevated p-4 sm:p-6">
                     <div className="flex items-center gap-3 mb-5">
                       <div
                         className="w-9 h-9 rounded-xl flex items-center justify-center border border-[#27272a] shadow-sm bg-[#111]"

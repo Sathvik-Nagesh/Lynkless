@@ -48,7 +48,8 @@ export class E2EEHelper {
   }
 
   static async decryptFile(file: File, password?: string): Promise<File> {
-    if (!password || !file.name.endsWith('.encrypted')) return file;
+    const encryptedRegex = /\.encrypted$/i;
+    if (!password || !encryptedRegex.test(file.name)) return file;
 
     const arrayBuffer = await file.arrayBuffer();
     if (arrayBuffer.byteLength <= this.METADATA_SIZE) {
@@ -69,9 +70,15 @@ export class E2EEHelper {
         encryptedData
       );
 
-      // Remove .encrypted from filename
-      const originalName = file.name.replace(/\.encrypted$/, '');
-      return new File([decryptedData], originalName);
+      // Remove .encrypted from filename (case-insensitive)
+      const originalName = file.name.replace(encryptedRegex, '');
+      
+      // Attempt to preserve the file type if it was originally there
+      // or default to octet-stream which is safer than empty string
+      return new File([decryptedData], originalName, { 
+        type: 'application/octet-stream',
+        lastModified: file.lastModified 
+      });
     } catch (e) {
       console.error(e);
       throw new Error("Decryption failed. Incorrect password?");
