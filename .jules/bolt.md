@@ -45,3 +45,7 @@
 ## 2026-03-15 - Off-Thread Image Decoding & Zero-Copy Base64 Avoidance
 **Learning:** Using `FileReader.readAsDataURL` for image processing creates a Base64 string that is 33% larger than the original data and decoded on the main thread, causing memory spikes and UI jank.
 **Action:** Use `URL.createObjectURL` to create a lightweight O(1) reference and `img.decode()` to move image decoding off the main thread. Always call `URL.revokeObjectURL` to prevent memory leaks.
+
+## 2026-03-20 - Parallelizing Mesh Broadcast Transmission
+**Learning:** Sending file chunks to multiple peers sequentially in a mesh network creates a "head-of-line blocking" scenario where a single slow peer or WebRTC backpressure stalls transmission to all other peers.
+**Action:** Use `Promise.all()` to transmit chunks to all active peers concurrently. This ensures faster peers can receive data at their maximum potential rate regardless of slow peers in the same mesh.
