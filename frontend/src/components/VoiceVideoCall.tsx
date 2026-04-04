@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef, memo } from 'react';
+import { useState, useCallback, useRef, memo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface VoiceVideoCallProps {
@@ -27,6 +27,7 @@ export const VoiceVideoCall = memo(function VoiceVideoCall({
   const [isCameraOff, setIsCameraOff] = useState(false);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
 
   const startCall = useCallback(async (type: 'audio' | 'video') => {
     try {
@@ -46,6 +47,18 @@ export const VoiceVideoCall = memo(function VoiceVideoCall({
       console.error('Failed to start call:', err);
     }
   }, [onCallStart]);
+
+  // Attach remote stream to audio/video elements whenever it changes
+  useEffect(() => {
+    if (remoteStream) {
+      if (callType === 'video' && remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = remoteStream;
+      }
+      if (remoteAudioRef.current) {
+        remoteAudioRef.current.srcObject = remoteStream;
+      }
+    }
+  }, [remoteStream, callType]);
 
   const endCall = useCallback(() => {
     if (localStream) {
@@ -128,6 +141,8 @@ export const VoiceVideoCall = memo(function VoiceVideoCall({
               <p className="text-sm text-[#71717a]">Voice call in progress</p>
             </div>
           )}
+          {/* Hidden audio element for remote voice stream */}
+          <audio ref={remoteAudioRef} autoPlay playsInline />
         </div>
 
         <div className="p-4 flex items-center justify-center gap-4">

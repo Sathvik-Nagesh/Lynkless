@@ -46,6 +46,9 @@ interface UseWebRTCReturn {
   remoteStreams: Map<string, MediaStream>;
   startScreenShare: () => Promise<void>;
   stopScreenShare: () => void;
+  startCall: (peerId: string, type: 'audio' | 'video') => Promise<void>;
+  endCall: (peerId: string) => void;
+  callStream: MediaStream | null;
 }
 
 export function useWebRTC(clientId: string | null): UseWebRTCReturn {
@@ -54,8 +57,10 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [fingerprints, setFingerprints] = useState<Map<string, string>>(new Map());
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [callStream, setCallStream] = useState<MediaStream | null>(null);
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
   const localSendersRef = useRef<Map<string, RTCRtpSender[]>>(new Map());
+  const callSendersRef = useRef<Map<string, RTCRtpSender[]>>(new Map());
 
   const webrtcRef = useRef(getWebRTCManager());
   const fileTransferRef = useRef(getFileTransferManager());
@@ -269,6 +274,41 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
     }
   }, [stopScreenShare]);
 
+  const startCall = useCallback(async (peerId: string, type: 'audio' | 'video') => {
+    try {
+      const constraints: MediaStreamConstraints = {
+        audio: true,
+        video: type === 'video' ? { width: 1280, height: 720 } : false,
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      setCallStream(stream);
+
+      const webrtc = webrtcRef.current;
+      const senders: RTCRtpSender[] = [];
+      stream.getTracks().forEach((track) => {
+        const sender = webrtc.addTrack(peerId, track, stream);
+        if (sender) senders.push(sender);
+      });
+      callSendersRef.current.set(peerId, senders);
+    } catch (err) {
+      console.error('[Call] Failed to start call:', err);
+      throw err;
+    }
+  }, []);
+
+  const endCall = useCallback((peerId: string) => {
+    if (callStream) {
+      callStream.getTracks().forEach((track) => track.stop());
+    }
+    const webrtc = webrtcRef.current;
+    const senders = callSendersRef.current.get(peerId);
+    if (senders) {
+      senders.forEach((sender) => webrtc.removeTrack(peerId, sender));
+      callSendersRef.current.delete(peerId);
+    }
+    setCallStream(null);
+  }, [callStream]);
+
   return {
     peers,
     transfers,
@@ -288,5 +328,8 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
     remoteStreams,
     startScreenShare,
     stopScreenShare,
+    startCall,
+    endCall,
+    callStream,
   };
 }
