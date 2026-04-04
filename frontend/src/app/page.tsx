@@ -93,6 +93,9 @@ export default function Home() {
     remoteStreams,
     startScreenShare,
     stopScreenShare,
+    startCall,
+    endCall,
+    callStream,
   } = useWebRTC(clientId);
 
   // Auto-connect to signaling server
@@ -218,21 +221,28 @@ export default function Home() {
     }
   }, [incomingRequests.length, showQRCode]);
 
-  // Handle connection acceptance - now initiate WebRTC
+  // Handle connection acceptance - auto-accept in-room peers, show modal for direct peers
   const handleAcceptRequest = useCallback(async (fromId: string) => {
     acceptConnectionRequest(fromId);
-    // Don't show "Connected" toast here - wait for actual WebRTC connection
-
-    // The accepter initiates the WebRTC connection
-    // Check all sources for isNearby (server provides this in connection-request)
     const incomingReq = incomingRequests.find(r => r.fromId === fromId);
     const user = roomState.users.find(u => u.id === fromId);
     const nearbyPeer = nearbyPeers.find(p => p.id === fromId);
     const isNearby = incomingReq?.isNearby || user?.isNearby || nearbyPeer?.isNearby || false;
-
     await connectToPeer(fromId, isNearby);
     setSelectedPeer(fromId);
   }, [acceptConnectionRequest, roomState.users, nearbyPeers, incomingRequests, connectToPeer]);
+
+  // Auto-accept incoming connection requests from room members
+  useEffect(() => {
+    if (!roomState.code) return;
+    incomingRequests.forEach(req => {
+      const isRoomMember = roomState.users.some(u => u.id === req.fromId);
+      if (isRoomMember) {
+        console.log('[Auto-Accept] Accepting room member:', req.fromId);
+        handleAcceptRequest(req.fromId);
+      }
+    });
+  }, [incomingRequests, roomState.code, roomState.users, handleAcceptRequest]);
 
   // Watch for actual WebRTC connection state changes to show toasts
   const prevPeersRef = useRef<typeof peers>([]);
@@ -275,6 +285,8 @@ export default function Home() {
         if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
         return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
       };
+      // FIX: Must set pendingFiles BEFORE showing the confirm dialog
+      setPendingFiles(files);
       setPendingTransferConfirm({
         fileCount: files.length,
         totalSize: formatSize(totalSize),
@@ -289,11 +301,11 @@ export default function Home() {
 
   const handleTransferConfirm = useCallback(() => {
     setShowTransferConfirm(false);
+    // pendingFiles is already set from handleFileDrop, just open the preview modal
     if (pendingTransferConfirm) {
-      setPendingFiles(pendingFiles);
       setShowFilePreview(true);
     }
-  }, [pendingTransferConfirm, pendingFiles]);
+  }, [pendingTransferConfirm]);
 
   // Confirm and send files
   const handleConfirmSend = useCallback(async (password?: string, shouldZip?: boolean, compressImagesFlag?: boolean) => {
@@ -379,7 +391,8 @@ export default function Home() {
       // Skip if already connected or has pending request
       const currentState = peerStates.get(user.id);
       if (currentState?.state === 'request-sent' ||
-        currentState?.state === 'request-received') {
+        currentState?.state === 'request-received' ||
+        currentState?.state === 'connected') {
         return;
       }
 
@@ -389,15 +402,15 @@ export default function Home() {
         return;
       }
 
-      // PREVENT LOOP: Only the user with LOWER ID sends the request
-      // This ensures only ONE user initiates, avoiding duplicate requests
+      // To avoid both sides sending requests simultaneously (glare), 
+      // only the side with the smaller ID initiates.
       if (clientId < user.id) {
-        console.log('[Auto-Connect] Connecting to room user:', user.id);
-        sentRequestsRef.current.add(user.id); // Mark as sent
+        console.log('[Auto-Connect] Initiating to room user:', user.id);
+        sentRequestsRef.current.add(user.id);
         sendConnectionRequest(user.id);
       }
     });
-  }, [roomState.code, roomState.users.length, clientId]); // REMOVED peers and peerStates to prevent re-triggering
+  }, [roomState.code, roomState.users.length, clientId, peers.length]); 
 
   // Listen for connection-accepted to initiate WebRTC from requester side
   useEffect(() => {
@@ -446,6 +459,18 @@ export default function Home() {
       showToast(`Joined room ${roomState.code}`, 'info');
     }
   }, [roomState.code, roomState.isCreator, showToast]);
+
+  // Listen for incoming transfers to notify about encrypted files
+  useEffect(() => {
+    transfers.forEach(transfer => {
+      if (transfer.status === 'completed' && transfer.type === 'incoming') {
+        const isEncrypted = transfer.fileName.endsWith('.encrypted');
+        if (isEncrypted) {
+          showToast(`Note: Received encrypted file "${transfer.fileName}". Use the Decryption Tool below to open it.`, 'success');
+        }
+      }
+    });
+  }, [transfers]);
 
   // Memoize connected peers to stabilize downstream calculations
   const connectedPeers = useMemo(() =>
@@ -560,13 +585,9 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* Dynamic Background Glows */}
-      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-blue-600/10 blur-[120px] pointer-events-none mix-blend-screen" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-purple-600/10 blur-[120px] pointer-events-none mix-blend-screen" />
-
-      {/* Connection Request Modal */}
+      {/* Connection Request Modal - only show for non-room peers */}
       <ConnectionRequestModal
-        requests={incomingRequests}
+        requests={incomingRequests.filter(req => !roomState.users.some(u => u.id === req.fromId))}
         onAccept={handleAcceptRequest}
         onReject={rejectConnectionRequest}
       />
@@ -654,17 +675,22 @@ export default function Home() {
               />
             </motion.div>
 
-            <div>
-              <h1 className="text-3xl md:text-5xl font-black tracking-tight mb-2">
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-500 to-purple-500 drop-shadow-sm">Lynkless</span>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: 0.8 }}
+            >
+              <h1 className="text-4xl md:text-6xl font-black mb-2 tracking-tighter italic">
+                <span className="text-white drop-shadow-[0_0_20px_rgba(255,255,255,0.2)]">LYNK</span>
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-500 to-purple-500">LESS</span>
               </h1>
               <p className="text-[#a1a1aa] text-sm md:text-base font-medium flex items-center gap-2">
-                Your files don&apos;t belong in the cloud.
-                <span className="px-2 py-0.5 rounded flex items-center text-[10px] uppercase font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20">
-                  P2P Secure
+                Pure P2P Sharing. <span className="text-white">No Cloud.</span>
+                <span className="px-2 py-0.5 rounded flex items-center text-[10px] uppercase font-black text-blue-400 bg-blue-500/10 border border-blue-500/20">
+                  v2.1 Stable
                 </span>
               </p>
-            </div>
+            </motion.div>
           </motion.div>
 
           <motion.div
@@ -899,9 +925,9 @@ export default function Home() {
                     peerId={selectedPeer}
                     peerName={getPeerName(selectedPeer)}
                     isConnected={canSendFile}
-                    onCallStart={() => {}}
-                    onCallEnd={() => {}}
-                    localStream={localStream}
+                    onCallStart={(stream, type) => startCall(selectedPeer, type)}
+                    onCallEnd={() => endCall(selectedPeer)}
+                    localStream={callStream}
                     remoteStream={remoteStreams.get(selectedPeer) || null}
                   />
                   <div className="flex justify-center">
@@ -1131,6 +1157,9 @@ export default function Home() {
           </div>
         </motion.div>
       </div>
+
+      {/* Footer / Safe Area Padding */}
+      <div className="h-[env(safe-area-inset-bottom,24px)]" />
 
       {/* PWA Install Prompt */}
       <PWAInstallPrompt />

@@ -167,18 +167,13 @@ Contributions welcome! Feel free to:
 
 MIT License - feel free to use for personal or commercial projects.
 
-## 💡 Roadmap & Tasks completed
-
-- [x] E2E custom encryption layer
-- [x] Resumable transfers natively parsing byte alignments.
-- [x] Multi-peer mesh transfers
-- [x] WebRTC renegotiation hardening (Drop-Free Screen Shares!)
-- [x] Transfer IndexedDB dashboard globally tracking session hashes.
-- [x] Stream buffering logic enabling 5GB+ transfers flawlessly.
-- [x] Inline formatting chat!
-- [x] Network Hopping (Seamless ICE Restarts) & Edge-Case Stability 
-- [x] Mobile PWA SVG icon standardisation
-- [ ] Voice/video call support
+- [x] Voice/Video call support (Direct P2P audio/video) ✨
+- [x] Auto-Discovery & Instant Room Sync
+- [x] Radar UI with Real-time Peer Tracking
+- [x] Zero-Click Auto-Connect for Room Members
+- [x] AES-256-GCM Military-grade Encryption
+- [x] Multi-File & Folder Transfer
+- [ ] Web Worker background threading for transfer processing
 - [ ] Web Worker background threading for transfer processing under heavily throttled tabs
 
 ---

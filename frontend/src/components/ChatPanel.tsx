@@ -51,6 +51,10 @@ const renderMessageContent = (content: string) => {
  * of the entire message list when a single new message is added.
  */
 const ChatMessageItem = memo(function ChatMessageItem({ msg, showTimestamp, isSameSender }: ChatMessageItemProps) {
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(msg.content);
+  }, [msg.content]);
+
   return (
     <div>
       {/* Time separator */}
@@ -72,38 +76,45 @@ const ChatMessageItem = memo(function ChatMessageItem({ msg, showTimestamp, isSa
           isSameSender ? 'mt-0.5' : 'mt-2'
         }`}
       >
-        <div
-          className="max-w-[80%] rounded-2xl px-4 py-2 relative group"
-          style={msg.isOwn ? {
-            background: '#1f1f1f',
-            border: '1px solid #27272a',
-            borderBottomRightRadius: isSameSender ? '8px' : '20px',
-          } : {
-            background: 'transparent',
-            border: '1px solid var(--border-subtle)',
-            borderBottomLeftRadius: isSameSender ? '8px' : '20px',
-          }}
-        >
-          {/* Sender name (only for received, and only if different from previous) */}
-          {!msg.isOwn && !isSameSender && (
-            <p className="text-[10px] font-semibold mb-1 flex items-center gap-1" style={{ color: '#ededed' }}>
-              <span>{getEmojiForPeer(msg.fromId)}</span>
-              <span>{getPeerName(msg.fromId)}</span>
-            </p>
-          )}
+        <div className="relative group">
           <div
-            className="break-words text-sm leading-relaxed"
-            style={{ color: msg.isOwn ? '#ededed' : '#a1a1aa' }}
+            className="max-w-[80%] rounded-2xl px-4 py-2"
+            style={msg.isOwn ? {
+              background: '#1f1f1f',
+              border: '1px solid #27272a',
+              borderBottomRightRadius: isSameSender ? '8px' : '20px',
+            } : {
+              background: 'transparent',
+              border: '1px solid var(--border-subtle)',
+              borderBottomLeftRadius: isSameSender ? '8px' : '20px',
+            }}
           >
-            {renderMessageContent(msg.content)}
+            {/* Sender name (only for received, and only if different from previous) */}
+            {!msg.isOwn && !isSameSender && (
+              <p className="text-[10px] font-semibold mb-1 flex items-center gap-1" style={{ color: '#ededed' }}>
+                <span>{getEmojiForPeer(msg.fromId)}</span>
+                <span>{getPeerName(msg.fromId)}</span>
+              </p>
+            )}
+            <div
+              className="break-words text-sm leading-relaxed"
+              style={{ color: msg.isOwn ? '#ededed' : '#a1a1aa' }}
+            >
+              {renderMessageContent(msg.content)}
+            </div>
           </div>
-          {/* Timestamp on hover */}
-          <span
-            className="text-[9px] opacity-0 group-hover:opacity-100 transition-opacity absolute -bottom-4 text-[#71717a]"
-            style={{ [msg.isOwn ? 'right' : 'left']: '8px' }}
+          {/* Copy button on hover - positioned outside the message bubble */}
+          <button
+            onClick={handleCopy}
+            title="Copy message"
+            className={`absolute top-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150 p-1 rounded-md bg-[#27272a] hover:bg-[#3f3f46] ${
+              msg.isOwn ? '-left-7' : '-right-7'
+            }`}
           >
-            {formatTime(msg.timestamp)}
-          </span>
+            <svg className="w-3 h-3 text-[#a1a1aa]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+            </svg>
+          </button>
         </div>
       </motion.div>
     </div>
@@ -144,15 +155,13 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
     const container = containerRef.current;
     if (!container) return;
 
-    // Check if we are near the bottom (within 100px)
-    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 150;
+    // Only scroll if very close to bottom (within 60px) - much less aggressive
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
     
-    // Check if the latest message is our own or if it's the very first load
-    const lastMessage = messages[messages.length - 1];
-    const isOwnMessage = lastMessage?.isOwn;
+    // Only auto-scroll on first message load
     const isFirstLoad = lastMessageCountRef.current === 0 && messages.length > 0;
 
-    if (messages.length > 0 && (isNearBottom || isOwnMessage || isFirstLoad)) {
+    if (messages.length > 0 && (isNearBottom || isFirstLoad)) {
       setTimeout(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, 50);
