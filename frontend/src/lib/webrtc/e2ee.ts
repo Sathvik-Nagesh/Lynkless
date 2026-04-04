@@ -55,12 +55,10 @@ export class E2EEHelper {
       throw new Error("Invalid encrypted file: too small");
     }
 
-    // Bolt: Use subarray() on a Uint8Array view to extract salt, IV and data without copying.
-    // ArrayBuffer.slice() creates a new copy, whereas subarray() creates a new view on the same buffer.
-    const view = new Uint8Array(arrayBuffer);
-    const salt = view.subarray(0, 16);
-    const iv = view.subarray(16, 28);
-    const encryptedData = view.subarray(28);
+    // Bolt: Use slice() to pass a clean ArrayBuffer to crypto.subtle.
+    const salt = new Uint8Array(arrayBuffer, 0, 16);
+    const iv = new Uint8Array(arrayBuffer, 16, 12);
+    const encryptedData = arrayBuffer.slice(28); // Real offset
 
     const key = await this.deriveKey(password, salt, ["decrypt"]);
     

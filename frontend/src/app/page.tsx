@@ -25,10 +25,21 @@ import { getSounds } from '@/lib/utils/sounds';
 import { useToast } from '@/components/ToastProvider';
 import { E2EEHelper } from '@/lib/webrtc/e2ee';
 import DecryptionTool from '@/components/DecryptionTool';
+import { SoundToggle } from '@/components/SoundToggle';
+import { EmptyState } from '@/components/EmptyState';
+import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator';
+import { ConnectionQualityDashboard } from '@/components/ConnectionQualityDashboard';
+import { TrustPeerButton } from '@/components/TrustPeerButton';
+import { TransferConfirmation } from '@/components/TransferConfirmation';
+import { TextSnippetShare } from '@/components/TextSnippetShare';
+import { VoiceVideoCall } from '@/components/VoiceVideoCall';
+import { getFileInfo } from '@/lib/utils/fileTypeIcons';
+import { getTrustedPeersManager } from '@/lib/utils/trustedPeers';
 import Link from 'next/link';
 import { createZipFromFiles } from '@/lib/utils/zipper';
 import { processEntry } from '@/lib/utils/fileUpload';
 import { MAX_FILE_SIZE } from '@/lib/webrtc/fileTransfer';
+import { ServerWakeupGame } from '@/components/ServerWakeupGame';
 import { compressImage } from '@/lib/utils/imageCompression';
 
 const SIGNALING_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || 'ws://localhost:8080';
@@ -42,6 +53,8 @@ export default function Home() {
   const [showFilePreview, setShowFilePreview] = useState(false);
   const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
   const [isGlobalDragging, setIsGlobalDragging] = useState(false);
+  const [showTransferConfirm, setShowTransferConfirm] = useState(false);
+  const [pendingTransferConfirm, setPendingTransferConfirm] = useState<{ fileCount: number; totalSize: string; peerId: string } | null>(null);
   const dragCounter = useRef(0);
   const sounds = useRef(getSounds());
   const { showToast } = useToast();
@@ -254,9 +267,33 @@ export default function Home() {
       return;
     }
 
-    setPendingFiles(files);
-    setShowFilePreview(true);
+    if (connectedPeers.length === 1) {
+      const peer = connectedPeers[0];
+      const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+      const formatSize = (bytes: number) => {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+      };
+      setPendingTransferConfirm({
+        fileCount: files.length,
+        totalSize: formatSize(totalSize),
+        peerId: peer.id,
+      });
+      setShowTransferConfirm(true);
+    } else {
+      setPendingFiles(files);
+      setShowFilePreview(true);
+    }
   }, [peers]);
+
+  const handleTransferConfirm = useCallback(() => {
+    setShowTransferConfirm(false);
+    if (pendingTransferConfirm) {
+      setPendingFiles(pendingFiles);
+      setShowFilePreview(true);
+    }
+  }, [pendingTransferConfirm, pendingFiles]);
 
   // Confirm and send files
   const handleConfirmSend = useCallback(async (password?: string, shouldZip?: boolean, compressImagesFlag?: boolean) => {
@@ -434,24 +471,9 @@ export default function Home() {
     connectedPeers.map(p => ({ id: p.id })),
   [connectedPeers]);
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <motion.div
-          className="flex flex-col items-center gap-4"
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-        >
-          <div className="spinner w-8 h-8" />
-          <p className="text-[#94A3B8] text-sm">Connecting to network...</p>
-        </motion.div>
-      </div>
-    );
-  }
-
   return (
     <main 
-      className="min-h-screen p-6 md:p-10 relative"
+      className="min-h-screen p-6 md:p-10 relative overflow-hidden"
       onDragEnter={(e) => {
         e.preventDefault();
         dragCounter.current++;
@@ -538,6 +560,10 @@ export default function Home() {
         )}
       </AnimatePresence>
 
+      {/* Dynamic Background Glows */}
+      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-blue-600/10 blur-[120px] pointer-events-none mix-blend-screen" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-purple-600/10 blur-[120px] pointer-events-none mix-blend-screen" />
+
       {/* Connection Request Modal */}
       <ConnectionRequestModal
         requests={incomingRequests}
@@ -567,11 +593,28 @@ export default function Home() {
         {showFilePreview && (
           <FilePreviewModal
             files={pendingFiles}
-        peerCount={connectedPeersCount}
+            peerCount={connectedPeersCount}
+            peerNames={connectedPeers.map(p => getPeerName(p.id))}
             onConfirm={handleConfirmSend}
             onCancel={() => {
               setShowFilePreview(false);
               setPendingFiles([]);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Transfer Confirmation Modal */}
+      <AnimatePresence>
+        {showTransferConfirm && pendingTransferConfirm && (
+          <TransferConfirmation
+            fileCount={pendingTransferConfirm.fileCount}
+            totalSize={pendingTransferConfirm.totalSize}
+            peerId={pendingTransferConfirm.peerId}
+            onConfirm={handleTransferConfirm}
+            onCancel={() => {
+              setShowTransferConfirm(false);
+              setPendingTransferConfirm(null);
             }}
           />
         )}
@@ -612,8 +655,8 @@ export default function Home() {
             </motion.div>
 
             <div>
-              <h1 className="text-2xl md:text-5xl font-bold tracking-tight mb-2">
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-500">Lynkless</span>
+              <h1 className="text-3xl md:text-5xl font-black tracking-tight mb-2">
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-500 to-purple-500 drop-shadow-sm">Lynkless</span>
               </h1>
               <p className="text-[#a1a1aa] text-sm md:text-base font-medium flex items-center gap-2">
                 Your files don&apos;t belong in the cloud.
@@ -629,6 +672,7 @@ export default function Home() {
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
           >
+            <SoundToggle />
             <Link
               href="/about"
               className="text-xs text-[#a1a1aa] hover:text-[#ededed] transition-colors px-3 py-1.5 rounded-lg hover:bg-[#1f1f1f]"
@@ -665,6 +709,17 @@ export default function Home() {
                 error={error}
               />
             </motion.div>
+
+            {/* Server Wakeup Game / Loading state */}
+            {isLoading && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, height: 0 }}
+              >
+                <ServerWakeupGame />
+              </motion.div>
+            )}
 
             {/* Tabs for switching Views */}
             <motion.div
@@ -830,12 +885,32 @@ export default function Home() {
 
               {/* Connection Fingerprint Verification */}
               {selectedPeer && canSendFile && (
-                <div className="mt-4">
+                <div className="mt-4 space-y-3">
                   <ConnectionFingerprint
                     fingerprint={getFingerprint(selectedPeer) || null}
                     peerId={selectedPeer}
                     isConnected={canSendFile}
                   />
+                  <ConnectionQualityDashboard
+                    peerId={selectedPeer}
+                    peerName={getPeerName(selectedPeer)}
+                  />
+                  <VoiceVideoCall
+                    peerId={selectedPeer}
+                    peerName={getPeerName(selectedPeer)}
+                    isConnected={canSendFile}
+                    onCallStart={() => {}}
+                    onCallEnd={() => {}}
+                    localStream={localStream}
+                    remoteStream={remoteStreams.get(selectedPeer) || null}
+                  />
+                  <div className="flex justify-center">
+                    <TrustPeerButton
+                      peerId={selectedPeer}
+                      fingerprint={getFingerprint(selectedPeer) || undefined}
+                      isConnected={canSendFile}
+                    />
+                  </div>
                 </div>
               )}
 
@@ -1000,6 +1075,18 @@ export default function Home() {
                 onSendMessage={sendMessage}
                 disabled={connectedPeersCount === 0}
                 connectedPeers={chatPeers}
+              />
+            </motion.div>
+
+            {/* Text/Code Snippet Share */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.45 }}
+            >
+              <TextSnippetShare
+                onSendText={sendMessage}
+                disabled={connectedPeersCount === 0}
               />
             </motion.div>
 
