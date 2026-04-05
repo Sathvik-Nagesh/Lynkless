@@ -3,17 +3,24 @@
 interface WorkerMessage {
   type: 'init' | 'write' | 'complete' | 'abort';
   fileId: string;
-  payload?: any;
+  payload?: {
+    metadata?: {
+      id: string;
+      totalChunks: number;
+    };
+    chunkIndex?: number;
+    data?: ArrayBuffer;
+  };
 }
 
-const fileHandles = new Map<string, any>(); // FileSystemFileHandle
-const accessHandles = new Map<string, any>(); // FileSystemSyncAccessHandle
-const metadataMap = new Map<string, any>(); // { totalChunks, receivedChunks, lastReceivedIndex }
+const fileHandles = new Map<string, unknown>(); // FileSystemFileHandle
+const accessHandles = new Map<string, { write: (buffer: Uint8Array, options: { at: number }) => void; flush: () => void; close: () => void }>(); // FileSystemSyncAccessHandle
+const metadataMap = new Map<string, { totalChunks: number; receivedChunks: number; lastReceivedIndex: number }>(); // { totalChunks, receivedChunks, lastReceivedIndex }
 
 self.onmessage = async (e: MessageEvent) => {
   const msg = e.data as WorkerMessage;
   
-  if (msg.type === 'init') {
+  if (msg.type === 'init' && msg.payload?.metadata) {
     const { metadata } = msg.payload;
     try {
       const root = await navigator.storage.getDirectory();
@@ -21,7 +28,7 @@ self.onmessage = async (e: MessageEvent) => {
       
       // Request synchronous access handle (only available in Web Workers!)
       // This is vastly faster than asynchronous main-thread FileSystemWritableFileStream
-      const accessHandle = await (fileHandle as any).createSyncAccessHandle();
+      const accessHandle = await (fileHandle as unknown as { createSyncAccessHandle: () => Promise<unknown> }).createSyncAccessHandle() as { write: (buffer: Uint8Array, options: { at: number }) => void; flush: () => void; close: () => void };
       
       fileHandles.set(metadata.id, fileHandle);
       accessHandles.set(metadata.id, accessHandle);
@@ -32,16 +39,17 @@ self.onmessage = async (e: MessageEvent) => {
       });
 
       self.postMessage({ type: 'init-success', fileId: metadata.id });
-    } catch (err: any) {
-      self.postMessage({ type: 'error', fileId: metadata.id, error: err.message });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      self.postMessage({ type: 'error', fileId: metadata.id, error: message });
     }
   } 
-  else if (msg.type === 'write') {
+  else if (msg.type === 'write' && msg.payload) {
     const { chunkIndex, data } = msg.payload;
     const accessHandle = accessHandles.get(msg.fileId);
     const meta = metadataMap.get(msg.fileId);
     
-    if (accessHandle && meta) {
+    if (accessHandle && meta && chunkIndex !== undefined && data) {
       try {
         const offset = chunkIndex * 64 * 1024; // 64KB CHUNK_SIZE
         
@@ -59,8 +67,9 @@ self.onmessage = async (e: MessageEvent) => {
           receivedChunks: meta.receivedChunks,
           lastReceivedIndex: meta.lastReceivedIndex 
         });
-      } catch (err: any) {
-        self.postMessage({ type: 'error', fileId: msg.fileId, error: err.message });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        self.postMessage({ type: 'error', fileId: msg.fileId, error: message });
       }
     }
   }
@@ -86,7 +95,9 @@ self.onmessage = async (e: MessageEvent) => {
       try {
         const root = await navigator.storage.getDirectory();
         await root.removeEntry(`lynkless-${msg.fileId}`);
-      } catch (e) {}
+      } catch {
+        // Silent fail on cleanup
+      }
       
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);

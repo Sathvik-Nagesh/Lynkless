@@ -122,7 +122,7 @@ export default function Home() {
     const urlRoom = params.get('room');
     const pendingRoom = sessionStorage.getItem('pendingRoomCode');
     
-    let roomToJoin = urlRoom || pendingRoom;
+    const roomToJoin = urlRoom || pendingRoom;
     
     if (roomToJoin && roomToJoin.length === 6) {
       console.log('[Routing] Auto-joining room from deep link:', roomToJoin);
@@ -157,8 +157,9 @@ export default function Home() {
         try {
           wakeLock = await navigator.wakeLock.request('screen');
           console.log('[WakeLock] Screen locked active to prevent file transfer drop');
-        } catch (err: any) {
-          console.log('[WakeLock] System denied lock:', err.message);
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : 'Unknown error';
+          console.log('[WakeLock] System denied lock:', message);
         }
       }
     };
