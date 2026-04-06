@@ -49,3 +49,7 @@
 ## 2026-03-20 - Parallelizing Mesh Broadcast Transmission
 **Learning:** Sending file chunks to multiple peers sequentially in a mesh network creates a "head-of-line blocking" scenario where a single slow peer or WebRTC backpressure stalls transmission to all other peers.
 **Action:** Use `Promise.all()` to transmit chunks to all active peers concurrently. This ensures faster peers can receive data at their maximum potential rate regardless of slow peers in the same mesh.
+
+## 2026-03-22 - Parallelizing Client-Side Zipping with `Promise.all`
+**Learning:** Sequential file reading with legacy `FileReader` is slow and complex to manage with counters. Modern `file.arrayBuffer()` used with `Promise.all` allows for cleaner, parallelized asynchronous file reading. Furthermore, `fflate` ZIP outputs may contain `SharedArrayBuffer` subtypes which trigger TypeScript errors when passed to the `File` constructor in some environments.
+**Action:** Use `Promise.all(files.map(f => f.arrayBuffer()))` for efficient parallel reading. Cast the underlying buffer to `BlobPart` (or `any` if necessary for complex subtypes) when creating the final `File` to ensure compatibility with strict TypeScript environments like Next.js.
