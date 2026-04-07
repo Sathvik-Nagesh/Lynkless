@@ -49,3 +49,7 @@
 ## 2026-03-20 - Parallelizing Mesh Broadcast Transmission
 **Learning:** Sending file chunks to multiple peers sequentially in a mesh network creates a "head-of-line blocking" scenario where a single slow peer or WebRTC backpressure stalls transmission to all other peers.
 **Action:** Use `Promise.all()` to transmit chunks to all active peers concurrently. This ensures faster peers can receive data at their maximum potential rate regardless of slow peers in the same mesh.
+
+## 2026-04-07 - Modernizing ZIP Archive Creation
+**Learning:** Using `FileReader` in a loop with manual counters for asynchronous file reading is brittle and slower than the modern `file.arrayBuffer()` API combined with `Promise.all()`. Furthermore, using `fflateData.buffer` to create a `Blob` is risky because the underlying `ArrayBuffer` might be larger than the actual data view, leading to bloated files.
+**Action:** Use `Promise.all(files.map(f => f.arrayBuffer()))` for parallel I/O and always wrap `fflate` output in `new Uint8Array(zippedData)` to ensure only the relevant bytes are passed to the `File` constructor.

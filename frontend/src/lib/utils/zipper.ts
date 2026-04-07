@@ -1,42 +1,40 @@
-import { zip, strToU8 } from 'fflate';
+import { zip } from 'fflate';
 
+/**
+ * Creates a ZIP archive from an array of Files.
+ * Bolt: Optimized with Promise.all() and file.arrayBuffer() for parallel reading.
+ * Uses a zero-copy approach where possible and avoids legacy FileReader callbacks.
+ */
 export const createZipFromFiles = async (files: File[], zipName = 'Archive.zip'): Promise<File> => {
+  const zippedFiles: Record<string, Uint8Array> = {};
+
+  // Bolt: Read all files in parallel using the modern arrayBuffer() API.
+  // This is significantly faster than sequential FileReader callbacks for large batches.
+  await Promise.all(
+    files.map(async (file) => {
+      // Determine the path, fallback to just the file name.
+      // Use type assertion to access non-standard webkitRelativePath safely.
+      const path = (file as { webkitRelativePath?: string }).webkitRelativePath || file.name;
+      const buffer = await file.arrayBuffer();
+      zippedFiles[path] = new Uint8Array(buffer);
+    })
+  );
+
   return new Promise((resolve, reject) => {
-    const zippedFiles: Record<string, Uint8Array | [Uint8Array, { level: 6 }]> = {};
-    
-    let processedRawFiles = 0;
-    
-    // Read all files asynchronously
-    for (const file of files) {
-      // Determine the path. fallback to just the file name
-      const path = (file as any).webkitRelativePath || file.name;
-      
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        if (e.target && e.target.result) {
-          const buffer = new Uint8Array(e.target.result as ArrayBuffer);
-          zippedFiles[path] = buffer;
-        }
-        processedRawFiles++;
-        
-        // Once all files are read, compress them
-        if (processedRawFiles === files.length) {
-          zip(zippedFiles, { level: 6 }, (err, zippedData) => {
-            if (err) {
-              reject(err);
-            } else {
-              const zipBlob = new Blob([zippedData.buffer as ArrayBuffer], { type: 'application/zip' });
-              const zipFile = new File([zipBlob], zipName, {
-                type: 'application/zip',
-                lastModified: Date.now()
-              });
-              resolve(zipFile);
-            }
-          });
-        }
-      };
-      reader.onerror = () => reject(new Error('Failed to read file: ' + file.name));
-      reader.readAsArrayBuffer(file);
-    }
+    // Bolt: level 6 is a good balance between compression ratio and CPU usage.
+    zip(zippedFiles, { level: 6 }, (err, zippedData) => {
+      if (err) {
+        reject(err);
+      } else {
+        // Bolt: Wrap zippedData in a new Uint8Array to ensure we only include
+        // the actual zipped content. This avoids potential memory issues if
+        // the underlying buffer is larger than the data view.
+        const zipFile = new File([new Uint8Array(zippedData)], zipName, {
+          type: 'application/zip',
+          lastModified: Date.now()
+        });
+        resolve(zipFile);
+      }
+    });
   });
 };
