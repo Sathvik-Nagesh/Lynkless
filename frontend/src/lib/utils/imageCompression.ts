@@ -4,7 +4,7 @@ export const compressImage = async (file: File, quality = 0.7): Promise<File> =>
   // Don't compress small images or GIFs
   if (file.type === 'image/gif' || file.size < 500 * 1024) return file;
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onload = (event) => {

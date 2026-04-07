@@ -1,20 +1,18 @@
 'use client';
 
 import { useState, useCallback, useRef, memo, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 
 interface VoiceVideoCallProps {
-  peerId: string;
   peerName: string;
   isConnected: boolean;
-  onCallStart: (stream: MediaStream, type: 'audio' | 'video') => void;
+  onCallStart: (type: 'audio' | 'video') => Promise<void>;
   onCallEnd: () => void;
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
 }
 
 export const VoiceVideoCall = memo(function VoiceVideoCall({
-  peerId,
   peerName,
   isConnected,
   onCallStart,
@@ -31,34 +29,38 @@ export const VoiceVideoCall = memo(function VoiceVideoCall({
 
   const startCall = useCallback(async (type: 'audio' | 'video') => {
     try {
-      const constraints: MediaStreamConstraints = {
-        audio: true,
-        video: type === 'video' ? { width: 1280, height: 720 } : false,
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      await onCallStart(type);
       setCallType(type);
-      onCallStart(stream, type);
-
-      if (localVideoRef.current && type === 'video') {
-        localVideoRef.current.srcObject = stream;
-      }
     } catch (err) {
       console.error('Failed to start call:', err);
     }
   }, [onCallStart]);
 
+  const effectiveCallType: 'audio' | 'video' | null =
+    callType ||
+    (remoteStream
+      ? (remoteStream.getVideoTracks().length > 0 ? 'video' : 'audio')
+      : null);
+
+  // Keep local preview in sync when video call is active
+  useEffect(() => {
+    if (localStream && localVideoRef.current && effectiveCallType === 'video') {
+      localVideoRef.current.srcObject = localStream;
+    }
+  }, [localStream, effectiveCallType]);
+
   // Attach remote stream to audio/video elements whenever it changes
   useEffect(() => {
     if (remoteStream) {
-      if (callType === 'video' && remoteVideoRef.current) {
+      const hasVideo = remoteStream.getVideoTracks().length > 0;
+      if (hasVideo && remoteVideoRef.current) {
         remoteVideoRef.current.srcObject = remoteStream;
       }
       if (remoteAudioRef.current) {
         remoteAudioRef.current.srcObject = remoteStream;
       }
     }
-  }, [remoteStream, callType]);
+  }, [remoteStream]);
 
   const endCall = useCallback(() => {
     if (localStream) {
@@ -98,7 +100,7 @@ export const VoiceVideoCall = memo(function VoiceVideoCall({
     );
   }
 
-  if (callType) {
+  if (effectiveCallType) {
     return (
       <motion.div
         className="rounded-xl overflow-hidden bg-[#111] border border-[#27272a]"
@@ -106,7 +108,7 @@ export const VoiceVideoCall = memo(function VoiceVideoCall({
         animate={{ scale: 1, opacity: 1 }}
       >
         <div className="relative aspect-video bg-[#1f1f1f]">
-          {remoteStream && (
+          {remoteStream && effectiveCallType === 'video' && (
             <video
               ref={remoteVideoRef}
               autoPlay
@@ -120,7 +122,7 @@ export const VoiceVideoCall = memo(function VoiceVideoCall({
             />
           )}
           
-          {callType === 'video' && localStream && (
+          {effectiveCallType === 'video' && localStream && (
             <video
               ref={localVideoRef}
               autoPlay
@@ -130,7 +132,7 @@ export const VoiceVideoCall = memo(function VoiceVideoCall({
             />
           )}
 
-          {callType === 'audio' && (
+          {effectiveCallType === 'audio' && (
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <div className="w-20 h-20 rounded-full bg-[#27272a] flex items-center justify-center mb-4">
                 <svg className="w-10 h-10 text-[#a1a1aa]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -165,7 +167,7 @@ export const VoiceVideoCall = memo(function VoiceVideoCall({
             )}
           </button>
 
-          {callType === 'video' && (
+          {effectiveCallType === 'video' && (
             <button
               onClick={toggleCamera}
               className={`p-3 rounded-full transition-colors ${

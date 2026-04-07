@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useCallback, memo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { getPeerName } from '@/lib/utils/nameGenerator';
+import { getTrustedPeersManager } from '@/lib/utils/trustedPeers';
 
 interface TrustedPeersManagerProps {
   peerId: string;
@@ -17,12 +17,10 @@ export const TrustPeerButton = memo(function TrustPeerButton({
 }: TrustedPeersManagerProps) {
   const [isTrusted, setIsTrusted] = useState(() => {
     if (typeof window === 'undefined') return false;
-    const { getTrustedPeersManager } = require('@/lib/utils/trustedPeers');
     return getTrustedPeersManager().isTrusted(peerId, fingerprint);
   });
 
   const handleToggleTrust = useCallback(() => {
-    const { getTrustedPeersManager } = require('@/lib/utils/trustedPeers');
     const manager = getTrustedPeersManager();
 
     if (isTrusted) {

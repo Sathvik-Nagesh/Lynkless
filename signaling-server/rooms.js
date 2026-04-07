@@ -1,17 +1,24 @@
 const bcrypt = require("bcryptjs");
-const { v4: uuidv4 } = require("uuid");
+const crypto = require("crypto");
 
 // In-memory room storage
 const rooms = new Map();
 
 // Room auto-expiry time (1 hour)
 const ROOM_EXPIRY_MS = 60 * 60 * 1000;
+const MAX_USERS_PER_ROOM = 10;
 
 /**
  * Generate a 6-digit room code
  */
 function generateRoomCode() {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = crypto.randomBytes(6);
+  let code = "";
+  for (let i = 0; i < 6; i += 1) {
+    code += alphabet[bytes[i] % alphabet.length];
+  }
+  return code;
 }
 
 /**
@@ -68,6 +75,10 @@ async function createRoom(password = null, creatorId, creatorIp) {
  * @returns {object|null} Room data or null if failed
  */
 async function joinRoom(code, password, userId, userIp) {
+  if (!code || typeof code !== "string") {
+    return { error: "INVALID_ROOM_CODE" };
+  }
+
   const room = rooms.get(code.toUpperCase());
 
   if (!room) {
@@ -83,6 +94,10 @@ async function joinRoom(code, password, userId, userIp) {
     if (!isValid) {
       return { error: "INVALID_PASSWORD" };
     }
+  }
+
+  if (room.users.size >= MAX_USERS_PER_ROOM && !room.users.has(userId)) {
+    return { error: "ROOM_FULL" };
   }
 
   // Add user to room

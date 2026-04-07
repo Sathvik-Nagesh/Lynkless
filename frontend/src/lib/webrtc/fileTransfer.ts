@@ -31,10 +31,10 @@ export const requestBackgroundSync = async () => {
     try {
       const registration = await navigator.serviceWorker.ready;
       if ('sync' in registration) {
-        // @ts-ignore - background sync API is not fully typed in standard DOM libs
+        // @ts-expect-error - background sync API is not fully typed in standard DOM libs
         await registration.sync.register('lynkless-transfer-sync');
       }
-    } catch (e) {
+    } catch {
       // Background sync not supported or failed
     }
   }
@@ -399,7 +399,7 @@ class FileTransferManager {
       setTimeout(async () => {
         try {
           await root.removeEntry(`lynkless-${incoming.metadata.id}`);
-        } catch (e) {}
+        } catch {}
       }, 60000); // Clean OPFS file after 60s
     } catch (err) {
       console.error('[FileTransfer] Failed to download OPFS file:', err);

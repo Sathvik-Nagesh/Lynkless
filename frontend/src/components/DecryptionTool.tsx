@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { E2EEHelper } from '@/lib/webrtc/e2ee';
 import { useToast } from '@/components/ToastProvider';

@@ -5,6 +5,28 @@ const { initializeHandlers } = require('./websocketHandlers');
 // Configuration
 const PORT = process.env.PORT || 8080;
 const HOST = process.env.HOST || '0.0.0.0';
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+function isOriginAllowed(origin) {
+  if (!origin) {
+    // Browsers typically send Origin. For non-browser clients only allow in non-production.
+    return NODE_ENV !== 'production';
+  }
+
+  if (allowedOrigins.length > 0) {
+    return allowedOrigins.includes(origin);
+  }
+
+  if (NODE_ENV !== 'production') {
+    return true;
+  }
+
+  return /^https?:\/\/localhost(:\d+)?$/i.test(origin);
+}
 
 // Create HTTP server
 const server = http.createServer((req, res) => {
@@ -39,10 +61,10 @@ const server = http.createServer((req, res) => {
 // Create WebSocket server
 const wss = new WebSocketServer({ 
   server,
+  maxPayload: 256 * 1024, // 256KB signaling payload cap
   // Verify origin for security (allow all in development)
   verifyClient: (info) => {
-    // In production, you might want to validate origin
-    return true;
+    return isOriginAllowed(info.origin);
   }
 });
 

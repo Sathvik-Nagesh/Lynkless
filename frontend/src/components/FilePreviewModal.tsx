@@ -3,11 +3,11 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import dynamic from 'next/dynamic';
-import { getFileInfo, isPreviewable } from '@/lib/utils/fileTypeIcons';
+import Image from 'next/image';
+import { getFileInfo } from '@/lib/utils/fileTypeIcons';
 
 const X = dynamic(() => import('lucide-react').then(mod => ({ default: mod.X })), { ssr: false });
 const Send = dynamic(() => import('lucide-react').then(mod => ({ default: mod.Send })), { ssr: false });
-const FileIcon = dynamic(() => import('lucide-react').then(mod => ({ default: mod.FileIcon })), { ssr: false });
 
 interface FilePreviewModalProps {
   files: File[];
@@ -29,7 +29,6 @@ export default function FilePreviewModal({ files, peerCount, peerNames = [], onC
   const totalSize = files.reduce((sum, file) => sum + file.size, 0);
   const isTooLargeForZip = totalSize > MEMORY_LIMIT;
   const hasImages = files.some(f => f.type.startsWith('image/'));
-  const hasVideos = files.some(f => f.type.startsWith('video/'));
 
   useEffect(() => {
     return () => {
@@ -111,10 +110,13 @@ export default function FilePreviewModal({ files, peerCount, peerNames = [], onC
                     style={{ backgroundColor: fileInfo.color + '20' }}
                   >
                     {isImage && preview ? (
-                      <img
+                      <Image
                         src={preview}
                         alt={file.name}
                         className="w-full h-full object-cover"
+                        width={64}
+                        height={64}
+                        unoptimized
                       />
                     ) : isVideo && preview ? (
                       <div className="relative w-full h-full">
