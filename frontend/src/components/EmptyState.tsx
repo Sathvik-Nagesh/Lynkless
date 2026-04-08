@@ -1,12 +1,11 @@
 'use client';
 
 import { memo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 
 interface EmptyStateProps {
   type: 'radar' | 'chat' | 'transfers' | 'history' | 'peers';
   isInRoom?: boolean;
-  hasConnectedPeers?: boolean;
   networkType?: 'wifi' | 'cellular' | 'ethernet' | 'unknown';
 }
 
@@ -66,7 +65,6 @@ const EMPTY_STATES = {
 export const EmptyState = memo(function EmptyState({ 
   type, 
   isInRoom = false, 
-  hasConnectedPeers = false,
   networkType = 'unknown'
 }: EmptyStateProps) {
   const states = EMPTY_STATES[type] as { default: { icon: string; title: string; description: string; }; inRoom?: { icon: string; title: string; description: string; }; connected?: { icon: string; title: string; description: string; } };

@@ -173,7 +173,14 @@ export default function ConnectionDebugger({
           </button>
           <button
             onClick={() => {
-              localStorage.clear();
+              const keysToClear: string[] = [];
+              for (let i = 0; i < localStorage.length; i += 1) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith('lynkless-')) {
+                  keysToClear.push(key);
+                }
+              }
+              keysToClear.forEach((key) => localStorage.removeItem(key));
               window.location.reload();
             }}
             className="btn-secondary flex-1 py-2 text-xs"

@@ -6,12 +6,10 @@ import { getConnectionQualityManager, ConnectionStats } from '@/lib/webrtc/conne
 
 interface ConnectionQualityDashboardProps {
   peerId: string;
-  peerName: string;
 }
 
 export const ConnectionQualityDashboard = memo(function ConnectionQualityDashboard({
   peerId,
-  peerName,
 }: ConnectionQualityDashboardProps) {
   const [stats, setStats] = useState<ConnectionStats | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);

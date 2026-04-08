@@ -16,18 +16,21 @@ import PWAInstallPrompt from '@/components/PWAInstallPrompt';
 import Onboarding from '@/components/Onboarding';
 import FilePreviewModal from '@/components/FilePreviewModal';
 import ConnectionStatusBadge from '@/components/ConnectionStatusBadge';
+import ConnectedPeersPanel from '@/components/ConnectedPeersPanel';
 import TransferHistoryPanel from '@/components/TransferHistoryPanel';
 import ScreenSharePanel from '@/components/ScreenSharePanel';
 import { useSignaling } from '@/hooks/useSignaling';
 import { useWebRTC } from '@/hooks/useWebRTC';
+import { useSignalingAutoConnect } from '@/hooks/useSignalingAutoConnect';
+import { useAutoJoinRoom } from '@/hooks/useAutoJoinRoom';
+import { useTransferProtection } from '@/hooks/useTransferProtection';
+import { useAutoConnectRoomPeers } from '@/hooks/useAutoConnectRoomPeers';
 import { getPeerName, getEmojiForPeer } from '@/lib/utils/nameGenerator';
 import { getSounds } from '@/lib/utils/sounds';
 import { useToast } from '@/components/ToastProvider';
 import { E2EEHelper } from '@/lib/webrtc/e2ee';
 import DecryptionTool from '@/components/DecryptionTool';
 import { SoundToggle } from '@/components/SoundToggle';
-import { EmptyState } from '@/components/EmptyState';
-import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator';
 import { ConnectionQualityDashboard } from '@/components/ConnectionQualityDashboard';
 import { TransferConfirmation } from '@/components/TransferConfirmation';
 import { TextSnippetShare } from '@/components/TextSnippetShare';
@@ -41,6 +44,7 @@ import { ServerWakeupGame } from '@/components/ServerWakeupGame';
 import { compressImage } from '@/lib/utils/imageCompression';
 
 const SIGNALING_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || 'ws://localhost:8080';
+const ENABLE_CALLS = process.env.NEXT_PUBLIC_ENABLE_CALLS !== 'false';
 
 export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
@@ -96,100 +100,25 @@ export default function Home() {
     callStream,
   } = useWebRTC(clientId);
 
-  // Auto-connect to signaling server
-  useEffect(() => {
-    const initConnection = async () => {
-      try {
-        await connect();
-      } catch (err) {
-        console.error('Failed to connect:', err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  useSignalingAutoConnect({
+    connect,
+    onLoaded: () => setIsLoading(false),
+  });
 
-    initConnection();
-  }, [connect]);
-
-  // Handle URL deep-linking for auto-joining rooms
-  // Supports both /?room=A1B2C3 and /room/A1B2C3 redirecting here
-  useEffect(() => {
-    if (!isConnected || isLoading || roomState.code) return;
-    
-    const params = new URLSearchParams(window.location.search);
-    const urlRoom = params.get('room');
-    const pendingRoom = sessionStorage.getItem('pendingRoomCode');
-    
-    const roomToJoin = urlRoom || pendingRoom;
-    
-    if (roomToJoin && roomToJoin.length === 6) {
-      console.log('[Routing] Auto-joining room from deep link:', roomToJoin);
-      joinRoom(roomToJoin.toUpperCase());
-      
-      // Clean up the URL and session storage
-      window.history.replaceState({}, document.title, window.location.pathname);
-      sessionStorage.removeItem('pendingRoomCode');
-    }
-  }, [isConnected, isLoading, roomState.code, joinRoom]);
+  useAutoJoinRoom({
+    isConnected,
+    isLoading,
+    roomCode: roomState.code,
+    joinRoom: (code) => joinRoom(code),
+  });
 
   // Handle Edge Case: Prevent accidental tab closure or mobile screen sleep during active transfers
   const activeTransfersCount = useMemo(() => 
     transfers.filter(t => t.status === 'transferring').length, 
   [transfers]);
 
-  useEffect(() => {
-    // 1. Tab Close Warning
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (activeTransfersCount > 0) {
-        e.preventDefault();
-        e.returnValue = 'You have active file transfers. They will be canceled if you leave.';
-        return e.returnValue;
-      }
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
+  useTransferProtection(activeTransfersCount);
 
-    // 2. Mobile / Desktop Screen WakeLock API
-    let wakeLock: WakeLockSentinel | null = null;
-    const requestWakeLock = async () => {
-      if ('wakeLock' in navigator && activeTransfersCount > 0) {
-        try {
-          wakeLock = await navigator.wakeLock.request('screen');
-          console.log('[WakeLock] Screen locked active to prevent file transfer drop');
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : 'Unknown error';
-          console.log('[WakeLock] System denied lock:', message);
-        }
-      }
-    };
-
-    const releaseWakeLock = async () => {
-      if (wakeLock !== null) {
-        await wakeLock.release();
-        wakeLock = null;
-        console.log('[WakeLock] Screen lock released');
-      }
-    };
-
-    if (activeTransfersCount > 0) {
-      requestWakeLock();
-    } else {
-      releaseWakeLock();
-    }
-
-    // Re-request if visibility changes (user switches tabs to text someone and comes back)
-    const handleVisibilityChange = () => {
-      if (wakeLock !== null && document.visibilityState === 'visible') {
-        requestWakeLock();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      releaseWakeLock();
-    };
-  }, [activeTransfersCount]);
 
   // Handle user click on radar - now sends connection REQUEST
   const handleUserClick = useCallback(async (userId: string) => {
@@ -215,7 +144,7 @@ export default function Home() {
     if (incomingRequests.length > 0) {
       sounds.current.playRequestReceived();
       if (showQRCode) {
-        setShowQRCode(false);
+        setTimeout(() => setShowQRCode(false), 0);
       }
     }
   }, [incomingRequests.length, showQRCode]);
@@ -370,46 +299,14 @@ export default function Home() {
     setPendingFiles([]);
   }, [pendingFiles, peers, sendFile, broadcastFile, showToast]);
 
-  // Track which users we've already sent requests to (prevent duplicates)
-  const sentRequestsRef = useRef<Set<string>>(new Set());
-
-  // Auto-connect to all users when joining a room
-  // IMPORTANT: To avoid duplicate requests, only the user with LOWER ID initiates
-  useEffect(() => {
-    if (!roomState.code || !clientId) return;
-
-    // Get all users in room (excluding self)
-    const otherUsers = roomState.users.filter(u => u.id !== clientId);
-
-    otherUsers.forEach(async (user) => {
-      // Skip if we've already sent a request to this user
-      if (sentRequestsRef.current.has(user.id)) {
-        return;
-      }
-
-      // Skip if already connected or has pending request
-      const currentState = peerStates.get(user.id);
-      if (currentState?.state === 'request-sent' ||
-        currentState?.state === 'request-received' ||
-        currentState?.state === 'connected') {
-        return;
-      }
-
-      // Check if already connected via WebRTC
-      const webrtcPeer = peers.find(p => p.id === user.id);
-      if (webrtcPeer && webrtcPeer.state === 'connected') {
-        return;
-      }
-
-      // To avoid both sides sending requests simultaneously (glare), 
-      // only the side with the smaller ID initiates.
-      if (clientId < user.id) {
-        console.log('[Auto-Connect] Initiating to room user:', user.id);
-        sentRequestsRef.current.add(user.id);
-        sendConnectionRequest(user.id);
-      }
-    });
-  }, [roomState.code, roomState.users.length, clientId, peers.length]); 
+  useAutoConnectRoomPeers({
+    roomCode: roomState.code,
+    roomUsers: roomState.users,
+    clientId,
+    peerStates,
+    peers,
+    sendConnectionRequest,
+  });
 
   // Listen for connection-accepted to initiate WebRTC from requester side
   useEffect(() => {
@@ -469,7 +366,7 @@ export default function Home() {
         }
       }
     });
-  }, [transfers]);
+  }, [transfers, showToast]);
 
   // Memoize connected peers to stabilize downstream calculations
   const connectedPeers = useMemo(() =>
@@ -497,7 +394,7 @@ export default function Home() {
 
   return (
     <main 
-      className="min-h-screen p-6 md:p-10 relative overflow-hidden"
+      className="min-h-screen p-4 md:p-10 relative overflow-hidden"
       onDragEnter={(e) => {
         e.preventDefault();
         dragCounter.current++;
@@ -795,7 +692,7 @@ export default function Home() {
                   exit={{ opacity: 0, y: -10 }}
                   transition={{ duration: 0.2 }}
                 >
-                  <div className="panel-elevated p-6">
+                  <div className="panel-elevated p-4 sm:p-6">
                     <div className="flex items-center gap-3 mb-5">
                       <div
                         className="w-9 h-9 rounded-xl flex items-center justify-center border border-[#27272a] shadow-sm bg-[#111]"
@@ -918,7 +815,6 @@ export default function Home() {
                   />
                   <ConnectionQualityDashboard
                     peerId={selectedPeer}
-                    peerName={getPeerName(selectedPeer)}
                   />
 
                 </div>
@@ -960,74 +856,11 @@ export default function Home() {
 
           {/* Right column - File Transfer and Chat */}
           <div className="space-y-6">
-            {/* Connected Peers Panel */}
-            {connectedPeersCount > 0 && (
-              <motion.div
-                className="panel-elevated p-5"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.25 }}
-              >
-                <div className="flex items-center gap-3 mb-4">
-                  <div
-                    className="w-9 h-9 rounded-xl flex items-center justify-center border border-[#27272a] shadow-sm bg-[#111]"
-                  >
-                    <svg className="w-4 h-4 text-[#ededed]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                    </svg>
-                  </div>
-                  <div>
-                    <h2 className="text-base font-semibold text-[#ededed]">Connected Devices</h2>
-                    <p className="text-[10px] text-[#a1a1aa]">
-                      {connectedPeersCount} active connection{connectedPeersCount !== 1 ? 's' : ''}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  {connectedPeers.map((peer) => (
-                    <motion.div
-                      key={peer.id}
-                      className="flex items-center justify-between p-3 rounded-xl cursor-pointer transition-colors"
-                      style={{
-                        background: selectedPeer === peer.id
-                          ? 'var(--bg-elevated)'
-                          : 'transparent',
-                        border: selectedPeer === peer.id
-                          ? '1px solid var(--border-default)'
-                          : '1px solid transparent'
-                      }}
-                      onClick={() => setSelectedPeer(peer.id)}
-                      whileHover={{
-                        background: 'var(--bg-hover)',
-                      }}
-                      layout
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="text-xl">{getEmojiForPeer(peer.id)}</span>
-                        <div>
-                          <p className="text-sm font-medium text-[#ededed]">
-                            {getPeerName(peer.id)}
-                          </p>
-                          <p className="text-[10px] text-[#a1a1aa]">
-                            {peer.isNearby ? '📡 Local Network' : '🌐 Remote'}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <ConnectionStatusBadge
-                          quality="excellent"
-                          showDetails={true}
-                        />
-                        {selectedPeer === peer.id && (
-                          <span className="text-[10px] text-[#ededed] font-medium">Active</span>
-                        )}
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
-              </motion.div>
-            )}
+            <ConnectedPeersPanel
+              connectedPeers={connectedPeers}
+              selectedPeer={selectedPeer}
+              onSelectPeer={setSelectedPeer}
+            />
             {/* File Drop Zone - Refined panel */}
             <motion.div
               className="panel-elevated p-6"

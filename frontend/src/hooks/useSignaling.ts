@@ -360,6 +360,10 @@ function getErrorMessage(error: string): string {
       return 'This room requires a password.';
     case 'INVALID_PASSWORD':
       return 'Incorrect password.';
+    case 'INVALID_ROOM_CODE':
+      return 'Invalid room code format.';
+    case 'ROOM_FULL':
+      return 'This room is full.';
     default:
       return error;
   }
