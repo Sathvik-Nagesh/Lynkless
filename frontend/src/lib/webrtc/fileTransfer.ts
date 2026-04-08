@@ -31,14 +31,10 @@ export const requestBackgroundSync = async () => {
     try {
       const registration = await navigator.serviceWorker.ready;
       if ('sync' in registration) {
-<<<<<<< HEAD
-        // @ts-expect-error - background sync API is not fully typed in standard DOM libs
-        await registration.sync.register('lynkless-transfer-sync');
-=======
         // Bolt: Cast to unknown then to the expected interface to satisfy strict TypeScript rules
         // without using @ts-ignore or @ts-expect-error which are flagged by lint.
         await (registration as unknown as { sync: { register: (tag: string) => Promise<void> } }).sync.register('lynkless-transfer-sync');
->>>>>>> d930bbd864163e9cd16d5b2b5d1bba4356bc72fe
+
       }
     } catch {
       // Background sync not supported or failed
