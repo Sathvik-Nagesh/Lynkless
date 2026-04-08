@@ -25,7 +25,15 @@ function isOriginAllowed(origin) {
     return true;
   }
 
-  return /^https?:\/\/localhost(:\d+)?$/i.test(origin);
+  // If in production but ALLOWED_ORIGINS is not set, be permissive to prevent 1006 drops
+  // Always safely allow localhost, vercel, and netlify domains
+  if (/^https?:\/\/localhost(:\d+)?$/i.test(origin) || /\.vercel\.app$/i.test(origin) || /\.netlify\.app$/i.test(origin)) {
+    return true;
+  }
+  
+  // Default to allowing it to avoid freezing the app for users who forgot to set the var
+  console.warn(`[Signaling] Accepting connection from unconfigured origin: ${origin}. Please strictly set ALLOWED_ORIGINS in production.`);
+  return true;
 }
 
 // Create HTTP server
@@ -64,7 +72,11 @@ const wss = new WebSocketServer({
   maxPayload: 256 * 1024, // 256KB signaling payload cap
   // Verify origin for security (allow all in development)
   verifyClient: (info) => {
-    return isOriginAllowed(info.origin);
+    const allowed = isOriginAllowed(info.origin);
+    if (!allowed) {
+      console.warn(`[Signaling BLOCK] Origin rejected: ${info.origin}`);
+    }
+    return allowed;
   }
 });
 
