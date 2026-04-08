@@ -86,6 +86,20 @@ server.listen(PORT, HOST, () => {
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝
   `);
+
+  // Self-ping every 10 minutes to prevent Render.com free tier from sleeping
+  // Render spins down after 15 minutes of inactivity - this keeps us alive
+  if (NODE_ENV === 'production' && process.env.RENDER_EXTERNAL_URL) {
+    const keepAliveUrl = `${process.env.RENDER_EXTERNAL_URL}/health`;
+    setInterval(() => {
+      http.get(keepAliveUrl, (res) => {
+        console.log(`[KeepAlive] Self-ping status: ${res.statusCode}`);
+      }).on('error', (err) => {
+        console.warn('[KeepAlive] Self-ping failed:', err.message);
+      });
+    }, 10 * 60 * 1000); // Every 10 minutes
+    console.log(`[KeepAlive] Self-ping enabled → ${keepAliveUrl}`);
+  }
 });
 
 // Graceful shutdown

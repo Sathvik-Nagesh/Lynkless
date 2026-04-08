@@ -37,10 +37,15 @@ const ICE_SERVERS: RTCConfiguration = {
 
 export type ConnectionState = 'new' | 'connecting' | 'connected' | 'disconnected' | 'failed';
 
+// Number of parallel data channels to open for higher throughput (RAID-0 style striping)
+const PARALLEL_CHANNELS = 4;
+
 export interface PeerConnection {
   peerId: string;
   connection: RTCPeerConnection;
   dataChannel: RTCDataChannel | null;
+  dataChannels: RTCDataChannel[];  // Parallel channels for high-throughput transfers
+  channelsSendIndex: number;       // Round-robin index for chunk striping
   state: ConnectionState;
   isNearby: boolean;
   localSdp?: string;
@@ -124,10 +129,19 @@ class WebRTCManager {
 
     const peerConnection = this.createPeerConnection(peerId, isNearby);
 
-    // Create data channel (initiator creates it)
-    const dataChannel = peerConnection.connection.createDataChannel('lynkless');
-    this.setupDataChannel(peerId, dataChannel);
-    peerConnection.dataChannel = dataChannel;
+    // Open PARALLEL_CHANNELS data channels for high-throughput striped transfer
+    console.log(`[WebRTC] Opening ${PARALLEL_CHANNELS} parallel data channels to ${peerId}`);
+    for (let i = 0; i < PARALLEL_CHANNELS; i++) {
+      const channelLabel = `lynkless-${i}`;
+      const dataChannel = peerConnection.connection.createDataChannel(channelLabel, {
+        ordered: true,
+        // Give each channel a unique priority for better scheduling
+      });
+      this.setupDataChannel(peerId, dataChannel, i);
+      peerConnection.dataChannels.push(dataChannel);
+    }
+    // Keep legacy dataChannel ref pointing to channel 0 for compatibility
+    peerConnection.dataChannel = peerConnection.dataChannels[0] ?? null;
 
     // Create and send offer
     const offer = await peerConnection.connection.createOffer();
@@ -160,10 +174,18 @@ class WebRTCManager {
       this.remoteDescriptionSet.set(fromId, false);
       peerConnection = this.createPeerConnection(fromId, isNearby);
 
-      // Handle incoming data channel ONLY for new connections
+      // Receiver: listen for incoming data channels and bucket them by label index
+      let channelCount = 0;
       peerConnection.connection.ondatachannel = (event) => {
-        this.setupDataChannel(fromId, event.channel);
-        peerConnection!.dataChannel = event.channel;
+        const ch = event.channel;
+        // Extract channel index from label e.g. "lynkless-2" -> 2
+        const labelIndex = parseInt(ch.label.split('-').pop() ?? '0', 10);
+        const idx = isNaN(labelIndex) ? 0 : labelIndex;
+        this.setupDataChannel(fromId, ch, idx);
+        peerConnection!.dataChannels[idx] = ch;
+        peerConnection!.dataChannel = peerConnection!.dataChannels[0] ?? ch;
+        channelCount++;
+        console.log(`[WebRTC] Received data channel ${ch.label} (${channelCount}/${PARALLEL_CHANNELS})`);
       };
     } else {
       // For renegotiation on an existing connection, reset tracking
@@ -271,6 +293,8 @@ class WebRTCManager {
       peerId,
       connection,
       dataChannel: null,
+      dataChannels: [],           // Will be populated after offer/answer
+      channelsSendIndex: 0,       // Round-robin starting index
       state: 'new',
       isNearby,
       initialNegotiationComplete: false,
@@ -358,23 +382,25 @@ class WebRTCManager {
   /**
    * Setup data channel event handlers
    */
-  private setupDataChannel(peerId: string, channel: RTCDataChannel): void {
+  private setupDataChannel(peerId: string, channel: RTCDataChannel, channelIndex: number = 0): void {
     channel.binaryType = 'arraybuffer';
     channel.bufferedAmountLowThreshold = 512 * 1024; // 512KB
 
     channel.onopen = () => {
-      console.log('[WebRTC] Data channel opened with:', peerId);
+      console.log(`[WebRTC] Data channel [${channel.label}] opened with: ${peerId}`);
       const peer = this.peers.get(peerId);
-      if (peer) {
+      // Only notify 'connected' when the FIRST channel (index 0) opens
+      if (peer && channelIndex === 0) {
         peer.state = 'connected';
         this.notifyStateChange(peerId, 'connected');
       }
     };
 
     channel.onclose = () => {
-      console.log('[WebRTC] Data channel closed with:', peerId);
+      console.log(`[WebRTC] Data channel [${channel.label}] closed with: ${peerId}`);
       const peer = this.peers.get(peerId);
-      if (peer) {
+      // Only notify 'disconnected' when the primary channel (index 0) closes
+      if (peer && channelIndex === 0) {
         peer.state = 'disconnected';
         this.notifyStateChange(peerId, 'disconnected');
       }
@@ -385,12 +411,10 @@ class WebRTCManager {
     };
 
     channel.onerror = () => {
-      // Data channel errors are often empty objects, ignore them if channel is working
       if (channel.readyState === 'open' || channel.readyState === 'connecting') {
-        // Channel is fine, ignore spurious error
-        return;
+        return; // Spurious error, channel is fine
       }
-      console.warn('[WebRTC] Data channel error for peer:', peerId, 'state:', channel.readyState);
+      console.warn('[WebRTC] Data channel error for peer:', peerId, 'channel:', channel.label, 'state:', channel.readyState);
     };
   }
 
@@ -399,13 +423,23 @@ class WebRTCManager {
    */
   async sendToPeer(peerId: string, data: string | ArrayBuffer | ArrayBufferView): Promise<boolean> {
     const peer = this.peers.get(peerId);
-    if (!peer || !peer.dataChannel || peer.dataChannel.readyState !== 'open') {
-      return false;
-    }
+    if (!peer) return false;
 
-    const channel = peer.dataChannel;
+    // Pick the best available channel using round-robin striping across parallel channels
+    const openChannels = peer.dataChannels.filter(ch => ch.readyState === 'open');
+    
+    // Fall back to legacy single channel if parallel channels aren't ready yet
+    const channels = openChannels.length > 0 ? openChannels : 
+      (peer.dataChannel?.readyState === 'open' ? [peer.dataChannel] : []);
+    
+    if (channels.length === 0) return false;
 
-    // Buffer limit ~1MB, if exceeded wait for bufferedAmountLow
+    // Round-robin: pick the channel with the least buffered data (load balancing)
+    const channel = channels.reduce((best, ch) => 
+      ch.bufferedAmount < best.bufferedAmount ? ch : best
+    , channels[0]);
+
+    // Backpressure: wait if the chosen channel's buffer is overwhelmed (~1MB)
     if (channel.bufferedAmount > 1024 * 1024) {
       await new Promise<void>((resolve) => {
         const onLow = () => {
@@ -413,17 +447,14 @@ class WebRTCManager {
           resolve();
         };
         channel.addEventListener('bufferedamountlow', onLow);
-        
-        // Timeout to prevent hanging if connection drops unexpectedly
         setTimeout(() => {
           channel.removeEventListener('bufferedamountlow', onLow);
-          resolve(); 
+          resolve();
         }, 3000);
       });
     }
 
     try {
-      // It might have closed while we were waiting
       if (channel.readyState === 'open') {
         channel.send(data as Parameters<RTCDataChannel['send']>[0]);
         return true;
@@ -460,6 +491,8 @@ class WebRTCManager {
   closePeerConnection(peerId: string): void {
     const peer = this.peers.get(peerId);
     if (peer) {
+      // Close all parallel channels
+      peer.dataChannels.forEach(ch => { try { ch.close(); } catch { /* ignore */ } });
       peer.dataChannel?.close();
       peer.connection.close();
       this.peers.delete(peerId);
