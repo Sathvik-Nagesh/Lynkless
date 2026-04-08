@@ -2,7 +2,7 @@
 
 import { motion } from 'framer-motion';
 import Link from 'next/link';
-import { Shield, Zap, Home, Smartphone, Radar, MessagesSquare, FileBox, RefreshCw, Cpu, Globe, Lock } from 'lucide-react';
+import { Shield, Zap, Home, Smartphone, Radar, MessagesSquare, RefreshCw, Cpu, Globe, Lock } from 'lucide-react';
 
 const features = [
   {
@@ -114,8 +114,9 @@ export default function AboutPage() {
           viewport={{ once: true }}
           className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"
         >
-          {features.map((feature, i) => (
+          {features.map((feature) => (
             <motion.div
+              key={feature.title}
               variants={fadeIn}
               transition={{ duration: 0.6 }}
               className="group p-8 rounded-3xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.05] transition-all"

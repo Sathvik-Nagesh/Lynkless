@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
+import Image from 'next/image';
 import QRCode from 'qrcode';
 
 // Browser-safe UUID generator (polyfill for crypto.randomUUID)
@@ -128,10 +129,13 @@ export default function QRCodeDisplay({
                 animate={{ scale: 1 }}
                 transition={{ type: 'spring' }}
               >
-                <img
+                <Image
                   src={qrDataUrl}
                   alt="Connection QR Code"
                   className="w-56 h-56 rounded-lg"
+                  width={224}
+                  height={224}
+                  unoptimized
                 />
               </motion.div>
             ) : (

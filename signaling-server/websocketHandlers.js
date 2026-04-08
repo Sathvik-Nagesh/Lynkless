@@ -1,4 +1,5 @@
 const rooms = require('./rooms');
+const crypto = require('crypto');
 
 // Map to track which room each client is in
 const clientRooms = new Map();
@@ -8,6 +9,76 @@ const clients = new Map();
 const presenceByIp = new Map();
 // Map to track pending connection requests
 const pendingRequests = new Map();
+// Track explicitly approved peer links for direct signaling
+const approvedPeerLinks = new Map();
+// Basic in-memory rate limiter state
+const clientRateLimits = new Map();
+
+const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
+const MAX_SIGNALING_MESSAGE_BYTES = 256 * 1024;
+const RATE_LIMIT_WINDOW_MS = 10000;
+const RATE_LIMIT_MAX_MESSAGES = 120;
+
+function getApprovedKey(clientId) {
+  return clientId;
+}
+
+function approvePeerLink(clientA, clientB) {
+  const keyA = getApprovedKey(clientA);
+  const keyB = getApprovedKey(clientB);
+  if (!approvedPeerLinks.has(keyA)) approvedPeerLinks.set(keyA, new Set());
+  if (!approvedPeerLinks.has(keyB)) approvedPeerLinks.set(keyB, new Set());
+  approvedPeerLinks.get(keyA).add(clientB);
+  approvedPeerLinks.get(keyB).add(clientA);
+}
+
+function revokePeerLink(clientA, clientB) {
+  approvedPeerLinks.get(getApprovedKey(clientA))?.delete(clientB);
+  approvedPeerLinks.get(getApprovedKey(clientB))?.delete(clientA);
+}
+
+function clearPeerLinksFor(clientId) {
+  const peers = approvedPeerLinks.get(getApprovedKey(clientId));
+  if (peers) {
+    peers.forEach((peerId) => {
+      approvedPeerLinks.get(getApprovedKey(peerId))?.delete(clientId);
+    });
+  }
+  approvedPeerLinks.delete(getApprovedKey(clientId));
+}
+
+function isPeerApproved(clientA, clientB) {
+  return approvedPeerLinks.get(getApprovedKey(clientA))?.has(clientB) ?? false;
+}
+
+function areInSameRoom(clientA, clientB) {
+  const roomA = clientRooms.get(clientA);
+  const roomB = clientRooms.get(clientB);
+  return !!roomA && roomA === roomB;
+}
+
+function canSignalBetween(clientA, clientB) {
+  return areInSameRoom(clientA, clientB) || isPeerApproved(clientA, clientB);
+}
+
+function checkRateLimit(clientId) {
+  const now = Date.now();
+  const current = clientRateLimits.get(clientId);
+  if (!current || now > current.resetAt) {
+    clientRateLimits.set(clientId, {
+      count: 1,
+      resetAt: now + RATE_LIMIT_WINDOW_MS,
+    });
+    return true;
+  }
+
+  if (current.count >= RATE_LIMIT_MAX_MESSAGES) {
+    return false;
+  }
+
+  current.count += 1;
+  return true;
+}
 
 /**
  * Normalize IP address for consistent comparison
@@ -32,8 +103,8 @@ function normalizeIp(ip) {
  * Extract client IP address from request
  */
 function getClientIp(req) {
-  // Check for forwarded IP (when behind proxy/load balancer)
-  const forwarded = req.headers['x-forwarded-for'];
+  // Only trust forwarded headers when explicitly running behind a trusted proxy.
+  const forwarded = TRUST_PROXY ? req.headers['x-forwarded-for'] : null;
   if (forwarded) {
     return normalizeIp(forwarded.split(',')[0].trim());
   }
@@ -182,7 +253,27 @@ function initializeHandlers(wss) {
     // Handle incoming messages
     ws.on('message', async (data) => {
       try {
-        const message = JSON.parse(data.toString());
+        const rawMessage = data.toString();
+        if (Buffer.byteLength(rawMessage, 'utf8') > MAX_SIGNALING_MESSAGE_BYTES) {
+          sendToClient(ws, {
+            type: 'error',
+            message: 'Message too large',
+          });
+          return;
+        }
+
+        if (!checkRateLimit(ws.clientId)) {
+          sendToClient(ws, {
+            type: 'error',
+            message: 'Rate limit exceeded',
+          });
+          return;
+        }
+
+        const message = JSON.parse(rawMessage);
+        if (!message || typeof message !== 'object' || Array.isArray(message) || typeof message.type !== 'string') {
+          throw new Error('Invalid message envelope');
+        }
         await handleMessage(ws, message);
       } catch (error) {
         console.error('Failed to parse message:', error);
@@ -231,7 +322,7 @@ function initializeHandlers(wss) {
  * Generate unique client ID
  */
 function generateClientId() {
-  return 'client_' + Math.random().toString(36).substring(2, 15);
+  return 'client_' + crypto.randomBytes(12).toString('base64url');
 }
 
 /**
@@ -360,17 +451,28 @@ function handleConnectionRequest(ws, { targetId }) {
 function handleConnectionAccepted(ws, { targetId }) {
   const requesterWs = clients.get(targetId);
   const requestId = `${targetId}->${ws.clientId}`;
+  const pending = pendingRequests.get(requestId);
 
-  // Remove from pending requests
-  pendingRequests.delete(requestId);
+  if (!pending || pending.toId !== ws.clientId) {
+    sendToClient(ws, {
+      type: 'error',
+      message: 'No pending request to accept',
+    });
+    return;
+  }
 
   if (!requesterWs) {
+    pendingRequests.delete(requestId);
     sendToClient(ws, {
       type: 'error',
       message: 'Requester no longer available',
     });
     return;
   }
+
+  // Remove from pending requests and mark as approved
+  pendingRequests.delete(requestId);
+  approvePeerLink(ws.clientId, targetId);
 
   // Notify requester that connection was accepted
   sendToClient(requesterWs, {
@@ -391,6 +493,7 @@ function handleConnectionRejected(ws, { targetId }) {
 
   // Remove from pending requests
   pendingRequests.delete(requestId);
+  revokePeerLink(ws.clientId, targetId);
 
   if (!requesterWs) {
     return; // Requester already gone
@@ -540,17 +643,28 @@ function handleLeaveRoom(ws) {
  */
 function handleOffer(ws, { targetId, offer }) {
   const targetWs = clients.get(targetId);
+  if (!targetWs) {
+    sendToClient(ws, {
+      type: 'error',
+      message: 'Target user not found',
+    });
+    return;
+  }
+
+  if (!canSignalBetween(ws.clientId, targetId)) {
+    sendToClient(ws, {
+      type: 'error',
+      message: 'Not authorized to signal this peer',
+    });
+    return;
+  }
+
   if (targetWs) {
     sendToClient(targetWs, {
       type: 'offer',
       fromId: ws.clientId,
       offer,
       isNearby: ws.clientIp === targetWs.clientIp,
-    });
-  } else {
-    sendToClient(ws, {
-      type: 'error',
-      message: 'Target user not found',
     });
   }
 }
@@ -560,16 +674,27 @@ function handleOffer(ws, { targetId, offer }) {
  */
 function handleAnswer(ws, { targetId, answer }) {
   const targetWs = clients.get(targetId);
+  if (!targetWs) {
+    sendToClient(ws, {
+      type: 'error',
+      message: 'Target user not found',
+    });
+    return;
+  }
+
+  if (!canSignalBetween(ws.clientId, targetId)) {
+    sendToClient(ws, {
+      type: 'error',
+      message: 'Not authorized to signal this peer',
+    });
+    return;
+  }
+
   if (targetWs) {
     sendToClient(targetWs, {
       type: 'answer',
       fromId: ws.clientId,
       answer,
-    });
-  } else {
-    sendToClient(ws, {
-      type: 'error',
-      message: 'Target user not found',
     });
   }
 }
@@ -579,6 +704,10 @@ function handleAnswer(ws, { targetId, answer }) {
  */
 function handleIceCandidate(ws, { targetId, candidate }) {
   const targetWs = clients.get(targetId);
+  if (!targetWs || !canSignalBetween(ws.clientId, targetId)) {
+    return;
+  }
+
   if (targetWs) {
     sendToClient(targetWs, {
       type: 'ice-candidate',
@@ -673,6 +802,8 @@ function handleDisconnect(ws) {
 
   // Remove client from clients map
   clients.delete(ws.clientId);
+  clientRateLimits.delete(ws.clientId);
+  clearPeerLinksFor(ws.clientId);
 }
 
 // Clean up stale pending requests periodically (older than 60 seconds)

@@ -13,6 +13,7 @@ export const compressImage = async (file: File, quality = 0.7): Promise<File> =>
   // ObjectURL is O(1) memory pointer, while Base64 is O(N) copy that is 33% larger.
   const objectUrl = URL.createObjectURL(file);
 
+
   try {
     const img = new Image();
     img.src = objectUrl;

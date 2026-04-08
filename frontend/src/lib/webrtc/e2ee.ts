@@ -1,5 +1,6 @@
 export class E2EEHelper {
   private static readonly METADATA_SIZE = 28; // 16 bytes salt + 12 bytes IV
+  private static readonly MAX_E2EE_SIZE = 250 * 1024 * 1024; // 250MB safety cap
 
   // Derive a 256-bit AES-GCM key from a password
   private static async deriveKey(password: string, salt: Uint8Array, keyUsages: KeyUsage[]): Promise<CryptoKey> {
@@ -28,6 +29,9 @@ export class E2EEHelper {
 
   static async encryptFile(file: File, password?: string): Promise<File> {
     if (!password) return file;
+    if (file.size > this.MAX_E2EE_SIZE) {
+      throw new Error('E2EE is currently limited to files under 250MB for browser memory safety.');
+    }
 
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -48,7 +52,11 @@ export class E2EEHelper {
   }
 
   static async decryptFile(file: File, password?: string): Promise<File> {
-    if (!password || !file.name.endsWith('.encrypted')) return file;
+    const encryptedRegex = /\.encrypted$/i;
+    if (!password || !encryptedRegex.test(file.name)) return file;
+    if (file.size > this.MAX_E2EE_SIZE + this.METADATA_SIZE) {
+      throw new Error('Encrypted file is too large for in-memory decryption. Use smaller files for now.');
+    }
 
     const arrayBuffer = await file.arrayBuffer();
     if (arrayBuffer.byteLength <= this.METADATA_SIZE) {
@@ -69,9 +77,15 @@ export class E2EEHelper {
         encryptedData
       );
 
-      // Remove .encrypted from filename
-      const originalName = file.name.replace(/\.encrypted$/, '');
-      return new File([decryptedData], originalName);
+      // Remove .encrypted from filename (case-insensitive)
+      const originalName = file.name.replace(encryptedRegex, '');
+      
+      // Attempt to preserve the file type if it was originally there
+      // or default to octet-stream which is safer than empty string
+      return new File([decryptedData], originalName, { 
+        type: 'application/octet-stream',
+        lastModified: file.lastModified 
+      });
     } catch (e) {
       console.error(e);
       throw new Error("Decryption failed. Incorrect password?");

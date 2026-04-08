@@ -166,14 +166,30 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
         const newMap = new Map(prev);
         if (streams && streams[0]) {
           newMap.set(peerId, streams[0]);
+        } else {
+          const existing = newMap.get(peerId);
+          if (existing) {
+            existing.addTrack(track);
+            newMap.set(peerId, existing);
+          } else {
+            newMap.set(peerId, new MediaStream([track]));
+          }
         }
         return newMap;
       });
-      // Handle when track ends remotely
-      track.onmute = () => {
+      // Clean up when remote track is fully ended
+      track.onended = () => {
         setRemoteStreams((prev) => {
           const newMap = new Map(prev);
-          newMap.delete(peerId);
+          const stream = newMap.get(peerId);
+          if (!stream) return newMap;
+
+          stream.removeTrack(track);
+          if (stream.getTracks().length === 0) {
+            newMap.delete(peerId);
+          } else {
+            newMap.set(peerId, stream);
+          }
           return newMap;
         });
       };

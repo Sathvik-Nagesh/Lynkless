@@ -20,7 +20,7 @@ export function ServerWakeupGame() {
       <div className="absolute inset-0 p-3 flex flex-col pointer-events-none">
         <p className="text-[#a1a1aa] text-xs font-medium">Server is starting...</p>
         <p className="text-[#ededed] text-sm font-semibold">Catch the node! Score: {score}</p>
-        {score > 10 && <p className="text-[#10b981] text-[10px] mt-1">You're fast! Just a few more seconds.</p>}
+        {score > 10 && <p className="text-[#10b981] text-[10px] mt-1">You&apos;re fast! Just a few more seconds.</p>}
       </div>
       
       <motion.button

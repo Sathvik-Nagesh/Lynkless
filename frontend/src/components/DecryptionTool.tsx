@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { E2EEHelper } from '@/lib/webrtc/e2ee';
 import { useToast } from '@/components/ToastProvider';
@@ -47,7 +47,7 @@ export default function DecryptionTool() {
   };
 
   return (
-    <div className="panel-elevated p-6 mt-6">
+    <div className="panel-elevated p-4 sm:p-6 mt-6">
       <div className="flex items-center gap-3 mb-5">
         <div 
           className="w-9 h-9 rounded-xl flex items-center justify-center bg-[#111] border border-[#27272a]"

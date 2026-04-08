@@ -14,7 +14,7 @@ try {
   if (customIceServersStr) {
     customIceServers = JSON.parse(customIceServersStr);
   }
-} catch (e) {
+} catch {
   console.warn('Failed to parse NEXT_PUBLIC_ICE_SERVERS, ignoring.');
 }
 

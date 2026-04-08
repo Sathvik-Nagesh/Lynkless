@@ -5,6 +5,8 @@ const urlsToCache = [
   '/manifest.json',
 ];
 
+const CACHEABLE_PATH_REGEX = /\.(?:js|css|ico|png|jpg|jpeg|svg|webp|woff2?)$/i;
+
 // Install event - cache essential resources
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -41,14 +43,29 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  const requestUrl = new URL(event.request.url);
+  if (requestUrl.origin !== self.location.origin) {
+    return;
+  }
+
+  const shouldCache =
+    urlsToCache.includes(requestUrl.pathname) ||
+    CACHEABLE_PATH_REGEX.test(requestUrl.pathname);
+
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        // Clone the response before caching
-        const responseToCache = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseToCache);
-        });
+        const isValidForCache =
+          shouldCache &&
+          response.ok &&
+          response.type !== 'opaque';
+
+        if (isValidForCache) {
+          const responseToCache = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+        }
         return response;
       })
       .catch(() => {

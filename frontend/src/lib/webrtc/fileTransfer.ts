@@ -34,6 +34,7 @@ export const requestBackgroundSync = async () => {
         // Bolt: Cast to unknown then to the expected interface to satisfy strict TypeScript rules
         // without using @ts-ignore or @ts-expect-error which are flagged by lint.
         await (registration as unknown as { sync: { register: (tag: string) => Promise<void> } }).sync.register('lynkless-transfer-sync');
+
       }
     } catch {
       // Background sync not supported or failed
@@ -403,6 +404,7 @@ class FileTransferManager {
         } catch {
           // Silent fail on cleanup is acceptable for Bolt optimizations
         }
+
       }, 60000); // Clean OPFS file after 60s
     } catch (err) {
       console.error('[FileTransfer] Failed to download OPFS file:', err);

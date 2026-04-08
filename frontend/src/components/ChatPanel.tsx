@@ -35,9 +35,11 @@ const renderMessageContent = (content: string) => {
     if (match.index > lastIndex) {
       parts.push(<span key={lastIndex}>{content.slice(lastIndex, match.index)}</span>);
     }
-       <pre key={match.index} className="bg-[#111] p-3 rounded-lg text-[11px] mt-1 mb-1 overflow-x-auto text-[#ededed] border border-[#27272a] shadow-inner block w-full font-mono">
-         <code>{match[1].trim()}</code>
-       </pre>
+    parts.push(
+      <pre key={match.index} className="bg-[#111] p-3 rounded-lg text-[11px] mt-1 mb-1 overflow-x-auto text-[#ededed] border border-[#27272a] shadow-inner block w-full font-mono">
+        <code>{match[1].trim()}</code>
+      </pre>
+    );
     lastIndex = match.index + match[0].length;
   }
   if (lastIndex < content.length) {
@@ -201,7 +203,7 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
             setLastReadCount(messages.length);
           }
         }}
-        className="flex items-center justify-between p-5 hover:bg-[#1f1f1f] transition-colors duration-150"
+        className="flex items-center justify-between p-4 sm:p-5 hover:bg-[#1f1f1f] transition-colors duration-150"
       >
         <div className="flex items-center gap-3">
           <div 
@@ -333,7 +335,7 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
             {/* Input */}
             <form 
               onSubmit={handleSubmit} 
-              className="p-4"
+              className="p-3 sm:p-4"
               style={{ borderTop: '1px solid var(--border-subtle)' }}
             >
               <div className="flex gap-2">

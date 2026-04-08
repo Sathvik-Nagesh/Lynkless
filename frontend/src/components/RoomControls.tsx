@@ -63,7 +63,7 @@ const RoomControls = memo(function RoomControls({
   if (isInRoom && roomCode) {
     return (
       <motion.div
-        className="panel-elevated p-5"
+        className="panel-elevated p-4 sm:p-5"
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.15 }}
@@ -150,7 +150,7 @@ const RoomControls = memo(function RoomControls({
 
   return (
     <motion.div
-      className="panel-elevated p-5"
+      className="panel-elevated p-4 sm:p-5"
       initial={{ opacity: 0, scale: 0.98 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.15 }}

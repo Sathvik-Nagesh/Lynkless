@@ -1,34 +1,58 @@
 /// <reference lib="webworker" />
 
+interface TransferMetadata {
+  id: string;
+  totalChunks: number;
+}
+
+interface InitPayload {
+  metadata: TransferMetadata;
+}
+
+interface WritePayload {
+  chunkIndex: number;
+  data: ArrayBuffer;
+}
+
 interface WorkerMessage {
   type: 'init' | 'write' | 'complete' | 'abort';
   fileId: string;
-  payload?: {
-    metadata?: {
-      id: string;
-      totalChunks: number;
-    };
-    chunkIndex?: number;
-    data?: ArrayBuffer;
-  };
+  payload?: InitPayload | WritePayload;
 }
 
-const fileHandles = new Map<string, unknown>(); // FileSystemFileHandle
-const accessHandles = new Map<string, { write: (buffer: Uint8Array, options: { at: number }) => void; flush: () => void; close: () => void }>(); // FileSystemSyncAccessHandle
-const metadataMap = new Map<string, { totalChunks: number; receivedChunks: number; lastReceivedIndex: number }>(); // { totalChunks, receivedChunks, lastReceivedIndex }
+interface SyncHandle {
+  write(buffer: BufferSource, options?: { at?: number }): number;
+  flush(): void;
+  close(): void;
+}
+
+interface WorkerTransferState {
+  totalChunks: number;
+  receivedChunks: number;
+  lastReceivedIndex: number;
+}
+
+const fileHandles = new Map<string, FileSystemFileHandle>();
+const accessHandles = new Map<string, SyncHandle>();
+const metadataMap = new Map<string, WorkerTransferState>();
+
 
 self.onmessage = async (e: MessageEvent) => {
   const msg = e.data as WorkerMessage;
   
-  if (msg.type === 'init' && msg.payload?.metadata) {
-    const { metadata } = msg.payload;
+  if (msg.type === 'init') {
+    const payload = msg.payload as InitPayload | undefined;
+    if (!payload?.metadata) return;
+    const { metadata } = payload;
+
     try {
       const root = await navigator.storage.getDirectory();
       const fileHandle = await root.getFileHandle(`lynkless-${metadata.id}`, { create: true });
       
       // Request synchronous access handle (only available in Web Workers!)
       // This is vastly faster than asynchronous main-thread FileSystemWritableFileStream
-      const accessHandle = await (fileHandle as unknown as { createSyncAccessHandle: () => Promise<unknown> }).createSyncAccessHandle() as { write: (buffer: Uint8Array, options: { at: number }) => void; flush: () => void; close: () => void };
+      const accessHandle = await (fileHandle as FileSystemFileHandle & { createSyncAccessHandle: () => Promise<SyncHandle> }).createSyncAccessHandle();
+
       
       fileHandles.set(metadata.id, fileHandle);
       accessHandles.set(metadata.id, accessHandle);
@@ -40,12 +64,15 @@ self.onmessage = async (e: MessageEvent) => {
 
       self.postMessage({ type: 'init-success', fileId: metadata.id });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
+      const message = err instanceof Error ? err.message : 'Unknown worker init error';
       self.postMessage({ type: 'error', fileId: metadata.id, error: message });
     }
   } 
-  else if (msg.type === 'write' && msg.payload) {
-    const { chunkIndex, data } = msg.payload;
+  else if (msg.type === 'write') {
+    const payload = msg.payload as WritePayload | undefined;
+    if (!payload) return;
+    const { chunkIndex, data } = payload;
+
     const accessHandle = accessHandles.get(msg.fileId);
     const meta = metadataMap.get(msg.fileId);
     
@@ -68,8 +95,9 @@ self.onmessage = async (e: MessageEvent) => {
           lastReceivedIndex: meta.lastReceivedIndex 
         });
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : 'Unknown error';
+        const message = err instanceof Error ? err.message : 'Unknown worker write error';
         self.postMessage({ type: 'error', fileId: msg.fileId, error: message });
+
       }
     }
   }
@@ -98,6 +126,7 @@ self.onmessage = async (e: MessageEvent) => {
       } catch {
         // Silent fail on cleanup
       }
+
       
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
