@@ -3,7 +3,7 @@ export class E2EEHelper {
   private static readonly MAX_E2EE_SIZE = 250 * 1024 * 1024; // 250MB safety cap
 
   // Derive a 256-bit AES-GCM key from a password
-  private static async deriveKey(password: string, salt: Uint8Array, keyUsages: KeyUsage[]): Promise<CryptoKey> {
+  private static async deriveKey(password: string, salt: BufferSource, keyUsages: KeyUsage[]): Promise<CryptoKey> {
     const enc = new TextEncoder();
     const keyMaterial = await crypto.subtle.importKey(
       "raw",
@@ -63,12 +63,13 @@ export class E2EEHelper {
       throw new Error("Invalid encrypted file: too small");
     }
 
-    // Bolt: Use slice() to pass a clean ArrayBuffer to crypto.subtle.
+    // Bolt: Use subarray() to create a zero-copy view of the encrypted data.
+    // This avoids a full memory copy of the entire file content before decryption.
     const salt = new Uint8Array(arrayBuffer, 0, 16);
     const iv = new Uint8Array(arrayBuffer, 16, 12);
-    const encryptedData = arrayBuffer.slice(28); // Real offset
+    const encryptedData = new Uint8Array(arrayBuffer, 28); // Real offset, zero-copy view
 
-    const key = await this.deriveKey(password, salt, ["decrypt"]);
+    const key = await this.deriveKey(password, salt as BufferSource, ["decrypt"]);
     
     try {
       const decryptedData = await crypto.subtle.decrypt(
