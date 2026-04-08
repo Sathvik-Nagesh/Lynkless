@@ -12,41 +12,42 @@ export function useSignalingAutoConnect({ connect, onLoaded }: UseSignalingAutoC
   const { discover } = useLocalDiscovery();
 
   useEffect(() => {
+    let cancelled = false;
+
     const initConnection = async () => {
-      // Step 1: Try the configured cloud / remote signaling server
+      // Step 1: Try the primary (cloud) signaling server
       try {
         await connect();
-        console.log('[AutoConnect] Connected to primary signaling server.');
-        onLoaded();
-        return;
+        console.log('[AutoConnect] ✅ Connected to primary signaling server.');
       } catch (err) {
-        console.warn('[AutoConnect] Primary signaling server unreachable:', err);
-      }
+        console.warn('[AutoConnect] Primary server unreachable:', err);
 
-      // Step 2: Fallback — scan the local LAN for a Lynkless signaling server
-      console.log('[AutoConnect] Attempting LAN fallback discovery...');
-      try {
-        const result = await discover();
-        if (result) {
-          console.log(`[AutoConnect] LAN server found at ${result.wsUrl}. Reconnecting...`);
-          // Update the singleton signaling client's URL and reconnect
-          const client = getSignalingClient();
-          if ('setUrl' in client && typeof (client as { setUrl: (url: string) => void }).setUrl === 'function') {
-            (client as { setUrl: (url: string) => void }).setUrl(result.wsUrl);
+        // Step 2: Background LAN fallback — runs AFTER onLoaded() so UI never blocks
+        setTimeout(async () => {
+          if (cancelled) return;
+          console.log('[AutoConnect] Attempting silent LAN fallback discovery...');
+          try {
+            const result = await discover();
+            if (result && !cancelled) {
+              console.log(`[AutoConnect] LAN server found at ${result.wsUrl}. Switching...`);
+              const client = getSignalingClient();
+              client.setUrl(result.wsUrl);
+              await connect();
+              console.log('[AutoConnect] ✅ Connected via LAN fallback!');
+            }
+          } catch (lanErr) {
+            console.warn('[AutoConnect] LAN fallback also failed:', lanErr);
           }
-          await connect();
-          console.log('[AutoConnect] ✅ Connected via LAN fallback!');
-        } else {
-          console.warn('[AutoConnect] No LAN signaling server found. App is offline.');
-        }
-      } catch (lanErr) {
-        console.error('[AutoConnect] LAN fallback also failed:', lanErr);
+        }, 0);
       } finally {
+        // Always unblock the UI immediately — LAN discovery runs in background
         onLoaded();
       }
     };
 
     initConnection();
+
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run once on mount only
+  }, []); // Run once on mount
 }
