@@ -167,14 +167,14 @@ Contributions welcome! Feel free to:
 
 MIT License - feel free to use for personal or commercial projects.
 
-- [x] Voice/Video call support (Direct P2P audio/video) ✨
 - [x] Auto-Discovery & Instant Room Sync
 - [x] Radar UI with Real-time Peer Tracking
 - [x] Zero-Click Auto-Connect for Room Members
 - [x] AES-256-GCM Military-grade Encryption
 - [x] Multi-File & Folder Transfer
-- [ ] Web Worker background threading for transfer processing
-- [ ] Web Worker background threading for transfer processing under heavily throttled tabs
+- [x] OPFS Streaming for massive file support
+- [x] Web Worker background threading for transfer processing
+
 
 ---
 

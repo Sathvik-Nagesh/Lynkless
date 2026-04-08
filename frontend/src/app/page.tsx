@@ -34,6 +34,8 @@ import { SoundToggle } from '@/components/SoundToggle';
 import { ConnectionQualityDashboard } from '@/components/ConnectionQualityDashboard';
 import { TransferConfirmation } from '@/components/TransferConfirmation';
 import { TextSnippetShare } from '@/components/TextSnippetShare';
+import { getFileInfo } from '@/lib/utils/fileTypeIcons';
+import { getTrustedPeersManager } from '@/lib/utils/trustedPeers';
 import Link from 'next/link';
 import { createZipFromFiles } from '@/lib/utils/zipper';
 import { processEntry } from '@/lib/utils/fileUpload';
@@ -574,9 +576,9 @@ export default function Home() {
               animate={{ scale: 1, opacity: 1 }}
               transition={{ duration: 0.8 }}
             >
-              <h1 className="text-3xl sm:text-4xl md:text-6xl font-black mb-2 tracking-tight italic py-2 leading-normal">
+              <h1 className="text-4xl md:text-6xl font-black mb-2 italic py-4 pr-12 leading-normal">
                 <span className="text-white drop-shadow-[0_0_20px_rgba(255,255,255,0.2)]">LYNK</span>
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-500 to-purple-500">LESS</span>
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-500 to-purple-500 pr-2">LESS</span>
               </h1>
               <p className="text-[#a1a1aa] text-sm md:text-base font-medium flex items-center gap-2">
                 Pure P2P Sharing. <span className="text-white">No Cloud.</span>

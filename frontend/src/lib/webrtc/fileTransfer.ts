@@ -21,7 +21,7 @@ function generateUUID(): string {
   });
 }
 
-const CHUNK_SIZE = 64 * 1024; // 64KB chunks for compatibility with unreliable channels (ordered: false)
+const CHUNK_SIZE = 256 * 1024; // 256KB chunks for higher throughput while maintaining stability
 const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB limit
 const PROGRESS_UPDATE_INTERVAL = 100; // 100ms throttle interval
 
