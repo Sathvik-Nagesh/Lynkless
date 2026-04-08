@@ -16,6 +16,7 @@ export interface SignalingClient {
   on: (handler: MessageHandler) => () => void;
   isConnected: () => boolean;
   getClientId: () => string | null;
+  setUrl: (url: string) => void;   // Allows runtime URL switching for LAN fallback
 }
 
 class SignalingClientImpl implements SignalingClient {
@@ -127,6 +128,20 @@ class SignalingClientImpl implements SignalingClient {
     }
     this.clientId = null;
     this.connectionPromise = null;
+  }
+
+  setUrl(url: string): void {
+    console.log(`[Signaling] Switching URL to: ${url}`);
+    this.url = url;
+    // Reset connection state so next connect() uses the new URL
+    this.connectionPromise = null;
+    this.connectionResolver = null;
+    this.connectionRejecter = null;
+    this.reconnectAttempts = 0;
+    if (this.ws) {
+      this.ws.close(1000, 'URL switch');
+      this.ws = null;
+    }
   }
 
   send(message: SignalingMessage): void {
