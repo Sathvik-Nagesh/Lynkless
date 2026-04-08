@@ -119,6 +119,7 @@ export default function Home() {
 
   useTransferProtection(activeTransfersCount);
 
+
   // Handle user click on radar - now sends connection REQUEST
   const handleUserClick = useCallback(async (userId: string) => {
     const currentState = peerStates.get(userId);

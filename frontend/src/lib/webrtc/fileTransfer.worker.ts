@@ -36,6 +36,7 @@ const fileHandles = new Map<string, FileSystemFileHandle>();
 const accessHandles = new Map<string, SyncHandle>();
 const metadataMap = new Map<string, WorkerTransferState>();
 
+
 self.onmessage = async (e: MessageEvent) => {
   const msg = e.data as WorkerMessage;
   
@@ -43,6 +44,7 @@ self.onmessage = async (e: MessageEvent) => {
     const payload = msg.payload as InitPayload | undefined;
     if (!payload?.metadata) return;
     const { metadata } = payload;
+
     try {
       const root = await navigator.storage.getDirectory();
       const fileHandle = await root.getFileHandle(`lynkless-${metadata.id}`, { create: true });
@@ -50,6 +52,7 @@ self.onmessage = async (e: MessageEvent) => {
       // Request synchronous access handle (only available in Web Workers!)
       // This is vastly faster than asynchronous main-thread FileSystemWritableFileStream
       const accessHandle = await (fileHandle as FileSystemFileHandle & { createSyncAccessHandle: () => Promise<SyncHandle> }).createSyncAccessHandle();
+
       
       fileHandles.set(metadata.id, fileHandle);
       accessHandles.set(metadata.id, accessHandle);
@@ -60,18 +63,20 @@ self.onmessage = async (e: MessageEvent) => {
       });
 
       self.postMessage({ type: 'init-success', fileId: metadata.id });
-    } catch (err) {
-      self.postMessage({ type: 'error', fileId: metadata.id, error: err instanceof Error ? err.message : 'Unknown worker init error' });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unknown worker init error';
+      self.postMessage({ type: 'error', fileId: metadata.id, error: message });
     }
   } 
   else if (msg.type === 'write') {
     const payload = msg.payload as WritePayload | undefined;
     if (!payload) return;
     const { chunkIndex, data } = payload;
+
     const accessHandle = accessHandles.get(msg.fileId);
     const meta = metadataMap.get(msg.fileId);
     
-    if (accessHandle && meta) {
+    if (accessHandle && meta && chunkIndex !== undefined && data) {
       try {
         const offset = chunkIndex * 64 * 1024; // 64KB CHUNK_SIZE
         
@@ -89,8 +94,10 @@ self.onmessage = async (e: MessageEvent) => {
           receivedChunks: meta.receivedChunks,
           lastReceivedIndex: meta.lastReceivedIndex 
         });
-      } catch (err) {
-        self.postMessage({ type: 'error', fileId: msg.fileId, error: err instanceof Error ? err.message : 'Unknown worker write error' });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Unknown worker write error';
+        self.postMessage({ type: 'error', fileId: msg.fileId, error: message });
+
       }
     }
   }
@@ -116,7 +123,10 @@ self.onmessage = async (e: MessageEvent) => {
       try {
         const root = await navigator.storage.getDirectory();
         await root.removeEntry(`lynkless-${msg.fileId}`);
-      } catch {}
+      } catch {
+        // Silent fail on cleanup
+      }
+
       
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);

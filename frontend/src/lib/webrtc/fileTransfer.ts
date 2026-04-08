@@ -31,8 +31,14 @@ export const requestBackgroundSync = async () => {
     try {
       const registration = await navigator.serviceWorker.ready;
       if ('sync' in registration) {
+<<<<<<< HEAD
         // @ts-expect-error - background sync API is not fully typed in standard DOM libs
         await registration.sync.register('lynkless-transfer-sync');
+=======
+        // Bolt: Cast to unknown then to the expected interface to satisfy strict TypeScript rules
+        // without using @ts-ignore or @ts-expect-error which are flagged by lint.
+        await (registration as unknown as { sync: { register: (tag: string) => Promise<void> } }).sync.register('lynkless-transfer-sync');
+>>>>>>> d930bbd864163e9cd16d5b2b5d1bba4356bc72fe
       }
     } catch {
       // Background sync not supported or failed
@@ -399,7 +405,10 @@ class FileTransferManager {
       setTimeout(async () => {
         try {
           await root.removeEntry(`lynkless-${incoming.metadata.id}`);
-        } catch {}
+        } catch {
+          // Silent fail on cleanup is acceptable for Bolt optimizations
+        }
+
       }, 60000); // Clean OPFS file after 60s
     } catch (err) {
       console.error('[FileTransfer] Failed to download OPFS file:', err);
@@ -871,14 +880,16 @@ class FileTransferManager {
 
             const chunkMetaStr = JSON.stringify({ type: 'file-chunk', fileId, chunkIndex });
 
-            for (const peerId of activePeers) {
+            // Bolt: Parallelize transmission to all active peers in the mesh
+            // This prevents a single slow connection from bottlenecking the entire broadcast.
+            await Promise.all(activePeers.map(async (peerId) => {
               const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
               if (tx && !tx.cancelled && !tx.paused) {
                 await this.webrtc.sendToPeer(peerId, chunkMetaStr);
                 await this.webrtc.sendToPeer(peerId, chunk);
                 tx.lastChunkIndex = chunkIndex;
               }
-            }
+            }));
 
             chunkIndex++;
             transferredSize += chunk.length;
