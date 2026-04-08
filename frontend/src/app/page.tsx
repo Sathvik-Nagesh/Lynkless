@@ -32,10 +32,8 @@ import { E2EEHelper } from '@/lib/webrtc/e2ee';
 import DecryptionTool from '@/components/DecryptionTool';
 import { SoundToggle } from '@/components/SoundToggle';
 import { ConnectionQualityDashboard } from '@/components/ConnectionQualityDashboard';
-import { TrustPeerButton } from '@/components/TrustPeerButton';
 import { TransferConfirmation } from '@/components/TransferConfirmation';
 import { TextSnippetShare } from '@/components/TextSnippetShare';
-import { VoiceVideoCall } from '@/components/VoiceVideoCall';
 import Link from 'next/link';
 import { createZipFromFiles } from '@/lib/utils/zipper';
 import { processEntry } from '@/lib/utils/fileUpload';
@@ -576,7 +574,7 @@ export default function Home() {
               animate={{ scale: 1, opacity: 1 }}
               transition={{ duration: 0.8 }}
             >
-              <h1 className="text-3xl sm:text-4xl md:text-6xl font-black mb-2 tracking-tight italic pt-2">
+              <h1 className="text-3xl sm:text-4xl md:text-6xl font-black mb-2 tracking-tight italic py-2 leading-normal">
                 <span className="text-white drop-shadow-[0_0_20px_rgba(255,255,255,0.2)]">LYNK</span>
                 <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-500 to-purple-500">LESS</span>
               </h1>
@@ -816,23 +814,7 @@ export default function Home() {
                   <ConnectionQualityDashboard
                     peerId={selectedPeer}
                   />
-                  {ENABLE_CALLS && (
-                    <VoiceVideoCall
-                      peerName={getPeerName(selectedPeer)}
-                      isConnected={canSendFile}
-                      onCallStart={(type) => startCall(selectedPeer, type)}
-                      onCallEnd={() => endCall(selectedPeer)}
-                      localStream={callStream}
-                      remoteStream={remoteStreams.get(selectedPeer) || null}
-                    />
-                  )}
-                  <div className="flex justify-center">
-                    <TrustPeerButton
-                      peerId={selectedPeer}
-                      fingerprint={getFingerprint(selectedPeer) || undefined}
-                      isConnected={canSendFile}
-                    />
-                  </div>
+
                 </div>
               )}
 
