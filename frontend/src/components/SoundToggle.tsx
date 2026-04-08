@@ -1,22 +1,32 @@
 'use client';
 
-import { memo, useState, useCallback } from 'react';
+import { memo, useState, useCallback, useEffect } from 'react';
 import { getSounds } from '@/lib/utils/sounds';
 
 export const SoundToggle = memo(function SoundToggle() {
-  const [enabled, setEnabled] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('lynkless-sounds-enabled');
-      return saved !== 'false';
-    }
-    return true;
-  });
+  const [enabled, setEnabled] = useState(true);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    const saved = localStorage.getItem('lynkless-sounds-enabled');
+    const isEnabled = saved !== 'false';
+    setEnabled(isEnabled);
+    getSounds().setEnabled(isEnabled);
+  }, []);
 
   const toggleSound = useCallback(() => {
     const next = !enabled;
     setEnabled(next);
+    localStorage.setItem('lynkless-sounds-enabled', String(next));
     getSounds().setEnabled(next);
   }, [enabled]);
+
+  if (!mounted) {
+    return (
+      <div className="p-2 w-8 h-8" />
+    );
+  }
 
   return (
     <button
