@@ -49,3 +49,7 @@
 ## 2026-03-20 - Parallelizing Mesh Broadcast Transmission
 **Learning:** Sending file chunks to multiple peers sequentially in a mesh network creates a "head-of-line blocking" scenario where a single slow peer or WebRTC backpressure stalls transmission to all other peers.
 **Action:** Use `Promise.all()` to transmit chunks to all active peers concurrently. This ensures faster peers can receive data at their maximum potential rate regardless of slow peers in the same mesh.
+
+## 2026-04-10 - Parallelizing File Reading in Zipper
+**Learning:** Using legacy `FileReader` with manual state tracking for multiple files is error-prone and serializes reading. `Promise.all()` with `file.arrayBuffer()` allows the browser to parallelize file I/O more efficiently and results in much cleaner code.
+**Action:** Always prefer `Promise.all()` and `file.arrayBuffer()` (or `file.stream()`) over `FileReader` for processing multiple files.
