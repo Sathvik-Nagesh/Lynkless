@@ -35,7 +35,10 @@ interface WorkerTransferState {
 const fileHandles = new Map<string, FileSystemFileHandle>();
 const accessHandles = new Map<string, SyncHandle>();
 const metadataMap = new Map<string, WorkerTransferState>();
+const lastProgressUpdate = new Map<string, number>();
 
+const PROGRESS_THROTTLE_MS = 100;
+const WORKER_CHUNK_SIZE = 256 * 1024; // Bolt: Match CHUNK_SIZE from fileTransfer.ts for data integrity
 
 self.onmessage = async (e: MessageEvent) => {
   const msg = e.data as WorkerMessage;
@@ -61,6 +64,7 @@ self.onmessage = async (e: MessageEvent) => {
         receivedChunks: 0,
         lastReceivedIndex: -1,
       });
+      lastProgressUpdate.set(metadata.id, 0);
 
       self.postMessage({ type: 'init-success', fileId: metadata.id });
     } catch (err: unknown) {
@@ -78,7 +82,7 @@ self.onmessage = async (e: MessageEvent) => {
     
     if (accessHandle && meta && chunkIndex !== undefined && data) {
       try {
-        const offset = chunkIndex * 64 * 1024; // 64KB CHUNK_SIZE
+        const offset = chunkIndex * WORKER_CHUNK_SIZE;
         
         // Synchronous absolute write to disk
         // Create Uint8Array view over the ArrayBuffer that was transferred
@@ -88,28 +92,45 @@ self.onmessage = async (e: MessageEvent) => {
         meta.receivedChunks++;
         meta.lastReceivedIndex = Math.max(meta.lastReceivedIndex, chunkIndex);
         
-        self.postMessage({ 
-          type: 'progress', 
-          fileId: msg.fileId, 
-          receivedChunks: meta.receivedChunks,
-          lastReceivedIndex: meta.lastReceivedIndex 
-        });
+        // Bolt: Throttle progress updates to reduce IPC overhead during high-speed transfers
+        const now = Date.now();
+        const lastUpdate = lastProgressUpdate.get(msg.fileId) || 0;
+
+        if (now - lastUpdate >= PROGRESS_THROTTLE_MS) {
+          lastProgressUpdate.set(msg.fileId, now);
+          self.postMessage({
+            type: 'progress',
+            fileId: msg.fileId,
+            receivedChunks: meta.receivedChunks,
+            lastReceivedIndex: meta.lastReceivedIndex
+          });
+        }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Unknown worker write error';
         self.postMessage({ type: 'error', fileId: msg.fileId, error: message });
-
       }
     }
   }
   else if (msg.type === 'complete') {
     const accessHandle = accessHandles.get(msg.fileId);
-    if (accessHandle) {
+    const meta = metadataMap.get(msg.fileId);
+
+    if (accessHandle && meta) {
+      // Bolt: Ensure final progress is reported before closing
+      self.postMessage({
+        type: 'progress',
+        fileId: msg.fileId,
+        receivedChunks: meta.receivedChunks,
+        lastReceivedIndex: meta.lastReceivedIndex
+      });
+
       accessHandle.flush();
       accessHandle.close();
       
       accessHandles.delete(msg.fileId);
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
+      lastProgressUpdate.delete(msg.fileId);
       
       self.postMessage({ type: 'complete-success', fileId: msg.fileId });
     }
@@ -127,9 +148,9 @@ self.onmessage = async (e: MessageEvent) => {
         // Silent fail on cleanup
       }
 
-      
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
+      lastProgressUpdate.delete(msg.fileId);
       
       self.postMessage({ type: 'abort-success', fileId: msg.fileId });
     }

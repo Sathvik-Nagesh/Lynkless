@@ -8,6 +8,20 @@ interface ConnectionQualityDashboardProps {
   peerId: string;
 }
 
+const qualityColors = {
+  excellent: '#22c55e',
+  good: '#84cc16',
+  fair: '#eab308',
+  poor: '#ef4444',
+};
+
+const qualityLabels = {
+  excellent: 'Excellent',
+  good: 'Good',
+  fair: 'Fair',
+  poor: 'Poor',
+};
+
 export const ConnectionQualityDashboard = memo(function ConnectionQualityDashboard({
   peerId,
 }: ConnectionQualityDashboardProps) {
@@ -43,20 +57,6 @@ export const ConnectionQualityDashboard = memo(function ConnectionQualityDashboa
     if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(1)} KB`;
     return `${bytes} B`;
   }, []);
-
-  const qualityColors = {
-    excellent: '#22c55e',
-    good: '#84cc16',
-    fair: '#eab308',
-    poor: '#ef4444',
-  };
-
-  const qualityLabels = {
-    excellent: 'Excellent',
-    good: 'Good',
-    fair: 'Fair',
-    poor: 'Poor',
-  };
 
   if (!stats) {
     return (
