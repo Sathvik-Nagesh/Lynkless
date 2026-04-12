@@ -2,6 +2,7 @@
 
 interface TransferMetadata {
   id: string;
+  size: number;
   totalChunks: number;
 }
 
@@ -22,6 +23,7 @@ interface WorkerMessage {
 
 interface SyncHandle {
   write(buffer: BufferSource, options?: { at?: number }): number;
+  truncate(newSize: number): void;
   flush(): void;
   close(): void;
 }
@@ -39,6 +41,7 @@ const lastProgressUpdate = new Map<string, number>();
 
 const PROGRESS_THROTTLE_MS = 100;
 const WORKER_CHUNK_SIZE = 256 * 1024; // Bolt: Match CHUNK_SIZE from fileTransfer.ts for data integrity
+const ATOMIC_HEADER_SIZE = 40; // 36B fileId + 4B chunkIndex
 
 self.onmessage = async (e: MessageEvent) => {
   const msg = e.data as WorkerMessage;
@@ -56,6 +59,14 @@ self.onmessage = async (e: MessageEvent) => {
       // This is vastly faster than asynchronous main-thread FileSystemWritableFileStream
       const accessHandle = await (fileHandle as FileSystemFileHandle & { createSyncAccessHandle: () => Promise<SyncHandle> }).createSyncAccessHandle();
 
+      // Bolt: Pre-allocate disk space to reduce fragmentation and improve write performance
+      if (metadata.size > 0) {
+        try {
+          accessHandle.truncate(metadata.size);
+        } catch (err) {
+          console.warn('[FileTransferWorker] Truncate pre-allocation failed:', err);
+        }
+      }
       
       fileHandles.set(metadata.id, fileHandle);
       accessHandles.set(metadata.id, accessHandle);
@@ -84,9 +95,11 @@ self.onmessage = async (e: MessageEvent) => {
       try {
         const offset = chunkIndex * WORKER_CHUNK_SIZE;
         
+        // Bolt: Atomic Chunk Protocol - Skip the 40-byte header in the worker
+        // Using a view instead of slice() to maintain zero-copy efficiency.
+        const buffer = new Uint8Array(data, ATOMIC_HEADER_SIZE);
+
         // Synchronous absolute write to disk
-        // Create Uint8Array view over the ArrayBuffer that was transferred
-        const buffer = new Uint8Array(data);
         accessHandle.write(buffer, { at: offset });
         
         meta.receivedChunks++;
