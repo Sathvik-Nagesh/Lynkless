@@ -53,3 +53,7 @@
 ## 2026-04-10 - Parallelizing File Reading in Zipper
 **Learning:** Using legacy `FileReader` with manual state tracking for multiple files is error-prone and serializes reading. `Promise.all()` with `file.arrayBuffer()` allows the browser to parallelize file I/O more efficiently and results in much cleaner code.
 **Action:** Always prefer `Promise.all()` and `file.arrayBuffer()` (or `file.stream()`) over `FileReader` for processing multiple files.
+
+## 2026-04-12 - Atomic Chunk Protocol & Disk Pre-allocation
+**Learning:** Sending metadata and binary data in separate WebRTC messages doubles the signaling overhead and risks out-of-order processing. Additionally, frequent allocation of TextEncoder/Decoder in hot loops creates unnecessary GC pressure. Disk I/O performance in OPFS can be improved by pre-allocating space using `truncate`.
+**Action:** Use an 'Atomic Chunk Protocol' with a 40-byte header (36B UUID + 4B index) to combine metadata and binary data. Move encoders/decoders to module scope. Always pass file size to workers to enable disk pre-allocation.

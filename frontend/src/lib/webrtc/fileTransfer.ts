@@ -24,6 +24,11 @@ function generateUUID(): string {
 const CHUNK_SIZE = 256 * 1024; // 256KB chunks for higher throughput while maintaining stability
 const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB limit
 const PROGRESS_UPDATE_INTERVAL = 100; // 100ms throttle interval
+const ATOMIC_HEADER_SIZE = 40; // 36-byte fileId UUID + 4-byte chunk index
+
+// Bolt: Move encoders/decoders out of hot paths to reduce GC pressure
+const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
 
 // Request background sync tag if available
 export const requestBackgroundSync = async () => {
@@ -82,7 +87,7 @@ export type MeshProgressHandler = (progress: MeshTransferProgress) => void;
 
 // Message types for file transfer protocol
 interface FileMessage {
-  type: 'file-meta' | 'file-chunk' | 'file-complete' | 'file-cancel' | 'file-resume-request' | 'file-resume-response';
+  type: 'file-meta' | 'file-complete' | 'file-cancel' | 'file-resume-request' | 'file-resume-response';
   fileId: string;
   [key: string]: unknown;
 }
@@ -90,11 +95,6 @@ interface FileMessage {
 interface FileMetaMessage extends FileMessage {
   type: 'file-meta';
   metadata: FileMetadata;
-}
-
-interface FileChunkMessage extends FileMessage {
-  type: 'file-chunk';
-  chunkIndex: number;
 }
 
 interface FileResumeRequestMessage extends FileMessage {
@@ -129,7 +129,7 @@ interface IncomingTransferState {
   startOffset: number;
   peerId: string;
   useWorker?: boolean;
-  chunks?: (ArrayBuffer | null)[]; // RAM fallback
+  chunks?: (Uint8Array | null)[]; // RAM fallback
 }
 
 class FileTransferManager {
@@ -138,7 +138,6 @@ class FileTransferManager {
   private fileReceivedHandlers: Set<FileReceivedHandler> = new Set();
   private meshProgressHandlers: Set<MeshProgressHandler> = new Set();
   private incomingFiles: Map<string, IncomingTransferState> = new Map();
-  private pendingChunkMetadata: Map<string, Array<{ fileId: string; chunkIndex: number }>> = new Map();
   private outgoingTransfers: Map<string, OutgoingTransferState> = new Map();
   private lastUpdateTimes: Map<string, number> = new Map();
   private meshTransfers: Map<string, { file: File; peerIds: string[]; transfers: Map<string, string> }> = new Map();
@@ -204,9 +203,6 @@ class FileTransferManager {
   private setupConnectionMonitor(): void {
     this.stateCleanupHandler = this.webrtc.onStateChange((peerId, state) => {
       if (state === 'disconnected' || state === 'failed') {
-        // Clear pending binary metadata for this peer
-        this.pendingChunkMetadata.delete(peerId);
-
         // Mark transfers as paused for potential resume
         this.outgoingTransfers.forEach((transfer, fileId) => {
           if (transfer.peerId === peerId && transfer.progress.status === 'transferring') {
@@ -231,9 +227,6 @@ class FileTransferManager {
     switch (message.type) {
       case 'file-meta':
         this.handleFileMeta(peerId, message as FileMetaMessage);
-        break;
-      case 'file-chunk':
-        this.handleFileChunk(peerId, message as FileChunkMessage);
         break;
       case 'file-complete':
         this.handleFileComplete(message.fileId);
@@ -294,7 +287,18 @@ class FileTransferManager {
 
     if (this.worker && typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.getDirectory === 'function') {
       incomingState.useWorker = true;
-      this.worker.postMessage({ type: 'init', fileId: metadata.id, payload: { metadata } });
+      // Bolt: Pass size property to enable disk pre-allocation in worker
+      this.worker.postMessage({
+        type: 'init',
+        fileId: metadata.id,
+        payload: {
+          metadata: {
+            id: metadata.id,
+            totalChunks: metadata.totalChunks,
+            size: metadata.size
+          }
+        }
+      });
       console.log('[FileTransfer] Initialized Web Worker for OPFS stream operations.');
     } else {
       console.warn('[FileTransfer] Web Workers or OPFS not supported, falling back to RAM buffer mapping...');
@@ -312,52 +316,41 @@ class FileTransferManager {
     });
   }
 
-  private handleFileChunk(peerId: string, message: FileChunkMessage): void {
-    const incoming = this.incomingFiles.get(message.fileId);
-    if (!incoming) return;
-
-    // Queue metadata for the upcoming binary chunks to handle interleaving
-    let queue = this.pendingChunkMetadata.get(peerId);
-    if (!queue) {
-      queue = [];
-      this.pendingChunkMetadata.set(peerId, queue);
-    }
-    queue.push({
-      fileId: message.fileId,
-      chunkIndex: message.chunkIndex,
-    });
-  }
-
   /**
    * Process a raw binary chunk from a peer
+   * Bolt: Uses Atomic Chunk Protocol (40-byte header: 36B fileId + 4B chunkIndex)
    */
   private handleBinaryChunk(peerId: string, data: ArrayBuffer): void {
-    const queue = this.pendingChunkMetadata.get(peerId);
-    if (!queue || queue.length === 0) return;
+    if (data.byteLength < ATOMIC_HEADER_SIZE) return;
 
-    // Dequeue the oldest pending metadata
-    const metadata = queue.shift();
-    if (!metadata) return;
+    // Decode Atomic Header
+    const headerView = new DataView(data, 0, ATOMIC_HEADER_SIZE);
+    const fileId = TEXT_DECODER.decode(new Uint8Array(data, 0, 36));
+    const chunkIndex = headerView.getUint32(36, true);
 
-    const incoming = this.incomingFiles.get(metadata.fileId);
+    const incoming = this.incomingFiles.get(fileId);
     if (!incoming) return;
 
     if (incoming.useWorker && this.worker) {
       // Zero-Copy Transfer to Web Worker
+      // Bolt: Transfer the entire buffer to the worker to avoid slicing/copying on the main thread.
+      // The worker will be responsible for skipping the 40-byte atomic header.
       this.worker.postMessage({ 
         type: 'write', 
-        fileId: metadata.fileId, 
-        payload: { chunkIndex: metadata.chunkIndex, data } 
+        fileId,
+        payload: { chunkIndex, data }
       }, [data]);
       // Progress UI is handled asynchronously by the worker's reply
-    } else if (incoming.chunks && incoming.chunks[metadata.chunkIndex] === null) {
+    } else if (incoming.chunks && incoming.chunks[chunkIndex] === null) {
       // RAM Fallback
-      incoming.chunks[metadata.chunkIndex] = data;
+      // Bolt: Use a view instead of slice() to avoid copying the buffer.
+      const chunkData = new Uint8Array(data, ATOMIC_HEADER_SIZE);
+      incoming.chunks[chunkIndex] = chunkData;
       incoming.receivedChunks++;
-      incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, metadata.chunkIndex);
+      incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, chunkIndex);
       
       const transferredSize = incoming.receivedChunks * CHUNK_SIZE;
-      this.notifyProgress(metadata.fileId, 'transferring', {
+      this.notifyProgress(fileId, 'transferring', {
         transferredSize: Math.min(transferredSize, incoming.metadata.size),
         resumable: true,
       });
@@ -372,8 +365,10 @@ class FileTransferManager {
       this.worker.postMessage({ type: 'complete', fileId });
       // The finalization blob grab happens async in finalizeDownload 
     } else {
-      const validChunks = (incoming.chunks || []) as ArrayBuffer[];
-      const blob = new Blob(validChunks, { type: incoming.metadata.type });
+      const validChunks = (incoming.chunks || []) as Uint8Array[];
+      // Bolt: Wrapping SharedArrayBuffer-backed Uint8Arrays in a new Uint8Array ensures compatibility with the Blob constructor
+      const blobPart = validChunks.map(c => new Uint8Array(c));
+      const blob = new Blob(blobPart, { type: incoming.metadata.type });
       
       this.fileReceivedHandlers.forEach((h) => h(blob, incoming.metadata));
       this.notifyProgress(fileId, 'completed', { transferredSize: incoming.metadata.size });
@@ -523,6 +518,7 @@ class FileTransferManager {
       // Create a slice of the file from the resume point
       const remainingFile = file.slice(startOffset);
       const reader = remainingFile.stream().getReader();
+      const idBytes = TEXT_ENCODER.encode(fileId);
 
       while (true) {
         if (transfer.cancelled || transfer.paused) break;
@@ -535,22 +531,22 @@ class FileTransferManager {
           if (transfer.cancelled || transfer.paused) break;
 
           // Bolt: Use subarray for zero-copy chunking to reduce memory allocations
-          const chunk = value.subarray(offset, offset + CHUNK_SIZE);
+          const rawChunk = value.subarray(offset, offset + CHUNK_SIZE);
           offset += CHUNK_SIZE;
 
-          // Send chunk metadata header
-          await this.webrtc.sendToPeer(peerId, JSON.stringify({
-            type: 'file-chunk',
-            fileId,
-            chunkIndex,
-          }));
+          // Bolt: Atomic Chunk Protocol - combine metadata and binary into one packet
+          const atomicChunk = new Uint8Array(ATOMIC_HEADER_SIZE + rawChunk.length);
+          atomicChunk.set(idBytes, 0);
+          const view = new DataView(atomicChunk.buffer);
+          view.setUint32(36, chunkIndex, true);
+          atomicChunk.set(rawChunk, ATOMIC_HEADER_SIZE);
 
-          // Send raw binary chunk
-          await this.webrtc.sendToPeer(peerId, chunk);
+          // Send atomic chunk
+          await this.webrtc.sendToPeer(peerId, atomicChunk);
 
           transfer.lastChunkIndex = chunkIndex;
           chunkIndex++;
-          transferredSize += chunk.length;
+          transferredSize += rawChunk.length;
 
           // Bolt: Throttled progress update with lazy metrics calculation
           this.notifyProgress(fileId, 'transferring', {
@@ -656,6 +652,7 @@ class FileTransferManager {
 
     // Send chunks
     const reader = file.stream().getReader();
+    const idBytes = TEXT_ENCODER.encode(fileId);
     let chunkIndex = 0;
     let transferredSize = 0;
 
@@ -681,29 +678,30 @@ class FileTransferManager {
 
         // Split into CHUNK_SIZE pieces if needed
         let offset = 0;
+
         while (offset < value.length) {
           const currentTransfer = this.outgoingTransfers.get(fileId);
           if (currentTransfer?.cancelled || currentTransfer?.paused) break;
 
           // Bolt: Use subarray for zero-copy chunking to reduce memory allocations
-          const chunk = value.subarray(offset, offset + CHUNK_SIZE);
+          const rawChunk = value.subarray(offset, offset + CHUNK_SIZE);
           offset += CHUNK_SIZE;
 
-          // Send chunk metadata header
-          await this.webrtc.sendToPeer(peerId, JSON.stringify({
-            type: 'file-chunk',
-            fileId,
-            chunkIndex,
-          }));
+          // Bolt: Atomic Chunk Protocol - combine metadata and binary into one packet
+          const atomicChunk = new Uint8Array(ATOMIC_HEADER_SIZE + rawChunk.length);
+          atomicChunk.set(idBytes, 0);
+          const view = new DataView(atomicChunk.buffer);
+          view.setUint32(36, chunkIndex, true);
+          atomicChunk.set(rawChunk, ATOMIC_HEADER_SIZE);
 
-          // Send raw binary chunk
-          await this.webrtc.sendToPeer(peerId, chunk);
+          // Send atomic chunk
+          await this.webrtc.sendToPeer(peerId, atomicChunk);
 
           if (currentTransfer) {
             currentTransfer.lastChunkIndex = chunkIndex;
           }
           chunkIndex++;
-          transferredSize += chunk.length;
+          transferredSize += rawChunk.length;
 
           // Bolt: Throttled progress update with lazy metrics calculation
           this.notifyProgress(fileId, 'transferring', {
@@ -852,6 +850,7 @@ class FileTransferManager {
     });
 
     const reader = file.stream().getReader();
+    const idBytes = TEXT_ENCODER.encode(fileId);
     let chunkIndex = 0;
     let transferredSize = 0;
 
@@ -870,25 +869,30 @@ class FileTransferManager {
           if (done) break;
 
           let offset = 0;
+
           while (offset < value.length) {
-            const chunk = value.subarray(offset, Math.min(offset + CHUNK_SIZE, value.length));
+            const rawChunk = value.subarray(offset, Math.min(offset + CHUNK_SIZE, value.length));
             offset += CHUNK_SIZE;
 
-            const chunkMetaStr = JSON.stringify({ type: 'file-chunk', fileId, chunkIndex });
+            // Bolt: Atomic Chunk Protocol - combine metadata and binary into one packet
+            const atomicChunk = new Uint8Array(ATOMIC_HEADER_SIZE + rawChunk.length);
+            atomicChunk.set(idBytes, 0);
+            const view = new DataView(atomicChunk.buffer);
+            view.setUint32(36, chunkIndex, true);
+            atomicChunk.set(rawChunk, ATOMIC_HEADER_SIZE);
 
             // Bolt: Parallelize transmission to all active peers in the mesh
             // This prevents a single slow connection from bottlenecking the entire broadcast.
             await Promise.all(activePeers.map(async (peerId) => {
               const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
               if (tx && !tx.cancelled && !tx.paused) {
-                await this.webrtc.sendToPeer(peerId, chunkMetaStr);
-                await this.webrtc.sendToPeer(peerId, chunk);
+                await this.webrtc.sendToPeer(peerId, atomicChunk);
                 tx.lastChunkIndex = chunkIndex;
               }
             }));
 
             chunkIndex++;
-            transferredSize += chunk.length;
+            transferredSize += rawChunk.length;
 
             activePeers.forEach(peerId => {
               this.notifyProgress(`${fileId}-${peerId}`, 'transferring', {
@@ -1121,7 +1125,6 @@ class FileTransferManager {
     this.progressHandlers.clear();
     this.fileReceivedHandlers.clear();
     this.incomingFiles.clear();
-    this.pendingChunkMetadata.clear();
     this.outgoingTransfers.clear();
   }
 }
