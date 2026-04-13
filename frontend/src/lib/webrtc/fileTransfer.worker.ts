@@ -12,7 +12,7 @@ interface InitPayload {
 
 interface WritePayload {
   chunkIndex: number;
-  data: ArrayBuffer;
+  data: Uint8Array | ArrayBuffer;
 }
 
 interface WorkerMessage {
@@ -92,9 +92,12 @@ self.onmessage = async (e: MessageEvent) => {
         const offset = chunkIndex * WORKER_CHUNK_SIZE;
         
         // Synchronous absolute write to disk
-        // Create Uint8Array view over the ArrayBuffer that was transferred
-        const buffer = new Uint8Array(data);
-        accessHandle.write(buffer, { at: offset });
+        // Bolt: Use the existing Uint8Array view if provided, otherwise create a view (not a copy).
+        // Wrap in a new Uint8Array constructor to satisfy strict TypeScript BufferSource/BlobPart
+        // constraints while preserving the underlying buffer.
+        // Cast to unknown to bypass SharedArrayBuffer subtype check in the build environment.
+        const buffer = new Uint8Array(data instanceof Uint8Array ? data.buffer : data, (data as Uint8Array).byteOffset || 0, (data as Uint8Array).byteLength || (data as ArrayBuffer).byteLength);
+        accessHandle.write(buffer as unknown as BufferSource, { at: offset });
         
         meta.receivedChunks++;
         meta.lastReceivedIndex = Math.max(meta.lastReceivedIndex, chunkIndex);
