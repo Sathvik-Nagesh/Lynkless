@@ -53,3 +53,11 @@
 ## 2026-04-10 - Parallelizing File Reading in Zipper
 **Learning:** Using legacy `FileReader` with manual state tracking for multiple files is error-prone and serializes reading. `Promise.all()` with `file.arrayBuffer()` allows the browser to parallelize file I/O more efficiently and results in much cleaner code.
 **Action:** Always prefer `Promise.all()` and `file.arrayBuffer()` (or `file.stream()`) over `FileReader` for processing multiple files.
+
+## 2026-05-20 - Atomic Binary Protocol for Reduced Overhead
+**Learning:** Sending separate JSON metadata and raw binary messages for every 256KB chunk (4 messages per MB) creates significant overhead in the WebRTC DataChannel and browser event loop. Furthermore, it introduces a fragile dependency on message ordering across different internal WebRTC buffers.
+**Action:** Use an atomic binary protocol where a small fixed-size header (e.g., 40 bytes) containing metadata is prepended to each binary chunk. This halves the number of messages and ensures metadata is always perfectly synchronized with its data.
+
+## 2026-05-20 - OPFS Write Performance via Pre-allocation
+**Learning:** Origin Private File System (OPFS) `FileSystemSyncAccessHandle` writes can be slightly slower if the OS has to repeatedly allocate new disk blocks as the file grows.
+**Action:** Use `accessHandle.truncate(totalSize)` during transfer initialization to pre-allocate the entire file size on disk. This results in more contiguous disk writes and improved overall throughput.

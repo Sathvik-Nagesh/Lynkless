@@ -2,6 +2,7 @@
 
 interface TransferMetadata {
   id: string;
+  size: number;
   totalChunks: number;
 }
 
@@ -22,6 +23,7 @@ interface WorkerMessage {
 
 interface SyncHandle {
   write(buffer: BufferSource, options?: { at?: number }): number;
+  truncate(newSize: number): void;
   flush(): void;
   close(): void;
 }
@@ -56,6 +58,11 @@ self.onmessage = async (e: MessageEvent) => {
       // This is vastly faster than asynchronous main-thread FileSystemWritableFileStream
       const accessHandle = await (fileHandle as FileSystemFileHandle & { createSyncAccessHandle: () => Promise<SyncHandle> }).createSyncAccessHandle();
 
+      // Bolt: Pre-allocate disk space to improve write performance and reduce fragmentation.
+      // Truncating to the final size upfront ensures the OS reserves the space.
+      if (metadata.size) {
+        accessHandle.truncate(metadata.size);
+      }
       
       fileHandles.set(metadata.id, fileHandle);
       accessHandles.set(metadata.id, accessHandle);
