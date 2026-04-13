@@ -32,6 +32,10 @@ const FILE_ID_SIZE = 36; // UUID v4 length
 const CHUNK_INDEX_SIZE = 4; // Uint32
 const HEADER_SIZE = FILE_ID_SIZE + CHUNK_INDEX_SIZE;
 
+// Bolt: Reuse TextEncoder/Decoder to reduce GC pressure in high-frequency loops.
+const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
+
 // Request background sync tag if available
 export const requestBackgroundSync = async () => {
   if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
@@ -132,7 +136,7 @@ interface IncomingTransferState {
   startOffset: number;
   peerId: string;
   useWorker?: boolean;
-  chunks?: (ArrayBuffer | null)[]; // RAM fallback
+  chunks?: (Uint8Array | null)[]; // RAM fallback
 }
 
 class FileTransferManager {
@@ -328,25 +332,26 @@ class FileTransferManager {
 
     // Bolt: Extract metadata from the binary header without extra JSON messages.
     const view = new DataView(data);
-    const decoder = new TextDecoder();
 
     // UUID is first 36 bytes
-    const fileId = decoder.decode(new Uint8Array(data, 0, FILE_ID_SIZE));
+    const fileId = TEXT_DECODER.decode(new Uint8Array(data, 0, FILE_ID_SIZE));
     // Chunk index is next 4 bytes (Uint32 LE)
     const chunkIndex = view.getUint32(FILE_ID_SIZE, true);
-    // Real data starts after header
-    const chunkData = data.slice(HEADER_SIZE);
+
+    // Bolt: Use subarray for zero-copy chunking instead of slice() which copies the buffer.
+    const chunkData = new Uint8Array(data, HEADER_SIZE);
 
     const incoming = this.incomingFiles.get(fileId);
     if (!incoming) return;
 
     if (incoming.useWorker && this.worker) {
-      // Zero-Copy Transfer to Web Worker
+      // Bolt: Transfer the ArrayBuffer to the worker to eliminate copy overhead.
+      // We pass the full buffer and let the worker handle the offset.
       this.worker.postMessage({ 
         type: 'write', 
         fileId: fileId,
         payload: { chunkIndex, data: chunkData }
-      }, [chunkData]);
+      }, [data]);
       // Progress UI is handled asynchronously by the worker's reply
     } else if (incoming.chunks && incoming.chunks[chunkIndex] === null) {
       // RAM Fallback
@@ -370,7 +375,9 @@ class FileTransferManager {
       this.worker.postMessage({ type: 'complete', fileId });
       // The finalization blob grab happens async in finalizeDownload 
     } else {
-      const validChunks = (incoming.chunks || []) as ArrayBuffer[];
+      // Bolt: Wrap chunks in a new Uint8Array constructor call to satisfy strict TypeScript
+      // BlobPart constraints in environments where chunks might be SharedArrayBuffer views.
+      const validChunks = (incoming.chunks || []).filter(c => c !== null).map(c => new Uint8Array(c!));
       const blob = new Blob(validChunks, { type: incoming.metadata.type });
       
       this.fileReceivedHandlers.forEach((h) => h(blob, incoming.metadata));
@@ -539,8 +546,7 @@ class FileTransferManager {
           // Bolt: Pack metadata and data into a single atomic binary message.
           // This reduces signaling overhead and eliminates inter-message race conditions.
           const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-          const encoder = new TextEncoder();
-          encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+          TEXT_ENCODER.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
           const chunkView = new DataView(packedChunk.buffer);
           chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
           packedChunk.set(rawChunk, HEADER_SIZE);
@@ -691,8 +697,7 @@ class FileTransferManager {
 
           // Bolt: Pack metadata and data into a single atomic binary message.
           const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-          const encoder = new TextEncoder();
-          encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+          TEXT_ENCODER.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
           const chunkView = new DataView(packedChunk.buffer);
           chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
           packedChunk.set(rawChunk, HEADER_SIZE);
@@ -877,8 +882,7 @@ class FileTransferManager {
 
             // Bolt: Pack metadata and data into a single atomic binary message for broadcast.
             const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-            const encoder = new TextEncoder();
-            encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+            TEXT_ENCODER.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
             const chunkView = new DataView(packedChunk.buffer);
             chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
             packedChunk.set(rawChunk, HEADER_SIZE);
