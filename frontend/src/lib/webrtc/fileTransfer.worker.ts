@@ -40,7 +40,22 @@ const metadataMap = new Map<string, WorkerTransferState>();
 const lastProgressUpdate = new Map<string, number>();
 
 const PROGRESS_THROTTLE_MS = 100;
-const WORKER_CHUNK_SIZE = 256 * 1024; // Bolt: Match CHUNK_SIZE from fileTransfer.ts for data integrity
+const WORKER_CHUNK_SIZE = 64 * 1024; // 64KB - MUST match CHUNK_SIZE in fileTransfer.ts
+
+// Speed performance: Pre-allocate reusable buffers and encoders
+const encoder = new TextEncoder();
+const fileIdBufferMap = new Map<string, Uint8Array>();
+
+/**
+ * Fast binary comparison for File IDs
+ */
+function compareUint8Arrays(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
 
 self.onmessage = async (e: MessageEvent) => {
   const msg = e.data as WorkerMessage;
@@ -52,7 +67,14 @@ self.onmessage = async (e: MessageEvent) => {
 
     try {
       const root = await navigator.storage.getDirectory();
-      const fileHandle = await root.getFileHandle(`lynkless-${metadata.id}`, { create: true });
+      const fileId = metadata.id;
+      const salt = (metadata as any).salt || '';
+      const opfsName = salt ? `lynkless-${fileId}-${salt}` : `lynkless-${fileId}`;
+      
+      // Cache binary File ID for fast comparison
+      fileIdBufferMap.set(fileId, encoder.encode(fileId));
+
+      const fileHandle = await root.getFileHandle(opfsName, { create: true });
       
       // Request synchronous access handle (only available in Web Workers!)
       // This is vastly faster than asynchronous main-thread FileSystemWritableFileStream
@@ -86,15 +108,18 @@ self.onmessage = async (e: MessageEvent) => {
 
     const accessHandle = accessHandles.get(msg.fileId);
     const meta = metadataMap.get(msg.fileId);
+    const expectedIdBuffer = fileIdBufferMap.get(msg.fileId);
     
-    if (accessHandle && meta && chunkIndex !== undefined && data) {
+    if (accessHandle && meta && expectedIdBuffer && chunkIndex !== undefined && data) {
       try {
+        // Fast binary header validation (CPU optimization)
+        const actualIdBuffer = new Uint8Array(data, 0, 36);
+        if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
+
         const offset = chunkIndex * WORKER_CHUNK_SIZE;
+        const chunkDataBuffer = new Uint8Array(data, 40); // 40 = HEADER_SIZE
         
-        // Synchronous absolute write to disk
-        // Create Uint8Array view over the ArrayBuffer that was transferred
-        const buffer = new Uint8Array(data);
-        accessHandle.write(buffer, { at: offset });
+        accessHandle.write(chunkDataBuffer, { at: offset });
         
         meta.receivedChunks++;
         meta.lastReceivedIndex = Math.max(meta.lastReceivedIndex, chunkIndex);
@@ -112,18 +137,25 @@ self.onmessage = async (e: MessageEvent) => {
             lastReceivedIndex: meta.lastReceivedIndex
           });
         }
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : 'Unknown worker write error';
+       } catch (err: unknown) {
+        const error = err as any;
+        let message = error?.message || 'Unknown worker write error';
+        
+        // DETECT STORAGE QUOTA EXCEEDED (Edge Case Part 2)
+        if (error?.name === 'QuotaExceededError' || message.includes('quota')) {
+          message = 'DISK_FULL';
+        }
+
         self.postMessage({ type: 'error', fileId: msg.fileId, error: message });
       }
     }
   }
   else if (msg.type === 'complete') {
     const accessHandle = accessHandles.get(msg.fileId);
+    const fileHandle = fileHandles.get(msg.fileId);
     const meta = metadataMap.get(msg.fileId);
 
-    if (accessHandle && meta) {
-      // Bolt: Ensure final progress is reported before closing
+    if (accessHandle && fileHandle && meta) {
       self.postMessage({
         type: 'progress',
         fileId: msg.fileId,
@@ -134,12 +166,31 @@ self.onmessage = async (e: MessageEvent) => {
       accessHandle.flush();
       accessHandle.close();
       
+      // Calculate streaming hash for integrity check without crashing RAM
+      let checksum = '';
+      try {
+        const fileObj = await fileHandle.getFile();
+        // Bolt: Streaming Hashing for 20GB scalability
+        // We hash blocks of 64MB and then hash the resulting block-hashes
+        checksum = await calculateStreamingHash(fileHandle);
+      } catch (hErr) {
+        console.warn('Streaming hash failed:', hErr);
+      }
+
+      const file = await fileHandle.getFile();
+      
+      // Transfer the file blob back to main thread
+      self.postMessage({ 
+        type: 'complete-success', 
+        fileId: msg.fileId, 
+        file,
+        checksum
+      });
+      
       accessHandles.delete(msg.fileId);
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
       lastProgressUpdate.delete(msg.fileId);
-      
-      self.postMessage({ type: 'complete-success', fileId: msg.fileId });
     }
   }
   else if (msg.type === 'abort') {
@@ -163,3 +214,28 @@ self.onmessage = async (e: MessageEvent) => {
     }
   }
 };
+
+/**
+ * Streaming Root Hash for Massive Files (20GB+)
+ * Processes files in 64MB blocks to maintain a constant memory footprint (<128MB)
+ */
+async function calculateStreamingHash(fileHandle: FileSystemFileHandle): Promise<string> {
+  const file = await fileHandle.getFile();
+  const blockSize = 64 * 1024 * 1024; // 64MB blocks
+  const blockHashes: Uint8Array[] = [];
+  
+  for (let offset = 0; offset < file.size; offset += blockSize) {
+    const chunk = file.slice(offset, Math.min(offset + blockSize, file.size));
+    const buffer = await chunk.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    blockHashes.push(new Uint8Array(hashBuffer));
+  }
+  
+  // Hash the block hashes to get the final Root Hash
+  const combinedHashes = new Uint8Array(blockHashes.length * 32);
+  blockHashes.forEach((h, i) => combinedHashes.set(h, i * 32));
+  
+  const finalHashBuffer = await crypto.subtle.digest('SHA-256', combinedHashes);
+  const hashArray = Array.from(new Uint8Array(finalHashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}

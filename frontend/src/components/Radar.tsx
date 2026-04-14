@@ -464,12 +464,46 @@ const Radar = memo(function Radar({
         );
       })}
 
-      {/* Empty state message */}
+      {/* Empty state message - Contextual Onboarding */}
       {!hasAnyPeers && (
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          <p className="text-[#a1a1aa] text-sm text-center mt-20">
-            {isInRoom ? 'Waiting for peers to join...' : 'Scanning for nearby peers...'}
-          </p>
+          <motion.div 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-24 flex flex-col items-center gap-4 pointer-events-auto"
+          >
+             <div className="flex flex-col items-center">
+               <p className="text-[#ededed] text-sm font-bold text-center">
+                {isInRoom ? 'Awaiting peers...' : 'No one nearby.'}
+              </p>
+              <p className="text-[#71717a] text-[11px] text-center max-w-[180px] mt-1 leading-tight">
+                {isInRoom ? 'Share your room code with others to start transferring.' : 'Share this private link to invite someone to your direct channel.'}
+              </p>
+             </div>
+             <button 
+               onClick={() => {
+                 const url = window.location.href;
+                 navigator.clipboard.writeText(url);
+                 // We can't easily trigger the toast from here without passing it as prop, 
+                 // but we can change the text temporarily
+                 const btn = document.activeElement as HTMLButtonElement;
+                 if (btn) {
+                   const original = btn.innerText;
+                   btn.innerText = 'Copied!';
+                   btn.style.borderColor = '#10b981';
+                   btn.style.color = '#10b981';
+                   setTimeout(() => {
+                     btn.innerText = original;
+                     btn.style.borderColor = '';
+                     btn.style.color = '';
+                   }, 2000);
+                 }
+               }}
+               className="px-5 py-2 bg-[#ededed] text-black rounded-full text-[11px] font-black hover:bg-[#d4d4d8] transition-all active:scale-95 shadow-lg shadow-blue-500/10"
+             >
+               INVITE FRIEND
+             </button>
+          </motion.div>
         </div>
       )}
 

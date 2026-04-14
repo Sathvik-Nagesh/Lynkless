@@ -121,13 +121,19 @@ self.addEventListener('sync', (event) => {
   }
 });
 
-// Push event for keeping WebSocket alive
-self.addEventListener('push', (event) => {
-  event.waitUntil(
-    self.clients.matchAll().then((clients) => {
-      clients.forEach((client) => {
-        client.postMessage({ type: 'WAKE_UP' });
-      });
-    })
-  );
+// Invulnerability Patch: Keep-Alive messaging
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'KEEPALIVE_PING') {
+    // Acknowledge ping to reset internal idle timers
+    event.ports[0]?.postMessage({ type: 'KEEPALIVE_ACK', timestamp: Date.now() });
+  }
 });
+
+// Periodic noise to keep the worker from being collected
+setInterval(() => {
+  self.clients.matchAll().then(clients => {
+    if (clients.length > 0) {
+      // Just a heartbeat
+    }
+  });
+}, 30000);

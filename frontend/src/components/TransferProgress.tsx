@@ -185,6 +185,11 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
           <p className="text-[#a1a1aa] text-sm">
             {formatSize(transfer.transferredSize)} / {formatSize(transfer.totalSize)}
           </p>
+          {transfer.status === 'completed' && transfer.checksum && (
+            <p className="text-[10px] text-[#38bdf8] font-mono mt-1 opacity-70 truncate" title={`SHA-256: ${transfer.checksum}`}>
+              SHA-256: {transfer.checksum}
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-1.5">

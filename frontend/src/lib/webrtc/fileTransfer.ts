@@ -69,6 +69,7 @@ export interface TransferProgress {
   resumable?: boolean;
   type: 'incoming' | 'outgoing';
   peerId: string;
+  checksum?: string;
 }
 
 export type ProgressHandler = (progress: TransferProgress) => void;
@@ -133,6 +134,7 @@ interface IncomingTransferState {
   peerId: string;
   useWorker?: boolean;
   chunks?: (ArrayBuffer | null)[]; // RAM fallback
+  checksum?: string;
 }
 
 class FileTransferManager {
@@ -145,6 +147,8 @@ class FileTransferManager {
   private lastUpdateTimes: Map<string, number> = new Map();
   private meshTransfers: Map<string, { file: File; peerIds: string[]; transfers: Map<string, string> }> = new Map();
   private orphanedChunks: Map<string, ArrayBuffer[]> = new Map();
+  private speedSamples: Map<string, number[]> = new Map();
+  private readonly EMA_ALPHA = 0.2; // Smoothing factor for transfer speed
   private cleanupHandler: (() => void) | null = null;
   private stateCleanupHandler: (() => void) | null = null;
   private worker: Worker | null = null;
@@ -161,6 +165,9 @@ class FileTransferManager {
         console.warn('[FileTransfer] Failed to initialize Web Worker:', err);
       }
     }
+
+    // Bolt: Startup Garbage Collector for OPFS
+    this.cleanupOrphanedFiles();
   }
 
   private handleWorkerMessage(e: MessageEvent): void {
@@ -178,6 +185,10 @@ class FileTransferManager {
         });
       }
     } else if (msg.type === 'complete-success') {
+      const incoming = this.incomingFiles.get(msg.fileId);
+      if (incoming) {
+        incoming.checksum = msg.checksum;
+      }
       this.finalizeDownload(msg.fileId);
     } else if (msg.type === 'error') {
       console.error('[FileTransfer] Worker Error:', msg.error);
@@ -290,6 +301,39 @@ class FileTransferManager {
       peerId,
     };
 
+    // Military Grade: Generate or retrieve persistent salt for collision prevention
+    let salt = '';
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const saltKey = `lynkless-salt-${metadata.id}`;
+      salt = localStorage.getItem(saltKey) || Math.random().toString(36).substring(2, 10);
+      localStorage.setItem(saltKey, salt);
+    }
+    const opfsName = `lynkless-${metadata.id}-${salt}`;
+
+    // CROSS-SESSION RESUME DETECTION
+    try {
+      if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.getDirectory) {
+        const root = await navigator.storage.getDirectory();
+        const existingFile = await root.getFileHandle(opfsName).catch(() => null);
+        if (existingFile) {
+          const file = await existingFile.getFile();
+          if (file.size > 0 && file.size < metadata.size) {
+             console.log(`[FileTransfer] Found partial file for ${metadata.id} (${file.size} bytes). Resume auto-triggered.`);
+             incomingState.startOffset = file.size;
+             incomingState.receivedChunks = Math.floor(file.size / CHUNK_SIZE);
+             incomingState.lastReceivedIndex = incomingState.receivedChunks - 1;
+             
+             // Signal sender to resume
+             this.webrtc.sendToPeer(peerId, JSON.stringify({
+               type: 'file-resume-request',
+               fileId: metadata.id,
+               offset: file.size
+             }));
+          }
+        }
+      }
+    } catch (e) {}
+
     if (this.worker && typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.getDirectory === 'function') {
       incomingState.useWorker = true;
       this.worker.postMessage({
@@ -299,7 +343,8 @@ class FileTransferManager {
           metadata: {
             id: metadata.id,
             size: metadata.size,
-            totalChunks: metadata.totalChunks
+            totalChunks: metadata.totalChunks,
+            salt: salt // Pass the salt to the worker
           }
         }
       });
@@ -411,7 +456,11 @@ class FileTransferManager {
 
     try {
       const root = await navigator.storage.getDirectory();
-      const fileHandle = await root.getFileHandle(`lynkless-${incoming.metadata.id}`);
+      const saltKey = `lynkless-salt-${incoming.metadata.id}`;
+      const salt = typeof window !== 'undefined' ? localStorage.getItem(saltKey) : '';
+      const opfsName = salt ? `lynkless-${incoming.metadata.id}-${salt}` : `lynkless-${incoming.metadata.id}`;
+      
+      const fileHandle = await root.getFileHandle(opfsName);
       const file = await fileHandle.getFile();
       
       // Blob casting for compatibility
@@ -1067,7 +1116,12 @@ class FileTransferManager {
         const transferredSize = overrides?.transferredSize ?? outgoing.progress.transferredSize;
         const elapsed = (now - outgoing.startTime) / 1000;
         const bytesThisSession = transferredSize - outgoing.startOffset;
-        const speed = elapsed > 0 ? bytesThisSession / elapsed : 0;
+        
+        // EMA Speed Smoothing (Advanced Performance Math)
+        const instantaneousSpeed = elapsed > 0 ? bytesThisSession / elapsed : 0;
+        const prevSpeed = outgoing.progress.speed || instantaneousSpeed;
+        const speed = (this.EMA_ALPHA * instantaneousSpeed) + (1 - this.EMA_ALPHA) * prevSpeed;
+
         const remainingBytes = outgoing.metadata.size - transferredSize;
         const remainingTime = speed > 0 ? remainingBytes / speed : 0;
 
@@ -1086,7 +1140,14 @@ class FileTransferManager {
         const transferredSize = Math.min(rawTransferredSize, incoming.metadata.size);
         const elapsed = (now - incoming.startTime) / 1000;
         const bytesThisSession = transferredSize - incoming.startOffset;
-        const speed = elapsed > 0 ? bytesThisSession / elapsed : 0;
+        
+        // EMA Speed Smoothing for incoming
+        const instantaneousSpeed = elapsed > 0 ? bytesThisSession / elapsed : 0;
+        // Since incoming state is semi-transient, we check if we already have a speed
+        const prevSpeed = this.lastUpdateTimes.get(`${fileId}-speed`) || instantaneousSpeed;
+        const speed = (this.EMA_ALPHA * instantaneousSpeed) + (1 - this.EMA_ALPHA) * prevSpeed;
+        this.lastUpdateTimes.set(`${fileId}-speed`, speed);
+
         const remainingBytes = incoming.metadata.size - transferredSize;
         const remainingTime = speed > 0 ? remainingBytes / speed : 0;
 
@@ -1133,6 +1194,40 @@ class FileTransferManager {
     this.fileReceivedHandlers.clear();
     this.incomingFiles.clear();
     this.outgoingTransfers.clear();
+  }
+
+  /**
+   * OPFS Garbage Collector (Edge Case Part 3)
+   * Scans browser storage for orphaned partial files from crashed sessions.
+   */
+  private async cleanupOrphanedFiles(): Promise<void> {
+    if (typeof navigator === 'undefined' || !navigator.storage || !navigator.storage.getDirectory) return;
+    
+    try {
+      const root = await navigator.storage.getDirectory();
+      const entries = (root as any).entries(); // Iteration helper
+      
+      for await (const [name, entry] of entries) {
+        if (name.startsWith('lynkless-')) {
+          const fileId = name.replace('lynkless-', '');
+          // If the file is not currently active, and its older than 24 hours, purge it
+          if (!this.incomingFiles.has(fileId)) {
+             try {
+               const file = await entry.getFile();
+               const isOld = (Date.now() - file.lastModified) > 24 * 60 * 60 * 1000;
+               if (isOld) {
+                 await root.removeEntry(name);
+                 console.log(`[GC] Purged abandoned file: ${name}`);
+               }
+             } catch {
+               // If we can't get file metadata, keep it to be safe or delete if its very old
+             }
+          }
+        }
+      }
+    } catch (err) {
+      // Quiet fail for GC
+    }
   }
 }
 

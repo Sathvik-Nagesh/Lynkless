@@ -54,6 +54,7 @@ export default function Home() {
   const [showFilePreview, setShowFilePreview] = useState(false);
   const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
   const [isGlobalDragging, setIsGlobalDragging] = useState(false);
+  const [isFocusMode, setIsFocusMode] = useState(false);
   const dragCounter = useRef(0);
   const sounds = useRef(getSounds());
   const { showToast } = useToast();
@@ -109,10 +110,13 @@ export default function Home() {
     joinRoom: (code) => joinRoom(code),
   });
 
-  // Handle Edge Case: Prevent accidental tab closure or mobile screen sleep during active transfers
-  const activeTransfersCount = useMemo(() => 
-    transfers.filter(t => t.status === 'transferring').length, 
-  [transfers]);
+  const activeTransfersCount = useMemo(() =>
+    transfers.filter(t => t.status === 'transferring' || t.status === 'paused').length,
+    [transfers]);
+
+  useEffect(() => {
+    setIsFocusMode(activeTransfersCount > 0);
+  }, [activeTransfersCount]);
 
   useTransferProtection(activeTransfersCount);
 
@@ -216,6 +220,19 @@ export default function Home() {
     }
   }, [pendingFiles, peers, showFilePreview]);
 
+  // Invulnerability Patch: Service Worker Keep-Alive Loop
+  useEffect(() => {
+    if (activeTransfersCount === 0 || !('serviceWorker' in navigator)) return;
+
+    const interval = setInterval(() => {
+      navigator.serviceWorker.ready.then((registration) => {
+        registration.active?.postMessage({ type: 'KEEPALIVE_PING' });
+      });
+    }, 15000); // Ping every 15s during transfers
+
+    return () => clearInterval(interval);
+  }, [activeTransfersCount]);
+
   // Handle incoming files from Web Share Target Native OS Menu
   useEffect(() => {
     if (typeof window !== 'undefined' && window.location.search.includes('shared=true')) {
@@ -239,7 +256,7 @@ export default function Home() {
             if (getReq.result && Array.isArray(getReq.result)) {
               handleFileDrop(getReq.result);
               tx.objectStore('shared_files').delete('pending_share');
-              
+
               const url = new URL(window.location.href);
               url.searchParams.delete('shared');
               window.history.replaceState({}, '', url.toString());
@@ -256,7 +273,7 @@ export default function Home() {
   // Confirm and send files
   const handleConfirmSend = useCallback(async (password?: string, shouldZip?: boolean, compressImagesFlag?: boolean) => {
     setShowFilePreview(false);
-    
+
     // Clear pending files immediately so useEffect doesn't reopen modal
     const finalFilesToProcess = [...pendingFiles];
     setPendingFiles([]);
@@ -267,7 +284,7 @@ export default function Home() {
 
     try {
       let finalFiles = finalFilesToProcess;
-      
+
       if (compressImagesFlag && finalFiles.some(f => f.type.startsWith('image/'))) {
         showToast('Compressing images...', 'info');
         finalFiles = await Promise.all(
@@ -279,7 +296,7 @@ export default function Home() {
           })
         );
       }
-      
+
       if (shouldZip && finalFiles.length > 1) {
         showToast('Zipping files...', 'info');
         try {
@@ -291,7 +308,7 @@ export default function Home() {
         }
       }
 
-      const filesToSend = password 
+      const filesToSend = password
         ? await Promise.all(finalFiles.map(f => E2EEHelper.encryptFile(f, password)))
         : finalFiles;
 
@@ -309,7 +326,7 @@ export default function Home() {
           }
         }
       }
-      
+
       console.log(`[File Drop] Sent ${finalFilesToProcess.length} file(s) to ${connectedPeers.length} peer(s)`);
       sounds.current.playTransferComplete();
       showToast(`Sent ${finalFilesToProcess.length} file(s) to ${connectedPeers.length} peer(s)`, 'success');
@@ -385,7 +402,7 @@ export default function Home() {
       if (transfer.status === 'completed' && transfer.type === 'incoming') {
         if (!notifiedTransfersRef.current.has(transfer.fileId)) {
           notifiedTransfersRef.current.add(transfer.fileId);
-          
+
           // Trigger Wow-Factor Haptics! (Thump-Thump)
           if (typeof navigator !== 'undefined' && navigator.vibrate) {
             navigator.vibrate([100, 50, 100, 50, 200]);
@@ -403,7 +420,7 @@ export default function Home() {
   // Memoize connected peers to stabilize downstream calculations
   const connectedPeers = useMemo(() =>
     peers.filter(p => p.state === 'connected'),
-  [peers]);
+    [peers]);
 
   // Count connected peers
   const connectedPeersCount = connectedPeers.length;
@@ -411,7 +428,7 @@ export default function Home() {
   // Check if we can send files (have a connected peer)
   const canSendFile = useMemo(() =>
     !!selectedPeer && connectedPeers.some(p => p.id === selectedPeer),
-  [selectedPeer, connectedPeers]);
+    [selectedPeer, connectedPeers]);
 
   // Prepare users for radar with their connection states - Memoized to prevent Radar re-renders
   const radarUsers = useMemo(() => roomState.users.map(user => ({
@@ -422,7 +439,7 @@ export default function Home() {
   // Memoize peers for ChatPanel to prevent unnecessary re-renders
   const chatPeers = useMemo(() =>
     connectedPeers.map(p => ({ id: p.id })),
-  [connectedPeers]);
+    [connectedPeers]);
 
   // Active transfer peers for Radar Particle Animation
   const activeTransferPeerIds = useMemo(() => {
@@ -431,7 +448,7 @@ export default function Home() {
   }, [transfers]);
 
   return (
-    <main 
+    <main
       className="min-h-screen p-4 md:p-10 relative overflow-hidden"
       onDragEnter={(e) => {
         e.preventDefault();
@@ -511,8 +528,8 @@ export default function Home() {
               <div className="text-center">
                 <h2 className="text-3xl font-bold text-white mb-2">Drop files anywhere to send!</h2>
                 <p className="text-[#a1a1aa] text-lg">
-                  {canSendFile 
-                    ? `Sending to connected peers` 
+                  {canSendFile
+                    ? `Sending to connected peers`
                     : 'Select a peer from the Radar first'}
                 </p>
               </div>
@@ -570,7 +587,7 @@ export default function Home() {
             className="flex items-center gap-4"
           >
             {/* Animated Mesh SVG */}
-            <motion.div 
+            <motion.div
               className="w-12 h-12 md:w-16 md:h-16 hidden sm:flex items-center justify-center bg-blue-500/10 rounded-2xl border border-blue-500/20 flex-shrink-0 relative overflow-hidden"
             >
               <motion.svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400 absolute"
@@ -614,7 +631,7 @@ export default function Home() {
           </motion.div>
 
           {/* New Feature Highlights Bar */}
-          <motion.div 
+          <motion.div
             className="hidden xl:flex items-center gap-6 px-6 border-l border-[#27272a] ml-6"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -657,416 +674,377 @@ export default function Home() {
 
       {/* Main content */}
       <div className="max-w-6xl mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-8">
+        <div className={`grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-8 transition-all duration-500 ${isFocusMode ? 'lg:grid-cols-1 max-w-2xl mx-auto' : ''}`}>
           {/* Left column - Radar and Room Controls */}
-          <div className="space-y-4 md:space-y-6">
-            {/* Room Controls */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1 }}
-            >
-              <RoomControls
-                roomCode={roomState.code}
-                isInRoom={!!roomState.code}
-                isCreator={roomState.isCreator}
-                onCreateRoom={createRoom}
-                onJoinRoom={joinRoom}
-                onLeaveRoom={leaveRoom}
-                error={error}
-              />
-            </motion.div>
-
-            {/* Server Wakeup Game / Loading state */}
-            {isLoading && (
+          {!isFocusMode && (
+            <div className="space-y-4 md:space-y-6">
+              {/* Room Controls */}
               <motion.div
-                initial={{ opacity: 0, y: 10 }}
+                initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, height: 0 }}
+                transition={{ delay: 0.1 }}
               >
-                <ServerWakeupGame />
+                <RoomControls
+                  roomCode={roomState.code}
+                  isInRoom={!!roomState.code}
+                  isCreator={roomState.isCreator}
+                  onCreateRoom={createRoom}
+                  onJoinRoom={joinRoom}
+                  onLeaveRoom={leaveRoom}
+                  error={error}
+                />
               </motion.div>
-            )}
 
-            {/* Tabs for switching Views */}
-            <motion.div
-              className="flex gap-1 p-1 bg-[#111] rounded-xl border border-[#27272a]"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.15 }}
-            >
-              <button
-                onClick={() => setActiveView('files')}
-                className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${
-                  activeView === 'files' 
-                    ? 'bg-[#27272a] text-white shadow-sm' 
-                    : 'text-[#a1a1aa] hover:text-[#ededed] hover:bg-[#1f1f1f]'
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
-                </svg>
-                Files & Radar
-              </button>
-              <button
-                onClick={() => setActiveView('screen')}
-                className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${
-                  activeView === 'screen' 
-                    ? 'bg-[#27272a] text-white shadow-sm' 
-                    : 'text-[#a1a1aa] hover:text-[#ededed] hover:bg-[#1f1f1f]'
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                </svg>
-                Screen Share
-                {remoteStreams.size > 0 && (
-                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse ml-1" />
-                )}
-              </button>
-            </motion.div>
-
-            {/* Radar Discovery - Refined panel */}
-            <AnimatePresence mode="wait">
-              {activeView === 'files' ? (
+              {/* Server Wakeup Game / Loading state */}
+              {isLoading && (
                 <motion.div
-                  key="files-view"
-                  className="space-y-4 md:space-y-6"
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.2 }}
+                  exit={{ opacity: 0, height: 0 }}
                 >
-                  <div className="panel-elevated p-4 sm:p-6">
+                  <ServerWakeupGame />
+                </motion.div>
+              )}
+
+              {/* Tabs for switching Views */}
+              <motion.div
+                className="flex gap-1 p-1 bg-[#111] rounded-xl border border-[#27272a]"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: 0.15 }}
+              >
+                <button
+                  onClick={() => setActiveView('files')}
+                  className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${activeView === 'files'
+                      ? 'bg-[#27272a] text-white shadow-sm'
+                      : 'text-[#a1a1aa] hover:text-[#ededed] hover:bg-[#1f1f1f]'
+                    }`}
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
+                  </svg>
+                  Files & Radar
+                </button>
+                <button
+                  onClick={() => setActiveView('screen')}
+                  className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${activeView === 'screen'
+                      ? 'bg-[#27272a] text-white shadow-sm'
+                      : 'text-[#a1a1aa] hover:text-[#ededed] hover:bg-[#1f1f1f]'
+                    }`}
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                  </svg>
+                  Screen Share
+                  {remoteStreams.size > 0 && (
+                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse ml-1" />
+                  )}
+                </button>
+              </motion.div>
+
+              {/* Radar Discovery - Refined panel */}
+              <AnimatePresence mode="wait">
+                {activeView === 'files' ? (
+                  <motion.div
+                    key="files-view"
+                    className="space-y-4 md:space-y-6"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <div className="panel-elevated p-4 sm:p-6">
+                      <div className="flex items-center gap-3 mb-5">
+                        <div
+                          className="w-9 h-9 rounded-xl flex items-center justify-center border border-[#27272a] shadow-sm bg-[#111]"
+                        >
+                          <svg className="w-4 h-4 text-[#ededed]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                          </svg>
+                        </div>
+                        <div className="flex-1">
+                          <h2 className="text-base font-semibold text-[#ededed]">Discovery Radar</h2>
+                          <p className="text-xs text-[#a1a1aa]">
+                            {roomState.code
+                              ? `Room ${roomState.code} • ${roomState.users.length} peer${roomState.users.length !== 1 ? 's' : ''}`
+                              : nearbyPeers.length > 0
+                                ? `${nearbyPeers.length} nearby peer${nearbyPeers.length !== 1 ? 's' : ''} detected`
+                                : 'Scanning for nearby peers...'}
+                          </p>
+                        </div>
+                        {/* QR Actions */}
+                        <div className="flex gap-2">
+                          <motion.button
+                            onClick={() => setShowQRCode(true)}
+                            className="btn-icon text-[#ededed]"
+                            whileHover={{ scale: 1.02 }}
+                            whileTap={{ scale: 0.98 }}
+                            title="Show my QR code"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                            </svg>
+                          </motion.button>
+                          <motion.button
+                            onClick={() => setShowQRScanner(true)}
+                            className="btn-icon text-[#ededed]"
+                            whileHover={{ scale: 1.02 }}
+                            whileTap={{ scale: 0.98 }}
+                            title="Scan QR code"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                          </motion.button>
+                        </div>
+                      </div>
+
+                      <Radar
+                        users={radarUsers}
+                        nearbyPeers={nearbyPeers}
+                        peerStates={peerStates}
+                        onUserClick={handleUserClick}
+                        currentUserId={clientId}
+                        isInRoom={!!roomState.code}
+                        activeTransferPeerIds={activeTransferPeerIds}
+                      />
+
+                      {/* Selected peer indicator */}
+                      <AnimatePresence>
+                        {selectedPeer && (
+                          <motion.div
+                            className="mt-5 p-3 rounded-xl"
+                            style={{
+                              background: 'var(--bg-elevated)',
+                              border: '1px solid var(--border-default)'
+                            }}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -10 }}
+                          >
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <div
+                                  className="w-2 h-2 rounded-full"
+                                  style={{ backgroundColor: canSendFile ? 'var(--state-success)' : 'var(--state-warning)' }}
+                                />
+                                <span className="text-sm flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
+                                  <span className="text-base">{getEmojiForPeer(selectedPeer)}</span>
+                                  <span className="font-medium">{getPeerName(selectedPeer)}</span>
+                                </span>
+                                {/* Connection quality badge */}
+                                <ConnectionStatusBadge
+                                  quality={canSendFile ? 'excellent' : 'disconnected'}
+                                  showDetails={true}
+                                  isRelay={peers.find(p => p.id === selectedPeer)?.isRelay}
+                                />
+                              </div>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => setSelectedPeer(null)}
+                                  className="text-[#71717a] hover:text-[#ededed] text-xs transition-colors px-2 py-1"
+                                >
+                                  Deselect
+                                </button>
+                                {canSendFile && (
+                                  <button
+                                    onClick={() => {
+                                      disconnectFromPeer(selectedPeer);
+                                      setSelectedPeer(null);
+                                    }}
+                                    className="text-[#ef4444] hover:text-[#f87171] text-xs transition-colors px-2 py-1"
+                                  >
+                                    Disconnect
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            <p className="text-[10px] text-[#71717a]">
+                              {canSendFile ? 'Ready to transfer files and chat' : 'Waiting for connection...'}
+                            </p>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      {/* Connection Fingerprint Verification */}
+                      {selectedPeer && canSendFile && (
+                        <div className="mt-4 space-y-3">
+                          <ConnectionFingerprint
+                            fingerprint={getFingerprint(selectedPeer) || null}
+                            peerId={selectedPeer}
+                            isConnected={canSendFile}
+                          />
+                          <ConnectionQualityDashboard
+                            peerId={selectedPeer}
+                          />
+
+                        </div>
+                      )}
+
+                      {/* Nearby discovery notice (when not in room) */}
+                      {!roomState.code && nearbyPeers.length === 0 && (
+                        <div
+                          className="mt-5 p-3 rounded-xl"
+                          style={{ background: 'var(--bg-hover)' }}
+                        >
+                          <p className="text-[#a1a1aa] text-sm text-center">
+                            💡 Create or join a room to connect with remote peers, or wait for nearby peers to be detected automatically.
+                          </p>
+                        </div>
+                      ) : (
+                      <motion.div
+                        key="screen-view"
+                        className="space-y-4 md:space-y-6"
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        <ScreenSharePanel
+                          localStream={localStream}
+                          remoteStreams={remoteStreams}
+                          onStartShare={startScreenShare}
+                          onStopShare={stopScreenShare}
+                          peerCount={connectedPeersCount}
+                        />
+                      </motion.div>
+              )}
+                    </AnimatePresence>
+                  </div>
+                )}
+
+                {/* Right column - File Transfer and Chat */}
+                <div className="space-y-6">
+                  <ConnectedPeersPanel
+                    connectedPeers={connectedPeers}
+                    selectedPeer={selectedPeer}
+                    onSelectPeer={setSelectedPeer}
+                  />
+                  {/* File Drop Zone - Refined panel */}
+                  <motion.div
+                    className="panel-elevated p-6"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.3 }}
+                  >
                     <div className="flex items-center gap-3 mb-5">
                       <div
                         className="w-9 h-9 rounded-xl flex items-center justify-center border border-[#27272a] shadow-sm bg-[#111]"
                       >
                         <svg className="w-4 h-4 text-[#ededed]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                         </svg>
                       </div>
-                <div className="flex-1">
-                  <h2 className="text-base font-semibold text-[#ededed]">Discovery Radar</h2>
-                  <p className="text-xs text-[#a1a1aa]">
-                    {roomState.code
-                      ? `Room ${roomState.code} • ${roomState.users.length} peer${roomState.users.length !== 1 ? 's' : ''}`
-                      : nearbyPeers.length > 0
-                        ? `${nearbyPeers.length} nearby peer${nearbyPeers.length !== 1 ? 's' : ''} detected`
-                        : 'Scanning for nearby peers...'}
-                  </p>
-                </div>
-                {/* QR Actions */}
-                <div className="flex gap-2">
-                  <motion.button
-                    onClick={() => setShowQRCode(true)}
-                    className="btn-icon text-[#ededed]"
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    title="Show my QR code"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
-                    </svg>
-                  </motion.button>
-                  <motion.button
-                    onClick={() => setShowQRScanner(true)}
-                    className="btn-icon text-[#ededed]"
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    title="Scan QR code"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                  </motion.button>
-                </div>
-              </div>
-
-              <Radar
-                users={radarUsers}
-                nearbyPeers={nearbyPeers}
-                peerStates={peerStates}
-                onUserClick={handleUserClick}
-                currentUserId={clientId}
-                isInRoom={!!roomState.code}
-                activeTransferPeerIds={activeTransferPeerIds}
-              />
-
-              {/* Selected peer indicator */}
-              <AnimatePresence>
-                {selectedPeer && (
-                  <motion.div
-                    className="mt-5 p-3 rounded-xl"
-                    style={{
-                      background: 'var(--bg-elevated)',
-                      border: '1px solid var(--border-default)'
-                    }}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <div
-                          className="w-2 h-2 rounded-full"
-                          style={{ backgroundColor: canSendFile ? 'var(--state-success)' : 'var(--state-warning)' }}
-                        />
-                        <span className="text-sm flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
-                          <span className="text-base">{getEmojiForPeer(selectedPeer)}</span>
-                          <span className="font-medium">{getPeerName(selectedPeer)}</span>
-                        </span>
-                        {/* Connection quality badge */}
-                        <ConnectionStatusBadge
-                          quality={canSendFile ? 'excellent' : 'disconnected'}
-                          showDetails={true}
-                          isRelay={peers.find(p => p.id === selectedPeer)?.isRelay}
-                        />
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => setSelectedPeer(null)}
-                          className="text-[#71717a] hover:text-[#ededed] text-xs transition-colors px-2 py-1"
-                        >
-                          Deselect
-                        </button>
-                        {canSendFile && (
-                          <button
-                            onClick={() => {
-                              disconnectFromPeer(selectedPeer);
-                              setSelectedPeer(null);
-                            }}
-                            className="text-[#ef4444] hover:text-[#f87171] text-xs transition-colors px-2 py-1"
-                          >
-                            Disconnect
-                          </button>
-                        )}
-                      </div>
+                      <h2 className="text-base font-semibold text-[#ededed]">Send Files</h2>
                     </div>
-                    <p className="text-[10px] text-[#71717a]">
-                      {canSendFile ? 'Ready to transfer files and chat' : 'Waiting for connection...'}
-                    </p>
+
+                    <FileDropZone
+                      onFileDrop={handleFileDrop}
+                      disabled={!canSendFile}
+                    />
+
+                    {/* Transfer Progress */}
+                    <AnimatePresence>
+                      {transfers.length > 0 && (
+                        <motion.div
+                          className="mt-5 space-y-3"
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                        >
+                          {transfers.map((transfer) => (
+                            <TransferProgress
+                              key={transfer.fileId}
+                              transfer={transfer}
+                              onCancel={cancelTransfer}
+                              onPause={pauseTransfer}
+                              onResume={resumeTransfer}
+                            />
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </motion.div>
-                )}
-              </AnimatePresence>
 
-              {/* Connection Fingerprint Verification */}
-              {selectedPeer && canSendFile && (
-                <div className="mt-4 space-y-3">
-                  <ConnectionFingerprint
-                    fingerprint={getFingerprint(selectedPeer) || null}
-                    peerId={selectedPeer}
-                    isConnected={canSendFile}
-                  />
-                  <ConnectionQualityDashboard
-                    peerId={selectedPeer}
-                  />
-
-                </div>
-              )}
-
-              {/* Nearby discovery notice (when not in room) */}
-              {!roomState.code && nearbyPeers.length === 0 && (
-                <div
-                  className="mt-5 p-3 rounded-xl"
-                  style={{ background: 'var(--bg-hover)' }}
-                >
-                  <p className="text-[#a1a1aa] text-sm text-center">
-                    💡 Create or join a room to connect with remote peers, or wait for nearby peers to be detected automatically.
-                  </p>
-                </div>
-              )}
-              </div>
-            </motion.div>
-          ) : (
-            <motion.div
-              key="screen-view"
-              className="space-y-4 md:space-y-6"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-            >
-              <ScreenSharePanel
-                localStream={localStream}
-                remoteStreams={remoteStreams}
-                onStartShare={startScreenShare}
-                onStopShare={stopScreenShare}
-                peerCount={connectedPeersCount}
-              />
-            </motion.div>
-          )}
-        </AnimatePresence>
-          </div>
-
-          {/* Right column - File Transfer and Chat */}
-          <div className="space-y-6">
-            <ConnectedPeersPanel
-              connectedPeers={connectedPeers}
-              selectedPeer={selectedPeer}
-              onSelectPeer={setSelectedPeer}
-            />
-            {/* File Drop Zone - Refined panel */}
-            <motion.div
-              className="panel-elevated p-6"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 }}
-            >
-              <div className="flex items-center gap-3 mb-5">
-                <div
-                  className="w-9 h-9 rounded-xl flex items-center justify-center border border-[#27272a] shadow-sm bg-[#111]"
-                >
-                  <svg className="w-4 h-4 text-[#ededed]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                  </svg>
-                </div>
-                <h2 className="text-base font-semibold text-[#ededed]">Send Files</h2>
-              </div>
-
-              <FileDropZone
-                onFileDrop={handleFileDrop}
-                disabled={!canSendFile}
-              />
-
-              {/* Transfer Progress */}
-              <AnimatePresence>
-                {transfers.length > 0 && (
+                  {/* Chat Panel */}
                   <motion.div
-                    className="mt-5 space-y-3"
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.4 }}
                   >
-                    {transfers.map((transfer) => (
-                      <TransferProgress
-                        key={transfer.fileId}
-                        transfer={transfer}
-                        onCancel={cancelTransfer}
-                        onPause={pauseTransfer}
-                        onResume={resumeTransfer}
-                      />
-                    ))}
+                    <ChatPanel
+                      messages={messages}
+                      onSendMessage={sendMessage}
+                      disabled={connectedPeersCount === 0}
+                      connectedPeers={chatPeers}
+                    />
                   </motion.div>
-                )}
-              </AnimatePresence>
-            </motion.div>
 
-            {/* Chat Panel */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.4 }}
-            >
-              <ChatPanel
-                messages={messages}
-                onSendMessage={sendMessage}
-                disabled={connectedPeersCount === 0}
-                connectedPeers={chatPeers}
-              />
-            </motion.div>
+                  {/* Text/Code Snippet Share */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.45 }}
+                  >
+                    <TextSnippetShare
+                      onSendText={sendMessage}
+                      disabled={connectedPeersCount === 0}
+                    />
+                  </motion.div>
 
-            {/* Text/Code Snippet Share */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.45 }}
-            >
-              <TextSnippetShare
-                onSendText={sendMessage}
-                disabled={connectedPeersCount === 0}
-              />
-            </motion.div>
+                  {/* Transfer History Panel */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.5 }}
+                  >
+                    <TransferHistoryPanel />
+                  </motion.div>
 
-            {/* Transfer History Panel */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.5 }}
-            >
-              <TransferHistoryPanel />
-            </motion.div>
-
-            {/* Decryption Tool */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.6 }}
-            >
-              <DecryptionTool />
-            </motion.div>
-          </div>
-        </div>
+                  {/* Decryption Tool */}
+                  {!isFocusMode && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.6 }}
+                    >
+                      <DecryptionTool />
+                    </motion.div>
+                  )}
+                </div>
+            </div>
 
         {/* Privacy Notice - Refined */}
-        <motion.div
-          className="mt-10 p-4 rounded-xl text-center"
-          style={{
-            background: 'var(--bg-surface)',
-            border: '1px solid var(--border-subtle)'
-          }}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5 }}
-        >
-          <div className="flex items-center justify-center gap-2 text-sm">
-            <svg className="w-4 h-4" style={{ color: '#22C55E' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-            </svg>
-            <span className="text-[#94A3B8]">
-              <strong style={{ color: '#22C55E' }}>Zero-storage architecture</strong> — Files transfer directly via WebRTC encryption
-            </span>
-          </div>
-        </motion.div>
-      </div>
-
-      {/* Footer / Safe Area Padding */}
-      <div className="h-[env(safe-area-inset-bottom,24px)]" />
-
-      {/* PWA Install Prompt */}
-      <PWAInstallPrompt />
-
-      {/* New Features Spotlight */}
-      <motion.div
-        className="fixed bottom-6 right-6 z-40 hidden md:block"
-        initial={{ opacity: 0, y: 50, scale: 0.8 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ delay: 2, type: 'spring' }}
-      >
-        <div className="bg-[#111]/80 backdrop-blur-xl border border-[#38bdf8]/30 p-5 rounded-2xl shadow-[0_0_30px_rgba(56,189,248,0.15)] flex flex-col gap-3 min-w-[240px]">
-          <div className="flex items-center gap-2">
-            <span className="flex h-2 w-2 rounded-full bg-[#38bdf8] animate-ping" />
-            <h4 className="text-[11px] font-black uppercase tracking-widest text-[#38bdf8]">What's New v2.2</h4>
-          </div>
-          <div className="space-y-2.5">
-            <div className="flex items-center gap-3">
-              <span className="text-xl">🚀</span>
-              <div className="flex flex-col">
-                <span className="text-xs font-bold text-white">20GB Monster Transfers</span>
-                <span className="text-[10px] text-[#a1a1aa]">Safe, atomic & stable</span>
-              </div>
+          <motion.div
+            className="mt-10 p-4 rounded-xl text-center"
+            style={{
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-subtle)'
+            }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.5 }}
+          >
+            <div className="flex items-center justify-center gap-2 text-sm">
+              <svg className="w-4 h-4" style={{ color: '#22C55E' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+              <span className="text-[#94A3B8]">
+                <strong style={{ color: '#22C55E' }}>Zero-storage architecture</strong> — Files transfer directly via WebRTC encryption
+              </span>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-xl">📱</span>
-              <div className="flex flex-col">
-                <span className="text-xs font-bold text-white">Native OS Sharing</span>
-                <span className="text-[10px] text-[#a1a1aa]">Share straight to Lynkless</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="text-xl">📺</span>
-              <div className="flex flex-col">
-                <span className="text-xs font-bold text-white">Floating Monitor (PiP)</span>
-                <span className="text-[10px] text-[#a1a1aa]">Detach transfer progress</span>
-              </div>
-            </div>
-          </div>
+          </motion.div>
         </div>
-      </motion.div>
 
-      {/* Onboarding Tutorial */}
-      <Onboarding />
+        {/* Footer / Safe Area Padding */}
+        <div className="h-[env(safe-area-inset-bottom,24px)]" />
+
+        {/* PWA Install Prompt */}
+        <PWAInstallPrompt />
+
+        {/* Onboarding Tutorial */}
+        <Onboarding />
     </main>
   );
 }
