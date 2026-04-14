@@ -133,7 +133,7 @@ interface IncomingTransferState {
   startOffset: number;
   peerId: string;
   useWorker?: boolean;
-  chunks?: (ArrayBuffer | null)[]; // RAM fallback
+  chunks?: (Uint8Array | null)[]; // RAM fallback
   checksum?: string;
 }
 
@@ -433,7 +433,8 @@ class FileTransferManager {
       // Progress UI is handled asynchronously by the worker's reply
     } else if (incoming.chunks && incoming.chunks[chunkIndex] === null) {
       // RAM Fallback: Store only the data part
-      const chunkData = data.slice(HEADER_SIZE);
+      // Bolt: Use zero-copy Uint8Array view instead of ArrayBuffer.slice() to avoid memory copies.
+      const chunkData = new Uint8Array(data, HEADER_SIZE);
       incoming.chunks[chunkIndex] = chunkData;
       incoming.receivedChunks++;
       incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, chunkIndex);
@@ -454,8 +455,10 @@ class FileTransferManager {
       this.worker.postMessage({ type: 'complete', fileId });
       // The finalization blob grab happens async in finalizeDownload 
     } else {
-      const validChunks = (incoming.chunks || []) as ArrayBuffer[];
-      const blob = new Blob(validChunks, { type: incoming.metadata.type });
+      const validChunks = (incoming.chunks || []) as Uint8Array[];
+      // Bolt: Wrap chunks in new Uint8Array to satisfy strict BlobPart constraints with SharedArrayBuffer.
+      const blobParts = validChunks.map(chunk => new Uint8Array(chunk));
+      const blob = new Blob(blobParts, { type: incoming.metadata.type });
       
       this.fileReceivedHandlers.forEach((h) => h(blob, incoming.metadata));
       this.notifyProgress(fileId, 'completed', { transferredSize: incoming.metadata.size });
