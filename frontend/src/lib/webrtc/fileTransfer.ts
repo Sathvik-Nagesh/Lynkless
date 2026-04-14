@@ -391,8 +391,6 @@ class FileTransferManager {
     // Chunk index is next 4 bytes (Uint32 LE)
     const chunkIndex = view.getUint32(FILE_ID_SIZE, true);
     // Real data starts after header
-    const chunkData = data.slice(HEADER_SIZE);
-
     const incoming = this.incomingFiles.get(fileId);
     if (!incoming) {
       // Buffer orphaned chunks if they arrive before file-meta (due to parallel channel striping)
@@ -411,15 +409,17 @@ class FileTransferManager {
     }
 
     if (incoming.useWorker && this.worker) {
-      // Zero-Copy Transfer to Web Worker
+      // Bolt: Zero-Copy Transfer to Web Worker
+      // Pass the FULL buffer (data) because worker validates the header.
       this.worker.postMessage({ 
         type: 'write', 
         fileId: fileId,
-        payload: { chunkIndex, data: chunkData }
-      }, [chunkData]);
+        payload: { chunkIndex, data: data }
+      }, [data]);
       // Progress UI is handled asynchronously by the worker's reply
     } else if (incoming.chunks && incoming.chunks[chunkIndex] === null) {
-      // RAM Fallback
+      // RAM Fallback: Store only the data part
+      const chunkData = data.slice(HEADER_SIZE);
       incoming.chunks[chunkIndex] = chunkData;
       incoming.receivedChunks++;
       incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, chunkIndex);
@@ -719,8 +719,11 @@ class FileTransferManager {
     }));
 
     // Send chunks
-    let chunkIndex = 0;
-    let transferredSize = 0;
+    const initialTransfer = this.outgoingTransfers.get(fileId);
+    let chunkIndex = initialTransfer?.lastChunkIndex !== undefined ? initialTransfer.lastChunkIndex + 1 : 0;
+    let transferredSize = initialTransfer?.lastChunkIndex !== undefined && initialTransfer.lastChunkIndex !== -1 
+      ? (initialTransfer.lastChunkIndex + 1) * CHUNK_SIZE 
+      : 0;
 
     try {
       while (chunkIndex < totalChunks) {

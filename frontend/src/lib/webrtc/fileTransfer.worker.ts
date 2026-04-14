@@ -57,7 +57,31 @@ function compareUint8Arrays(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
-self.onmessage = async (e: MessageEvent) => {
+const messageQueue: MessageEvent[] = [];
+let isProcessing = false;
+
+self.onmessage = (e: MessageEvent) => {
+  messageQueue.push(e);
+  processQueue();
+};
+
+async function processQueue() {
+  if (isProcessing || messageQueue.length === 0) return;
+  isProcessing = true;
+
+  while (messageQueue.length > 0) {
+    const e = messageQueue.shift()!;
+    try {
+      await handleMessage(e);
+    } catch (err) {
+      console.error('[Worker] Queue processing error:', err);
+    }
+  }
+
+  isProcessing = false;
+}
+
+async function handleMessage(e: MessageEvent) {
   const msg = e.data as WorkerMessage;
   
   if (msg.type === 'init') {
@@ -213,7 +237,7 @@ self.onmessage = async (e: MessageEvent) => {
       self.postMessage({ type: 'abort-success', fileId: msg.fileId });
     }
   }
-};
+}
 
 /**
  * Streaming Root Hash for Massive Files (20GB+)
