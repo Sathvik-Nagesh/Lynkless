@@ -439,8 +439,8 @@ class WebRTCManager {
       ch.bufferedAmount < best.bufferedAmount ? ch : best
     , channels[0]);
 
-    // Backpressure: wait if the chosen channel's buffer is overwhelmed (~1MB)
-    if (channel.bufferedAmount > 1024 * 1024) {
+    // Backpressure: wait if the chosen channel's buffer is overwhelmed (~8MB for high-speed saturation)
+    if (channel.bufferedAmount > 8 * 1024 * 1024) {
       await new Promise<void>((resolve) => {
         const onLow = () => {
           channel.removeEventListener('bufferedamountlow', onLow);

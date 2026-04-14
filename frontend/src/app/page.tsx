@@ -679,12 +679,13 @@ export default function Home() {
       </header>
 
       {/* Main content */}
-      <div className="max-w-7xl mx-auto">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6">
         {/* Main Content Area - Strategic Spacing */}
-        <div className={`grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-10 transition-all duration-500 ${isFocusMode ? 'lg:grid-cols-1 max-w-3xl mx-auto' : ''}`}>
-          {/* Left column - Radar and Room Controls */}
-          {!isFocusMode && (
-            <div className="space-y-6 md:space-y-8">
+        <div className={`grid grid-cols-1 gap-10 lg:gap-12 transition-all duration-700 ease-in-out ${
+          isFocusMode ? 'lg:grid-cols-[400px_1fr]' : 'lg:grid-cols-[1.1fr_1fr]'
+        }`}>
+          {/* Dashboard Left: Controls and Discovery */}
+          <div className={`space-y-8 transition-all duration-500 ${isFocusMode ? 'opacity-90' : 'opacity-100'}`}>
               {/* Room Controls */}
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
@@ -922,10 +923,9 @@ export default function Home() {
                 )}
               </AnimatePresence>
             </div>
-          )}
 
                 {/* Right column - File Transfer and Chat */}
-                <div className="space-y-6">
+                <div className={`space-y-8 transition-all duration-700 ${isFocusMode ? 'lg:pl-6' : ''}`}>
                   <ConnectedPeersPanel
                     connectedPeers={connectedPeers}
                     selectedPeer={selectedPeer}

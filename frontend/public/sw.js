@@ -31,8 +31,31 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch event - network first, fallback to cache
+// Invulnerability Patch: Use a virtual stream to trick Mobile OS into keeping process alive
+const activeTransferIds = new Set();
+
 self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  
+  // Virtual "Keep-Alive" Stream Endpoint
+  if (url.pathname === '/__keepalive_stream') {
+    event.respondWith(new Response(new ReadableStream({
+      start(controller) {
+        const interval = setInterval(() => {
+          if (activeTransferIds.size === 0) {
+            clearInterval(interval);
+            controller.close();
+            return;
+          }
+          controller.enqueue(new Uint8Array([0])); // Send heartbeat byte
+        }, 5000);
+      }
+    }), {
+      headers: { 'Content-Type': 'application/octet-stream' }
+    }));
+    return;
+  }
+
   // Handle Web Share Target POST requests
   if (event.request.method === 'POST' && event.request.url.endsWith('/share-target')) {
     event.respondWith((async () => {
@@ -66,74 +89,36 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Only cache GET requests
-  if (event.request.method !== 'GET') {
-    return;
-  }
+  if (event.request.method !== 'GET') return;
   
-  // Skip WebSocket connections
-  if (event.request.url.includes('ws://') || event.request.url.includes('wss://')) {
-    return;
-  }
+  // Skip cross-origin and specific protocols
+  if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/api')) return;
 
-  const requestUrl = new URL(event.request.url);
-  if (requestUrl.origin !== self.location.origin) {
-    return;
-  }
 
   const shouldCache =
-    urlsToCache.includes(requestUrl.pathname) ||
-    CACHEABLE_PATH_REGEX.test(requestUrl.pathname);
+    urlsToCache.includes(url.pathname) ||
+    CACHEABLE_PATH_REGEX.test(url.pathname);
 
   event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        const isValidForCache =
-          shouldCache &&
-          response.ok &&
-          response.type !== 'opaque';
-
-        if (isValidForCache) {
-          const responseToCache = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
+    caches.match(event.request).then((cached) => {
+      if (cached) return cached;
+      return fetch(event.request).then((response) => {
+        if (shouldCache && response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then(c => c.put(event.request, clone));
         }
         return response;
-      })
-      .catch(() => {
-        return caches.match(event.request);
-      })
+      });
+    })
   );
-});
-
-// Background Sync Event Listener
-// This helps prevent iOS/Android from aggressively suspending the background 
-// process while a file transfer is actively chunking data.
-self.addEventListener('sync', (event) => {
-  if (event.tag === 'lynkless-transfer-sync') {
-    event.waitUntil(
-      self.clients.matchAll({ includeUncontrolled: true }).then((clients) => {
-        clients.forEach((client) => {
-          client.postMessage({ type: 'BACKGROUND_KEEPALIVE', timestamp: Date.now() });
-        });
-      })
-    );
-  }
 });
 
 // Invulnerability Patch: Keep-Alive messaging
 self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'KEEPALIVE_PING') {
-    // Acknowledge ping to reset internal idle timers
-    event.ports[0]?.postMessage({ type: 'KEEPALIVE_ACK', timestamp: Date.now() });
+  if (event.data && event.data.type === 'TRANSFER_START') {
+    activeTransferIds.add(event.data.fileId);
+  } else if (event.data && event.data.type === 'TRANSFER_STOP') {
+    activeTransferIds.delete(event.data.fileId);
   }
 });
-
-// Periodic noise to keep the worker from being collected
-setInterval(() => {
-  self.clients.matchAll().then(clients => {
-    if (clients.length > 0) {
-      // Just a heartbeat
-    }
-  });
-}, 30000);

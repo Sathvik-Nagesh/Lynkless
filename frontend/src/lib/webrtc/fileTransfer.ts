@@ -152,6 +152,20 @@ class FileTransferManager {
   private cleanupHandler: (() => void) | null = null;
   private stateCleanupHandler: (() => void) | null = null;
   private worker: Worker | null = null;
+  private binaryIdCache: Map<string, Uint8Array> = new Map();
+  private encoder = new TextEncoder();
+
+  private getBinaryId(fileId: string): Uint8Array {
+    let cached = this.binaryIdCache.get(fileId);
+    if (!cached) {
+      cached = this.encoder.encode(fileId);
+      this.binaryIdCache.set(fileId, cached);
+      
+      // Auto-cleanup cache after 1 hour to prevent memory leaks
+      setTimeout(() => this.binaryIdCache.delete(fileId), 3600000);
+    }
+    return cached;
+  }
 
   constructor() {
     this.setupDataHandler();
@@ -718,61 +732,58 @@ class FileTransferManager {
       metadata,
     }));
 
-    // Send chunks
-    const initialTransfer = this.outgoingTransfers.get(fileId);
-    let chunkIndex = initialTransfer?.lastChunkIndex !== undefined ? initialTransfer.lastChunkIndex + 1 : 0;
-    let transferredSize = initialTransfer?.lastChunkIndex !== undefined && initialTransfer.lastChunkIndex !== -1 
-      ? (initialTransfer.lastChunkIndex + 1) * CHUNK_SIZE 
-      : 0;
+    // Dynamic Chunk Sizing: Use 256KB for massive files to reduce overhead
+    const EFFECTIVE_CHUNK_SIZE = file.size > 1024 * 1024 * 1000 ? 256 * 1024 : 64 * 1024;
+    const streamReader = file.stream().getReader();
+    let chunkIndex = 0;
+    let transferredSize = 0;
 
     try {
-      while (chunkIndex < totalChunks) {
+      // Warp Pipeline: Prefetching Loop
+      while (true) {
+        const { done, value } = await streamReader.read();
+        if (done) break;
+
         const transfer = this.outgoingTransfers.get(fileId);
         if (transfer?.cancelled) {
-          this.webrtc.sendToPeer(peerId, JSON.stringify({
-            type: 'file-cancel',
-            fileId,
-          }));
+          this.webrtc.sendToPeer(peerId, JSON.stringify({ type: 'file-cancel', fileId }));
           break;
         }
 
-        if (transfer?.paused) {
-          // Wait for resume or cancellation
-          await new Promise((resolve) => setTimeout(resolve, 100));
-          continue;
-        }
+        let offset = 0;
+        while (offset < value.length) {
+          const rawChunk = value.subarray(offset, Math.min(offset + EFFECTIVE_CHUNK_SIZE, value.length));
+          offset += EFFECTIVE_CHUNK_SIZE;
 
-        const startByte = chunkIndex * CHUNK_SIZE;
-        const endByte = Math.min(startByte + CHUNK_SIZE, file.size);
-        const slice = file.slice(startByte, endByte);
-        const rawChunk = new Uint8Array(await slice.arrayBuffer());
+          // Warp Packing: Use direct bit-shifting instead of DataView to save CPU cycles
+          const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
+          packedChunk.set(this.getBinaryId(fileId), 0);
+          
+          // Fast Binary Header Injection
+          packedChunk[36] = chunkIndex & 0xFF;
+          packedChunk[37] = (chunkIndex >> 8) & 0xFF;
+          packedChunk[38] = (chunkIndex >> 16) & 0xFF;
+          packedChunk[39] = (chunkIndex >> 24) & 0xFF;
+          
+          packedChunk.set(rawChunk, HEADER_SIZE);
 
-        // Bolt: Pack metadata and data into a single atomic binary message.
-        const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-        const encoder = new TextEncoder();
-        encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
-        const chunkView = new DataView(packedChunk.buffer);
-        chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
-        packedChunk.set(rawChunk, HEADER_SIZE);
+          // Backpressure & Burst
+          if (chunkIndex % 32 === 0) {
+            await this.webrtc.sendToPeer(peerId, packedChunk);
+            // Main thread heartbeat
+            await new Promise(resolve => setTimeout(resolve, 0));
+          } else {
+            this.webrtc.sendToPeer(peerId, packedChunk);
+          }
 
-        // Send atomic chunk
-        await this.webrtc.sendToPeer(peerId, packedChunk);
+          if (transfer) transfer.lastChunkIndex = chunkIndex;
+          chunkIndex++;
+          transferredSize += rawChunk.length;
 
-        if (transfer) {
-          transfer.lastChunkIndex = chunkIndex;
-        }
-        chunkIndex++;
-        transferredSize += rawChunk.length;
-
-        // Bolt: Throttled progress update with lazy metrics calculation
-        this.notifyProgress(fileId, 'transferring', {
-          transferredSize,
-          resumable: true,
-        });
-
-        // Bolt: Yield the event loop every 16 chunks to keep UI responsive without killing performance
-        if (chunkIndex % 16 === 0) {
-          await new Promise((resolve) => setTimeout(resolve, 0));
+          this.notifyProgress(fileId, 'transferring', {
+            transferredSize,
+            resumable: true,
+          });
         }
       }
 

@@ -464,23 +464,23 @@ const Radar = memo(function Radar({
         );
       })}
 
-      {/* Empty state message - Contextual Onboarding */}
+      {/* Empty state message - Contextual Onboarding (Nudged further down to clear the center) */}
       {!hasAnyPeers && (
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mt-20 flex flex-col items-center gap-5 pointer-events-auto"
+            className="mt-32 flex flex-col items-center gap-6 pointer-events-auto"
           >
              <div className="flex flex-col items-center">
-               <p className="text-[#ededed] text-sm font-bold text-center">
+                <p className="text-[#ededed] text-base font-bold text-center tracking-tight">
                 {isInRoom ? 'Awaiting peers...' : 'No one nearby.'}
               </p>
-              <p className="text-[#71717a] text-[11px] text-center max-w-[180px] mt-1 leading-tight">
+              <p className="text-[#71717a] text-xs text-center max-w-[200px] mt-2 leading-relaxed opacity-80">
                 {isInRoom ? 'Share your room code with others to start transferring.' : 'Share this private link to invite someone to your direct channel.'}
               </p>
-             </div>
-             <button 
+            </div>
+            <button
                onClick={() => {
                  const url = window.location.href;
                  navigator.clipboard.writeText(url);
