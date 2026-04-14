@@ -342,7 +342,7 @@ const Radar = memo(function Radar({
             transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
           />
         </div>
-        {currentUserId && (
+        {currentUserId && hasAnyPeers && (
           <span className="mt-2 text-[10px] whitespace-nowrap font-medium text-[#10b981] drop-shadow-md flex items-center gap-1">
             <span>{getEmojiForPeer(currentUserId)}</span>
             <span>{getPeerName(currentUserId).slice(0, 12)} ({currentUserId.replace('client_', '').substring(0, 6).toUpperCase()})</span>
@@ -470,7 +470,7 @@ const Radar = memo(function Radar({
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mt-24 flex flex-col items-center gap-4 pointer-events-auto"
+            className="mt-20 flex flex-col items-center gap-5 pointer-events-auto"
           >
              <div className="flex flex-col items-center">
                <p className="text-[#ededed] text-sm font-bold text-center">

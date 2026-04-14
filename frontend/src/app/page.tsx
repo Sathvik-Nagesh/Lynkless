@@ -280,6 +280,12 @@ export default function Home() {
 
     const connectedPeers = peers.filter(p => p.state === 'connected');
 
+    if (connectedPeers.length === 0) {
+      showToast('No peers connected. Connect to someone first!', 'error');
+      setPendingFiles(finalFilesToProcess); // Restore pending files
+      return;
+    }
+
     sounds.current.playTransferStart();
 
     try {
@@ -673,11 +679,12 @@ export default function Home() {
       </header>
 
       {/* Main content */}
-      <div className="max-w-6xl mx-auto">
-        <div className={`grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-8 transition-all duration-500 ${isFocusMode ? 'lg:grid-cols-1 max-w-2xl mx-auto' : ''}`}>
+      <div className="max-w-7xl mx-auto">
+        {/* Main Content Area - Strategic Spacing */}
+        <div className={`grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-10 transition-all duration-500 ${isFocusMode ? 'lg:grid-cols-1 max-w-3xl mx-auto' : ''}`}>
           {/* Left column - Radar and Room Controls */}
           {!isFocusMode && (
-            <div className="space-y-4 md:space-y-6">
+            <div className="space-y-6 md:space-y-8">
               {/* Room Controls */}
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
