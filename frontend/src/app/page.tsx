@@ -892,27 +892,30 @@ export default function Home() {
                             💡 Create or join a room to connect with remote peers, or wait for nearby peers to be detected automatically.
                           </p>
                         </div>
-                      ) : (
-                      <motion.div
-                        key="screen-view"
-                        className="space-y-4 md:space-y-6"
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -10 }}
-                        transition={{ duration: 0.2 }}
-                      >
-                        <ScreenSharePanel
-                          localStream={localStream}
-                          remoteStreams={remoteStreams}
-                          onStartShare={startScreenShare}
-                          onStopShare={stopScreenShare}
-                          peerCount={connectedPeersCount}
-                        />
-                      </motion.div>
-              )}
-                    </AnimatePresence>
-                  </div>
+                      )}
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="screen-view"
+                    className="space-y-4 md:space-y-6"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <ScreenSharePanel
+                      localStream={localStream}
+                      remoteStreams={remoteStreams}
+                      onStartShare={startScreenShare}
+                      onStopShare={stopScreenShare}
+                      peerCount={connectedPeersCount}
+                    />
+                  </motion.div>
                 )}
+              </AnimatePresence>
+            </div>
+          )}
 
                 {/* Right column - File Transfer and Chat */}
                 <div className="space-y-6">
