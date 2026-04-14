@@ -210,10 +210,11 @@ export default function Home() {
 
   // Handle queued files when a peer connects eventually
   useEffect(() => {
+    const connectedPeers = peers.filter(p => p.state === 'connected');
     if (pendingFiles.length > 0 && connectedPeers.length > 0 && !showFilePreview) {
       setShowFilePreview(true);
     }
-  }, [pendingFiles, connectedPeers, showFilePreview]);
+  }, [pendingFiles, peers, showFilePreview]);
 
   // Handle incoming files from Web Share Target Native OS Menu
   useEffect(() => {

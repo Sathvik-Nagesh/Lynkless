@@ -20,6 +20,7 @@ interface RadarProps {
   currentUserId: string | null;
   isInRoom: boolean;
   activeTransferPeerIds?: string[];
+  peerStates: Map<string, PeerConnectionState>;
 }
 
 type NodeState = 'idle' | 'request-sent' | 'request-received' | 'connected' | 'rejected';
