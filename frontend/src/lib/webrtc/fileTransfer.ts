@@ -1212,9 +1212,12 @@ class FileTransferManager {
       
       for await (const [name, entry] of entries) {
         if (name.startsWith('lynkless-')) {
-          const fileId = name.replace('lynkless-', '');
+          // Extract fileId from 'lynkless-{id}-{salt}'
+          const parts = name.split('-');
+          const fileId = parts.length >= 2 ? parts[1] : '';
+          
           // If the file is not currently active, and its older than 24 hours, purge it
-          if (!this.incomingFiles.has(fileId)) {
+          if (fileId && !this.incomingFiles.has(fileId)) {
              try {
                const file = await entry.getFile();
                const isOld = (Date.now() - file.lastModified) > 24 * 60 * 60 * 1000;

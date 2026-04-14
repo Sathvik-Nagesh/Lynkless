@@ -32,6 +32,7 @@ interface WorkerTransferState {
   totalChunks: number;
   receivedChunks: number;
   lastReceivedIndex: number;
+  opfsName: string; // Store the exact salted name
 }
 
 const fileHandles = new Map<string, FileSystemFileHandle>();
@@ -112,12 +113,12 @@ async function handleMessage(e: MessageEvent) {
       
       fileHandles.set(metadata.id, fileHandle);
       accessHandles.set(metadata.id, accessHandle);
-      metadataMap.set(metadata.id, {
+      metadataMap.set(fileId, {
         totalChunks: metadata.totalChunks,
         receivedChunks: 0,
         lastReceivedIndex: -1,
+        opfsName: opfsName
       });
-      lastProgressUpdate.set(metadata.id, 0);
 
       self.postMessage({ type: 'init-success', fileId: metadata.id });
     } catch (err: unknown) {
@@ -218,18 +219,19 @@ async function handleMessage(e: MessageEvent) {
     }
   }
   else if (msg.type === 'abort') {
-    const accessHandle = accessHandles.get(msg.fileId);
-    if (accessHandle) {
-      accessHandle.close();
-      accessHandles.delete(msg.fileId);
+    const meta = metadataMap.get(msg.fileId);
+    if (meta) {
+      const accessHandle = accessHandles.get(msg.fileId);
+      if (accessHandle) accessHandle.close();
       
       try {
         const root = await navigator.storage.getDirectory();
-        await root.removeEntry(`lynkless-${msg.fileId}`);
+        await root.removeEntry(meta.opfsName);
       } catch {
         // Silent fail on cleanup
       }
 
+      accessHandles.delete(msg.fileId);
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
       lastProgressUpdate.delete(msg.fileId);
