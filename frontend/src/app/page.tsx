@@ -256,12 +256,17 @@ export default function Home() {
   // Confirm and send files
   const handleConfirmSend = useCallback(async (password?: string, shouldZip?: boolean, compressImagesFlag?: boolean) => {
     setShowFilePreview(false);
+    
+    // Clear pending files immediately so useEffect doesn't reopen modal
+    const finalFilesToProcess = [...pendingFiles];
+    setPendingFiles([]);
+
     const connectedPeers = peers.filter(p => p.state === 'connected');
 
     sounds.current.playTransferStart();
 
     try {
-      let finalFiles = pendingFiles;
+      let finalFiles = finalFilesToProcess;
       
       if (compressImagesFlag && finalFiles.some(f => f.type.startsWith('image/'))) {
         showToast('Compressing images...', 'info');
@@ -305,16 +310,14 @@ export default function Home() {
         }
       }
       
-      console.log(`[File Drop] Sent ${pendingFiles.length} file(s) to ${connectedPeers.length} peer(s)`);
+      console.log(`[File Drop] Sent ${finalFilesToProcess.length} file(s) to ${connectedPeers.length} peer(s)`);
       sounds.current.playTransferComplete();
-      showToast(`Sent ${pendingFiles.length} file(s) to ${connectedPeers.length} peer(s)`, 'success');
+      showToast(`Sent ${finalFilesToProcess.length} file(s) to ${connectedPeers.length} peer(s)`, 'success');
     } catch (err) {
       console.error('Failed to send files:', err);
       sounds.current.playError();
       showToast('Failed to send files. Please try again.', 'error');
     }
-
-    setPendingFiles([]);
   }, [pendingFiles, peers, sendFile, broadcastFile, showToast]);
 
   useAutoConnectRoomPeers({
@@ -604,10 +607,31 @@ export default function Home() {
               <p className="text-[#a1a1aa] text-sm md:text-base font-medium flex items-center gap-2">
                 Pure P2P Sharing. <span className="text-white">No Cloud.</span>
                 <span className="px-2 py-0.5 rounded flex items-center text-[10px] uppercase font-black text-blue-400 bg-blue-500/10 border border-blue-500/20">
-                  v2.1 Stable
+                  v2.2 Ultra
                 </span>
               </p>
             </motion.div>
+          </motion.div>
+
+          {/* New Feature Highlights Bar */}
+          <motion.div 
+            className="hidden xl:flex items-center gap-6 px-6 border-l border-[#27272a] ml-6"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.5 }}
+          >
+            <div className="flex flex-col">
+              <span className="text-[10px] text-[#a1a1aa] uppercase tracking-wider font-bold">Max Limit</span>
+              <span className="text-sm font-black text-white">20GB+</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] text-[#a1a1aa] uppercase tracking-wider font-bold">Engine</span>
+              <span className="text-sm font-black text-white">P2P Turbo</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] text-[#a1a1aa] uppercase tracking-wider font-bold">Security</span>
+              <span className="text-sm font-black text-white">E2EE Ready</span>
+            </div>
           </motion.div>
 
           <motion.div
@@ -1002,6 +1026,44 @@ export default function Home() {
 
       {/* PWA Install Prompt */}
       <PWAInstallPrompt />
+
+      {/* New Features Spotlight */}
+      <motion.div
+        className="fixed bottom-6 right-6 z-40 hidden md:block"
+        initial={{ opacity: 0, y: 50, scale: 0.8 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ delay: 2, type: 'spring' }}
+      >
+        <div className="bg-[#111]/80 backdrop-blur-xl border border-[#38bdf8]/30 p-5 rounded-2xl shadow-[0_0_30px_rgba(56,189,248,0.15)] flex flex-col gap-3 min-w-[240px]">
+          <div className="flex items-center gap-2">
+            <span className="flex h-2 w-2 rounded-full bg-[#38bdf8] animate-ping" />
+            <h4 className="text-[11px] font-black uppercase tracking-widest text-[#38bdf8]">What's New v2.2</h4>
+          </div>
+          <div className="space-y-2.5">
+            <div className="flex items-center gap-3">
+              <span className="text-xl">🚀</span>
+              <div className="flex flex-col">
+                <span className="text-xs font-bold text-white">20GB Monster Transfers</span>
+                <span className="text-[10px] text-[#a1a1aa]">Safe, atomic & stable</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xl">📱</span>
+              <div className="flex flex-col">
+                <span className="text-xs font-bold text-white">Native OS Sharing</span>
+                <span className="text-[10px] text-[#a1a1aa]">Share straight to Lynkless</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xl">📺</span>
+              <div className="flex flex-col">
+                <span className="text-xs font-bold text-white">Floating Monitor (PiP)</span>
+                <span className="text-[10px] text-[#a1a1aa]">Detach transfer progress</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </motion.div>
 
       {/* Onboarding Tutorial */}
       <Onboarding />

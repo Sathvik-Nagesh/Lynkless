@@ -21,7 +21,7 @@ function generateUUID(): string {
   });
 }
 
-const CHUNK_SIZE = 256 * 1024; // 256KB chunks for higher throughput while maintaining stability
+const CHUNK_SIZE = 64 * 1024; // 64KB chunks - maximum safe SCTP packet size across mobile environments
 const MAX_FILE_SIZE = 20 * 1024 * 1024 * 1024; // 20GB limit
 const PROGRESS_UPDATE_INTERVAL = 100; // 100ms throttle interval
 

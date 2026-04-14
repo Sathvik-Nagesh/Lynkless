@@ -121,7 +121,8 @@ const FileDropZone = memo(function FileDropZone({ onFileDrop, disabled }: FileDr
   const formatSize = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
   };
 
   const totalSize = selectedFiles.reduce((sum, file) => sum + file.size, 0);
@@ -166,7 +167,7 @@ const FileDropZone = memo(function FileDropZone({ onFileDrop, disabled }: FileDr
                 {disabled ? 'No peer connected' : 'Drop files, folders, or Ctrl+V to paste'}
               </p>
               <p className="text-white/30 text-sm">
-                Up to {MAX_FILE_SIZE / (1024 * 1024)}MB per file • Folders supported
+                Up to 20GB per file • Folders supported
               </p>
               {!disabled && (
                 <label

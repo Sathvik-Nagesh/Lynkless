@@ -57,7 +57,7 @@ export default function Onboarding() {
                 >
                   <Zap size={48} className="text-black fill-black" />
                   <div className="absolute -top-2 -right-2 bg-blue-500 text-white text-[10px] font-black px-2 py-1 rounded-full border-2 border-[#111] uppercase tracking-tighter">
-                    P2P v2.1
+                    v2.2 ULTRA
                   </div>
                 </motion.div>
                 

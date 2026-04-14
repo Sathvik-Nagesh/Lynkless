@@ -223,7 +223,7 @@ export default function AboutPage() {
           <div className="flex gap-8 text-sm font-medium text-[#a1a1aa]">
             <Link href="/" className="hover:text-white transition-colors">App</Link>
             <a href="https://github.com/Sathvik-Nagesh/Lynkless" target="_blank" className="hover:text-white transition-colors">GitHub</a>
-            <span className="text-[#3f3f46]">v2.1.0_Stable</span>
+            <span className="text-[#3f3f46]">v2.2.0_Ultra</span>
           </div>
           <p className="text-[#3f3f46] text-xs">
             © {new Date().getFullYear()} Sathvik Nagesh • Developed for Extreme Privacy.
