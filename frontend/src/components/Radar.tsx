@@ -16,10 +16,10 @@ interface RadarUser {
 interface RadarProps {
   users: RadarUser[];
   nearbyPeers: RadarUser[];
-  peerStates: Map<string, PeerConnectionState>;
   onUserClick: (userId: string) => void;
   currentUserId: string | null;
   isInRoom: boolean;
+  activeTransferPeerIds?: string[];
 }
 
 type NodeState = 'idle' | 'request-sent' | 'request-received' | 'connected' | 'rejected';
@@ -39,11 +39,17 @@ const Radar = memo(function Radar({
   peerStates,
   onUserClick,
   currentUserId,
-  isInRoom
+  isInRoom,
+  activeTransferPeerIds = []
 }: RadarProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number>(0);
   const angleRef = useRef(0);
+
+  // Refs for canvas animation loop to access current state
+  const nearbyUsersRef = useRef<RadarUser[]>([]);
+  const remoteUsersRef = useRef<RadarUser[]>([]);
+  const activeTransfersRef = useRef<string[]>([]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -121,6 +127,56 @@ const Radar = memo(function Radar({
         centerY + Math.sin(sweepAngle) * maxRadius
       );
       ctx.stroke();
+
+      // Draw active transferring particles
+      const activePeers = activeTransfersRef.current;
+      if (activePeers.length > 0) {
+        const time = Date.now();
+        const nearby = nearbyUsersRef.current;
+        const remote = remoteUsersRef.current;
+
+        activePeers.forEach(peerId => {
+           let foundPos = null;
+
+           let userIndex = nearby.findIndex(u => u.id === peerId);
+           if (userIndex !== -1) {
+              const posPercent = getUserPosition(userIndex, Math.max(nearby.length, 1), 40);
+              foundPos = { x: (posPercent.x / 100) * size, y: (posPercent.y / 100) * size };
+           } else {
+              userIndex = remote.findIndex(u => u.id === peerId);
+              if (userIndex !== -1) {
+                 const posPercent = getUserPosition(userIndex, Math.max(remote.length, 1), 80);
+                 foundPos = { x: (posPercent.x / 100) * size, y: (posPercent.y / 100) * size };
+              }
+           }
+
+           if (foundPos) {
+              // Draw subtle connection line
+              ctx.beginPath();
+              ctx.moveTo(centerX, centerY);
+              ctx.lineTo(foundPos.x, foundPos.y);
+              ctx.strokeStyle = 'rgba(56, 189, 248, 0.15)';
+              ctx.lineWidth = 1.5;
+              ctx.stroke();
+
+              // Draw 3 glowing flowing packets
+              ctx.shadowColor = '#38bdf8';
+              for(let i = 0; i < 3; i++) {
+                 // Fast continuous flow
+                 const progress = ((time / 600) + (i / 3)) % 1;
+                 const particleX = centerX + (foundPos.x - centerX) * progress;
+                 const particleY = centerY + (foundPos.y - centerY) * progress;
+                 
+                 ctx.beginPath();
+                 ctx.arc(particleX, particleY, 2.5, 0, Math.PI * 2);
+                 ctx.fillStyle = `rgba(56, 189, 248, ${1 - progress})`;
+                 ctx.shadowBlur = Math.max(5, (1 - progress) * 15);
+                 ctx.fill();
+              }
+              ctx.shadowBlur = 0; // reset
+           }
+        });
+      }
 
       // Update angle for animation (slower rotation)
       angleRef.current += 0.015;
@@ -242,6 +298,13 @@ const Radar = memo(function Radar({
   const remoteUsers = useMemo(() =>
     users.filter(u => !u.isNearby && u.id !== currentUserId),
   [users, currentUserId]);
+
+  // Keep refs updated for canvas
+  useEffect(() => {
+    nearbyUsersRef.current = allNearbyUsers;
+    remoteUsersRef.current = remoteUsers;
+    activeTransfersRef.current = activeTransferPeerIds;
+  }, [allNearbyUsers, remoteUsers, activeTransferPeerIds]);
 
   const hasAnyPeers = allNearbyUsers.length > 0 || remoteUsers.length > 0;
 

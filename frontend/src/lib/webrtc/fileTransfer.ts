@@ -22,7 +22,7 @@ function generateUUID(): string {
 }
 
 const CHUNK_SIZE = 256 * 1024; // 256KB chunks for higher throughput while maintaining stability
-const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB limit
+const MAX_FILE_SIZE = 20 * 1024 * 1024 * 1024; // 20GB limit
 const PROGRESS_UPDATE_INTERVAL = 100; // 100ms throttle interval
 
 // Bolt: Atomic Chunk Protocol Constants
@@ -144,6 +144,7 @@ class FileTransferManager {
   private outgoingTransfers: Map<string, OutgoingTransferState> = new Map();
   private lastUpdateTimes: Map<string, number> = new Map();
   private meshTransfers: Map<string, { file: File; peerIds: string[]; transfers: Map<string, string> }> = new Map();
+  private orphanedChunks: Map<string, ArrayBuffer[]> = new Map();
   private cleanupHandler: (() => void) | null = null;
   private stateCleanupHandler: (() => void) | null = null;
   private worker: Worker | null = null;
@@ -310,6 +311,16 @@ class FileTransferManager {
 
     this.incomingFiles.set(metadata.id, incomingState);
 
+    // Process any out-of-order chunks that arrived before metadata
+    const orphaned = this.orphanedChunks.get(metadata.id);
+    if (orphaned) {
+      console.log(`[FileTransfer] Processing ${orphaned.length} orphaned chunks for ${metadata.id}`);
+      for (const data of orphaned) {
+        this.handleBinaryChunk(peerId, data);
+      }
+      this.orphanedChunks.delete(metadata.id);
+    }
+
     this.notifyProgress(metadata.id, 'transferring', {
       fileName: metadata.name,
       totalSize: metadata.size,
@@ -338,7 +349,21 @@ class FileTransferManager {
     const chunkData = data.slice(HEADER_SIZE);
 
     const incoming = this.incomingFiles.get(fileId);
-    if (!incoming) return;
+    if (!incoming) {
+      // Buffer orphaned chunks if they arrive before file-meta (due to parallel channel striping)
+      if (!this.orphanedChunks.has(fileId)) {
+        this.orphanedChunks.set(fileId, []);
+        // Setup timeout to clear memory if file-meta never arrives
+        setTimeout(() => {
+          if (this.orphanedChunks.has(fileId)) {
+            console.warn(`[FileTransfer] Dropping orphaned chunks for ${fileId} - file-meta never arrived`);
+            this.orphanedChunks.delete(fileId);
+          }
+        }, 15000); // 15 seconds wait time
+      }
+      this.orphanedChunks.get(fileId)!.push(data);
+      return;
+    }
 
     if (incoming.useWorker && this.worker) {
       // Zero-Copy Transfer to Web Worker
@@ -510,6 +535,7 @@ class FileTransferManager {
     transfer.startTime = Date.now();
     transfer.startOffset = startOffset;
     let chunkIndex = fromChunk;
+    const totalChunks = transfer.metadata.totalChunks;
     let transferredSize = startOffset;
 
     // Update status
@@ -518,50 +544,39 @@ class FileTransferManager {
     });
 
     try {
-      // Create a slice of the file from the resume point
-      const remainingFile = file.slice(startOffset);
-      const reader = remainingFile.stream().getReader();
-
-      while (true) {
+      while (chunkIndex < totalChunks) {
         if (transfer.cancelled || transfer.paused) break;
 
-        const { done, value } = await reader.read();
-        if (done) break;
+        const startByte = chunkIndex * CHUNK_SIZE;
+        const endByte = Math.min(startByte + CHUNK_SIZE, file.size);
+        const slice = file.slice(startByte, endByte);
+        const rawChunk = new Uint8Array(await slice.arrayBuffer());
 
-        let offset = 0;
-        while (offset < value.length) {
-          if (transfer.cancelled || transfer.paused) break;
+        // Bolt: Pack metadata and data into a single atomic binary message.
+        // This reduces signaling overhead and eliminates inter-message race conditions.
+        const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
+        const encoder = new TextEncoder();
+        encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+        const chunkView = new DataView(packedChunk.buffer);
+        chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
+        packedChunk.set(rawChunk, HEADER_SIZE);
 
-          // Bolt: Use subarray for zero-copy chunking to reduce memory allocations
-          const rawChunk = value.subarray(offset, offset + CHUNK_SIZE);
-          offset += CHUNK_SIZE;
+        // Send atomic chunk
+        await this.webrtc.sendToPeer(peerId, packedChunk);
 
-          // Bolt: Pack metadata and data into a single atomic binary message.
-          // This reduces signaling overhead and eliminates inter-message race conditions.
-          const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-          const encoder = new TextEncoder();
-          encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
-          const chunkView = new DataView(packedChunk.buffer);
-          chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
-          packedChunk.set(rawChunk, HEADER_SIZE);
+        transfer.lastChunkIndex = chunkIndex;
+        chunkIndex++;
+        transferredSize += rawChunk.length;
 
-          // Send atomic chunk
-          await this.webrtc.sendToPeer(peerId, packedChunk);
+        // Bolt: Throttled progress update with lazy metrics calculation
+        this.notifyProgress(fileId, 'transferring', {
+          transferredSize,
+          resumable: true,
+        });
 
-          transfer.lastChunkIndex = chunkIndex;
-          chunkIndex++;
-          transferredSize += rawChunk.length;
-
-          // Bolt: Throttled progress update with lazy metrics calculation
-          this.notifyProgress(fileId, 'transferring', {
-            transferredSize,
-            resumable: true,
-          });
-
-          // Bolt: Yield the event loop every 16 chunks to keep UI responsive without killing performance
-          if (chunkIndex % 16 === 0) {
-            await new Promise((resolve) => setTimeout(resolve, 0));
-          }
+        // Bolt: Yield the event loop every 16 chunks to keep UI responsive without killing performance
+        if (chunkIndex % 16 === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
         }
       }
 
@@ -655,12 +670,11 @@ class FileTransferManager {
     }));
 
     // Send chunks
-    const reader = file.stream().getReader();
     let chunkIndex = 0;
     let transferredSize = 0;
 
     try {
-      while (true) {
+      while (chunkIndex < totalChunks) {
         const transfer = this.outgoingTransfers.get(fileId);
         if (transfer?.cancelled) {
           this.webrtc.sendToPeer(peerId, JSON.stringify({
@@ -676,46 +690,37 @@ class FileTransferManager {
           continue;
         }
 
-        const { done, value } = await reader.read();
-        if (done) break;
+        const startByte = chunkIndex * CHUNK_SIZE;
+        const endByte = Math.min(startByte + CHUNK_SIZE, file.size);
+        const slice = file.slice(startByte, endByte);
+        const rawChunk = new Uint8Array(await slice.arrayBuffer());
 
-        // Split into CHUNK_SIZE pieces if needed
-        let offset = 0;
-        while (offset < value.length) {
-          const currentTransfer = this.outgoingTransfers.get(fileId);
-          if (currentTransfer?.cancelled || currentTransfer?.paused) break;
+        // Bolt: Pack metadata and data into a single atomic binary message.
+        const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
+        const encoder = new TextEncoder();
+        encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+        const chunkView = new DataView(packedChunk.buffer);
+        chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
+        packedChunk.set(rawChunk, HEADER_SIZE);
 
-          // Bolt: Use subarray for zero-copy chunking to reduce memory allocations
-          const rawChunk = value.subarray(offset, offset + CHUNK_SIZE);
-          offset += CHUNK_SIZE;
+        // Send atomic chunk
+        await this.webrtc.sendToPeer(peerId, packedChunk);
 
-          // Bolt: Pack metadata and data into a single atomic binary message.
-          const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-          const encoder = new TextEncoder();
-          encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
-          const chunkView = new DataView(packedChunk.buffer);
-          chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
-          packedChunk.set(rawChunk, HEADER_SIZE);
+        if (transfer) {
+          transfer.lastChunkIndex = chunkIndex;
+        }
+        chunkIndex++;
+        transferredSize += rawChunk.length;
 
-          // Send atomic chunk
-          await this.webrtc.sendToPeer(peerId, packedChunk);
+        // Bolt: Throttled progress update with lazy metrics calculation
+        this.notifyProgress(fileId, 'transferring', {
+          transferredSize,
+          resumable: true,
+        });
 
-          if (currentTransfer) {
-            currentTransfer.lastChunkIndex = chunkIndex;
-          }
-          chunkIndex++;
-          transferredSize += rawChunk.length;
-
-          // Bolt: Throttled progress update with lazy metrics calculation
-          this.notifyProgress(fileId, 'transferring', {
-            transferredSize,
-            resumable: true,
-          });
-
-          // Bolt: Yield the event loop every 16 chunks to keep UI responsive without killing performance
-          if (chunkIndex % 16 === 0) {
-            await new Promise((resolve) => setTimeout(resolve, 0));
-          }
+        // Bolt: Yield the event loop every 16 chunks to keep UI responsive without killing performance
+        if (chunkIndex % 16 === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
         }
       }
 

@@ -78,9 +78,22 @@ const ChatMessageItem = memo(function ChatMessageItem({ msg, showTimestamp, isSa
           isSameSender ? 'mt-0.5' : 'mt-2'
         }`}
       >
-        <div className="relative group">
+        <div className="relative group max-w-[85%] sm:max-w-[75%] flex gap-2 items-end">
+          {/* Copy button for received message - moved to left so it doesn't overflow right */}
+          {!msg.isOwn && (
+            <button
+              onClick={handleCopy}
+              title="Copy message"
+              className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity duration-150 p-1.5 rounded-md bg-[#27272a] hover:bg-[#3f3f46] shrink-0"
+            >
+              <svg className="w-3.5 h-3.5 text-[#a1a1aa]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+              </svg>
+            </button>
+          )}
+
           <div
-            className="max-w-[80%] rounded-2xl px-4 py-2"
+            className="rounded-2xl px-4 py-2 w-full"
             style={msg.isOwn ? {
               background: '#1f1f1f',
               border: '1px solid #27272a',
@@ -105,18 +118,19 @@ const ChatMessageItem = memo(function ChatMessageItem({ msg, showTimestamp, isSa
               {renderMessageContent(msg.content)}
             </div>
           </div>
-          {/* Copy button on hover - positioned outside the message bubble */}
-          <button
-            onClick={handleCopy}
-            title="Copy message"
-            className={`absolute top-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150 p-1 rounded-md bg-[#27272a] hover:bg-[#3f3f46] ${
-              msg.isOwn ? '-left-7' : '-right-7'
-            }`}
-          >
-            <svg className="w-3 h-3 text-[#a1a1aa]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
-            </svg>
-          </button>
+
+          {/* Copy button for sent message - positioned to the left of the bubble edge */}
+          {msg.isOwn && (
+             <button
+              onClick={handleCopy}
+              title="Copy message"
+              className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity duration-150 p-1.5 rounded-md bg-[#27272a] hover:bg-[#3f3f46] shrink-0"
+            >
+              <svg className="w-3.5 h-3.5 text-[#a1a1aa]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+              </svg>
+            </button>
+          )}
         </div>
       </motion.div>
     </div>

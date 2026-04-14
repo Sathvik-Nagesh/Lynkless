@@ -1,6 +1,6 @@
 'use client';
 
-import { memo } from 'react';
+import { memo, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { TransferProgress as TransferProgressType } from '@/lib/webrtc/fileTransfer';
 
@@ -37,6 +37,73 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
 
   const isRecovering = transfer.status === 'transferring' && transfer.speed === 0 && transfer.progress > 0 && transfer.progress < 100;
   const isSlow = transfer.status === 'transferring' && transfer.speed > 0 && transfer.speed < 50 * 1024; // < 50 KB/s
+  const pipWindowRef = useRef<Window | null>(null);
+
+  const handlePiP = async () => {
+    if (typeof window === 'undefined' || !('documentPictureInPicture' in window)) return;
+    try {
+      const pipWindow = await (window as any).documentPictureInPicture.requestWindow({
+        width: 340,
+        height: 140,
+      });
+      pipWindowRef.current = pipWindow;
+      
+      pipWindow.document.head.innerHTML = `
+        <title>Lynkless Transfer</title>
+        <style>
+          body { background: #111; color: #ededed; font-family: system-ui, sans-serif; display: flex; flex-direction: column; justify-content: center; height: 100vh; overflow: hidden; margin: 0; padding: 24px; box-sizing: border-box; }
+          .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;}
+          .title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80%;}
+          .badge { font-size: 10px; background: rgba(56,189,248,0.1); color: #38bdf8; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(56,189,248,0.3);}
+          .track { width: 100%; height: 6px; background: #27272a; border-radius: 3px; overflow: hidden; margin-bottom: 10px; }
+          .bar { height: 100%; background: #38bdf8; border-radius: 3px; transition: width 0.2s linear; box-shadow: 0 0 10px rgba(56,189,248,0.6); }
+          .stats { display: flex; justify-content: space-between; font-size: 11px; color: #a1a1aa; font-family: monospace;}
+          .speed { color: #38bdf8; font-weight: bold; text-shadow: 0 0 5px rgba(56,189,248,0.4); }
+        </style>
+      `;
+
+      pipWindow.document.body.innerHTML = `
+        <div class="header">
+          <div class="title" id="pip-title">--</div>
+          <div class="badge">ACTIVE</div>
+        </div>
+        <div class="track"><div class="bar" id="pip-bar" style="width: 0%"></div></div>
+        <div class="stats">
+          <span class="speed" id="pip-speed">--</span>
+          <span id="pip-pct">--</span>
+          <span id="pip-time">--</span>
+        </div>
+      `;
+
+      pipWindow.addEventListener('pagehide', () => {
+        pipWindowRef.current = null;
+      });
+
+    } catch (err) {
+      console.error('PiP request failed:', err);
+    }
+  };
+
+  // Sync to PiP window on every render
+  useEffect(() => {
+    if (pipWindowRef.current) {
+      const doc = pipWindowRef.current.document;
+      const titleEl = doc.getElementById('pip-title');
+      if (titleEl && titleEl.textContent !== transfer.fileName) titleEl.textContent = transfer.fileName;
+      
+      const barEl = doc.getElementById('pip-bar');
+      if (barEl) barEl.style.width = `${transfer.progress}%`;
+      
+      const speedEl = doc.getElementById('pip-speed');
+      if (speedEl) speedEl.textContent = formatSpeed(transfer.speed);
+      
+      const pctEl = doc.getElementById('pip-pct');
+      if (pctEl) pctEl.textContent = `${transfer.progress.toFixed(1)}%`;
+      
+      const timeEl = doc.getElementById('pip-time');
+      if (timeEl) timeEl.textContent = `${formatTime(transfer.remainingTime)} remaining`;
+    }
+  }, [transfer]);
 
   const getStatusColor = () => {
     if (isRecovering) return 'bg-[#f43f5e]'; // Rose/Red
@@ -121,6 +188,20 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
         <div className="flex items-center gap-1.5">
           {getStatusIcon()}
           
+          {/* PiP button */}
+          {transfer.status === 'transferring' && typeof window !== 'undefined' && ('documentPictureInPicture' in window) && (
+            <button
+              onClick={handlePiP}
+              className="p-1.5 text-[#a1a1aa] hover:text-[#38bdf8] transition-colors rounded-lg hover:bg-[#38bdf8]/10"
+              title="Pop out monitor (Picture-in-Picture)"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="3" y="4" width="18" height="16" rx="2" strokeWidth={2}/>
+                <rect x="12" y="12" width="7" height="6" rx="1" fill="#38bdf8" stroke="none"/>
+              </svg>
+            </button>
+          )}
+
           {/* Pause button */}
           {transfer.status === 'transferring' && onPause && (
             <button
@@ -188,9 +269,14 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
           {isRecovering ? (
             <span className="text-[#f43f5e] animate-pulse">Recovering connection...</span>
           ) : isSlow ? (
-            <span className="text-[#f59e0b]">{formatSpeed(transfer.speed)} (Slow)</span>
+            <span className="text-[#f59e0b] drop-shadow-md">{formatSpeed(transfer.speed)} (Slow)</span>
           ) : (
-            <span>{formatSpeed(transfer.speed)}</span>
+            <span className="text-[#38bdf8] font-mono tracking-wider drop-shadow-[0_0_5px_rgba(56,189,248,0.8)] relative">
+              {formatSpeed(transfer.speed)}
+              {transfer.speed > 10 * 1024 * 1024 && (
+                <span className="absolute -inset-1 bg-[#38bdf8]/20 blur-sm rounded-full -z-10 animate-pulse"></span>
+              )}
+            </span>
           )}
           <span>{transfer.progress.toFixed(1)}%</span>
           <span>{isRecovering ? '-- remaining' : `${formatTime(transfer.remainingTime)} remaining`}</span>

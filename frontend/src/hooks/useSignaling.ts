@@ -144,6 +144,7 @@ export function useSignaling(): UseSignalingReturn {
           users: prev.users.filter((u) => u.id !== message.userId),
         }));
         removePeerState(message.userId as string);
+        setNearbyPeers(prev => prev.filter(p => p.id !== message.userId));
         break;
 
       case 'left-room':
@@ -199,6 +200,11 @@ export function useSignaling(): UseSignalingReturn {
       case 'peer-disconnected':
         removePeerState(message.peerId as string);
         setIncomingRequests(prev => prev.filter(r => r.fromId !== message.peerId));
+        setNearbyPeers(prev => prev.filter(p => p.id !== message.peerId));
+        setRoomState((prev) => ({
+          ...prev,
+          users: prev.users.filter((u) => u.id !== message.peerId),
+        }));
         break;
 
       case 'error':

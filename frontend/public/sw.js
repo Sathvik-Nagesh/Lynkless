@@ -33,6 +33,38 @@ self.addEventListener('activate', (event) => {
 
 // Fetch event - network first, fallback to cache
 self.addEventListener('fetch', (event) => {
+  // Handle Web Share Target POST requests
+  if (event.request.method === 'POST' && event.request.url.endsWith('/share-target')) {
+    event.respondWith((async () => {
+      try {
+        const formData = await event.request.formData();
+        const files = formData.getAll('files');
+        
+        // Open IndexedDB to store files
+        const db = await new Promise((resolve, reject) => {
+          const req = indexedDB.open('LynklessShareDB', 1);
+          req.onupgradeneeded = (e) => e.target.result.createObjectStore('shared_files');
+          req.onsuccess = (e) => resolve(e.target.result);
+          req.onerror = () => reject(req.error);
+        });
+
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction('shared_files', 'readwrite');
+          tx.objectStore('shared_files').put(files, 'pending_share');
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject();
+        });
+
+        // Redirect back to the app with a query param
+        return Response.redirect('/?shared=true', 303);
+      } catch (err) {
+        console.error('Share Target Error:', err);
+        return Response.redirect('/', 303);
+      }
+    })());
+    return;
+  }
+
   // Only cache GET requests
   if (event.request.method !== 'GET') {
     return;

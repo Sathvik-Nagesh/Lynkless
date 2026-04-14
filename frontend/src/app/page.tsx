@@ -32,7 +32,6 @@ import { E2EEHelper } from '@/lib/webrtc/e2ee';
 import DecryptionTool from '@/components/DecryptionTool';
 import { SoundToggle } from '@/components/SoundToggle';
 import { ConnectionQualityDashboard } from '@/components/ConnectionQualityDashboard';
-import { TransferConfirmation } from '@/components/TransferConfirmation';
 import { TextSnippetShare } from '@/components/TextSnippetShare';
 import { getFileInfo } from '@/lib/utils/fileTypeIcons';
 import { getTrustedPeersManager } from '@/lib/utils/trustedPeers';
@@ -55,8 +54,6 @@ export default function Home() {
   const [showFilePreview, setShowFilePreview] = useState(false);
   const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
   const [isGlobalDragging, setIsGlobalDragging] = useState(false);
-  const [showTransferConfirm, setShowTransferConfirm] = useState(false);
-  const [pendingTransferConfirm, setPendingTransferConfirm] = useState<{ fileCount: number; totalSize: string; peerId: string } | null>(null);
   const dragCounter = useRef(0);
   const sounds = useRef(getSounds());
   const { showToast } = useToast();
@@ -201,39 +198,59 @@ export default function Home() {
     const connectedPeers = peers.filter(p => p.state === 'connected');
 
     if (connectedPeers.length === 0) {
-      console.warn('[File Drop] No connected peers');
+      console.warn('[File Drop] No connected peers. Queueing files.');
+      setPendingFiles(files);
+      showToast('Files queued! Select a peer on the radar to send them.', 'info');
       return;
     }
 
-    if (connectedPeers.length === 1) {
-      const peer = connectedPeers[0];
-      const totalSize = files.reduce((sum, f) => sum + f.size, 0);
-      const formatSize = (bytes: number) => {
-        if (bytes < 1024) return `${bytes} B`;
-        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-      };
-      // FIX: Must set pendingFiles BEFORE showing the confirm dialog
-      setPendingFiles(files);
-      setPendingTransferConfirm({
-        fileCount: files.length,
-        totalSize: formatSize(totalSize),
-        peerId: peer.id,
-      });
-      setShowTransferConfirm(true);
-    } else {
-      setPendingFiles(files);
-      setShowFilePreview(true);
-    }
-  }, [peers]);
+    setPendingFiles(files);
+    setShowFilePreview(true);
+  }, [peers, showToast]);
 
-  const handleTransferConfirm = useCallback(() => {
-    setShowTransferConfirm(false);
-    // pendingFiles is already set from handleFileDrop, just open the preview modal
-    if (pendingTransferConfirm) {
+  // Handle queued files when a peer connects eventually
+  useEffect(() => {
+    if (pendingFiles.length > 0 && connectedPeers.length > 0 && !showFilePreview) {
       setShowFilePreview(true);
     }
-  }, [pendingTransferConfirm]);
+  }, [pendingFiles, connectedPeers, showFilePreview]);
+
+  // Handle incoming files from Web Share Target Native OS Menu
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.search.includes('shared=true')) {
+      setTimeout(async () => {
+        try {
+          const db = await new Promise<IDBDatabase>((resolve, reject) => {
+            const req = indexedDB.open('LynklessShareDB', 1);
+            req.onsuccess = (e) => resolve((e.target as IDBOpenDBRequest).result);
+            req.onerror = () => reject(req.error);
+          });
+
+          if (!db.objectStoreNames.contains('shared_files')) {
+            db.close();
+            return;
+          }
+
+          const tx = db.transaction('shared_files', 'readwrite');
+          const getReq = tx.objectStore('shared_files').get('pending_share');
+
+          getReq.onsuccess = () => {
+            if (getReq.result && Array.isArray(getReq.result)) {
+              handleFileDrop(getReq.result);
+              tx.objectStore('shared_files').delete('pending_share');
+              
+              const url = new URL(window.location.href);
+              url.searchParams.delete('shared');
+              window.history.replaceState({}, '', url.toString());
+            }
+          };
+          tx.oncomplete = () => db.close();
+        } catch (err) {
+          console.error('[Web Share Target] Failed to load shared files:', err);
+        }
+      }, 500); // Wait for signaling to initialize
+    }
+  }, [handleFileDrop]);
 
   // Confirm and send files
   const handleConfirmSend = useCallback(async (password?: string, shouldZip?: boolean, compressImagesFlag?: boolean) => {
@@ -356,13 +373,24 @@ export default function Home() {
     }
   }, [roomState.code, roomState.isCreator, showToast]);
 
-  // Listen for incoming transfers to notify about encrypted files
+  const notifiedTransfersRef = useRef<Set<string>>(new Set());
+
+  // Listen for incoming transfers to notify about encrypted files and trigger Haptics
   useEffect(() => {
     transfers.forEach(transfer => {
       if (transfer.status === 'completed' && transfer.type === 'incoming') {
-        const isEncrypted = transfer.fileName.endsWith('.encrypted');
-        if (isEncrypted) {
-          showToast(`Note: Received encrypted file "${transfer.fileName}". Use the Decryption Tool below to open it.`, 'success');
+        if (!notifiedTransfersRef.current.has(transfer.fileId)) {
+          notifiedTransfersRef.current.add(transfer.fileId);
+          
+          // Trigger Wow-Factor Haptics! (Thump-Thump)
+          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+            navigator.vibrate([100, 50, 100, 50, 200]);
+          }
+
+          const isEncrypted = transfer.fileName.endsWith('.encrypted');
+          if (isEncrypted) {
+            showToast(`Note: Received encrypted file "${transfer.fileName}". Use the Decryption Tool below to open it.`, 'success');
+          }
         }
       }
     });
@@ -392,6 +420,12 @@ export default function Home() {
     connectedPeers.map(p => ({ id: p.id })),
   [connectedPeers]);
 
+  // Active transfer peers for Radar Particle Animation
+  const activeTransferPeerIds = useMemo(() => {
+    const active = transfers.filter(t => t.status === 'transferring');
+    return Array.from(new Set(active.map(t => t.peerId)));
+  }, [transfers]);
+
   return (
     <main 
       className="min-h-screen p-4 md:p-10 relative overflow-hidden"
@@ -417,9 +451,8 @@ export default function Home() {
         dragCounter.current = 0;
         setIsGlobalDragging(false);
 
-        if (!canSendFile) {
-          showToast('No peer selected. Select a peer from the Radar to send files.', 'error');
-          return;
+        if (connectedPeers.length === 0 && !roomState.code && nearbyPeers.length === 0) {
+          // If completely empty, we can still queue, but no error to throw now.
         }
 
         let files: File[] = [];
@@ -449,8 +482,11 @@ export default function Home() {
           showToast(`Some files were skipped because they exceed the ${MAX_FILE_SIZE / (1024 * 1024)}MB limit`, 'error');
         }
 
-        if (validFiles.length > 0) {
+        if (connectedPeers.length > 0) {
           handleFileDrop(validFiles);
+        } else {
+          setPendingFiles(validFiles);
+          showToast('Files queued! Select a peer on the radar to send them.', 'info');
         }
       }}
     >
@@ -516,22 +552,6 @@ export default function Home() {
             onCancel={() => {
               setShowFilePreview(false);
               setPendingFiles([]);
-            }}
-          />
-        )}
-      </AnimatePresence>
-
-      {/* Transfer Confirmation Modal */}
-      <AnimatePresence>
-        {showTransferConfirm && pendingTransferConfirm && (
-          <TransferConfirmation
-            fileCount={pendingTransferConfirm.fileCount}
-            totalSize={pendingTransferConfirm.totalSize}
-            peerId={pendingTransferConfirm.peerId}
-            onConfirm={handleTransferConfirm}
-            onCancel={() => {
-              setShowTransferConfirm(false);
-              setPendingTransferConfirm(null);
             }}
           />
         )}
@@ -746,6 +766,7 @@ export default function Home() {
                 onUserClick={handleUserClick}
                 currentUserId={clientId}
                 isInRoom={!!roomState.code}
+                activeTransferPeerIds={activeTransferPeerIds}
               />
 
               {/* Selected peer indicator */}
