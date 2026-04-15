@@ -4,16 +4,23 @@ import { memo, useState, useCallback, useEffect } from 'react';
 import { getSounds } from '@/lib/utils/sounds';
 
 export const SoundToggle = memo(function SoundToggle() {
-  const [enabled, setEnabled] = useState(true);
+  const [enabled, setEnabled] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    const saved = localStorage.getItem('lynkless-sounds-enabled');
+    return saved !== 'false';
+  });
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
-    const saved = localStorage.getItem('lynkless-sounds-enabled');
-    const isEnabled = saved !== 'false';
-    setEnabled(isEnabled);
-    getSounds().setEnabled(isEnabled);
+    // Bolt: Use requestAnimationFrame to defer the mount state update and avoid
+    // synchronous setState within an effect that triggers cascading renders.
+    const handle = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(handle);
   }, []);
+
+  useEffect(() => {
+    getSounds().setEnabled(enabled);
+  }, [enabled]);
 
   const toggleSound = useCallback(() => {
     const next = !enabled;
