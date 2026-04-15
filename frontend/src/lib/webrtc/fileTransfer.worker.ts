@@ -93,7 +93,7 @@ async function handleMessage(e: MessageEvent) {
     try {
       const root = await navigator.storage.getDirectory();
       const fileId = metadata.id;
-      const salt = (metadata as any).salt || '';
+      const salt = (metadata as unknown as { salt?: string }).salt || '';
       const opfsName = salt ? `lynkless-${fileId}-${salt}` : `lynkless-${fileId}`;
       
       // Cache binary File ID for fast comparison
@@ -163,11 +163,10 @@ async function handleMessage(e: MessageEvent) {
           });
         }
        } catch (err: unknown) {
-        const error = err as any;
-        let message = error?.message || 'Unknown worker write error';
+        let message = err instanceof Error ? err.message : 'Unknown worker write error';
         
         // DETECT STORAGE QUOTA EXCEEDED (Edge Case Part 2)
-        if (error?.name === 'QuotaExceededError' || message.includes('quota')) {
+        if ((err as { name?: string })?.name === 'QuotaExceededError' || message.includes('quota')) {
           message = 'DISK_FULL';
         }
 
@@ -194,7 +193,6 @@ async function handleMessage(e: MessageEvent) {
       // Calculate streaming hash for integrity check without crashing RAM
       let checksum = '';
       try {
-        const fileObj = await fileHandle.getFile();
         // Bolt: Streaming Hashing for 20GB scalability
         // We hash blocks of 64MB and then hash the resulting block-hashes
         checksum = await calculateStreamingHash(fileHandle);

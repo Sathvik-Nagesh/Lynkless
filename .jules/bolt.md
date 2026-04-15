@@ -61,3 +61,7 @@
 ## 2026-05-20 - OPFS Write Performance via Pre-allocation
 **Learning:** Origin Private File System (OPFS) `FileSystemSyncAccessHandle` writes can be slightly slower if the OS has to repeatedly allocate new disk blocks as the file grows.
 **Action:** Use `accessHandle.truncate(totalSize)` during transfer initialization to pre-allocate the entire file size on disk. This results in more contiguous disk writes and improved overall throughput.
+
+## 2026-06-15 - Hot-Path Object Recycling and Render Deferral
+**Learning:** In high-frequency binary streaming (WebRTC file transfers), repeated instantiation of `TextEncoder` and `TextDecoder` for every 64KB chunk creates significant GC pressure and CPU overhead. Additionally, synchronous state updates in `useEffect` (like hydration `mounted` flags) trigger cascading renders that are flagged by modern linters and waste main-thread cycles.
+**Action:** Promote encoders/decoders to class-level members for recycling. Use `requestAnimationFrame` to defer non-critical state updates (like mount flags) to the next frame, avoiding synchronous render cascades.

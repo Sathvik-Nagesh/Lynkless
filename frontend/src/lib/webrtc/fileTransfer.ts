@@ -154,6 +154,7 @@ class FileTransferManager {
   private worker: Worker | null = null;
   private binaryIdCache: Map<string, Uint8Array> = new Map();
   private encoder = new TextEncoder();
+  private decoder = new TextDecoder();
 
   private getBinaryId(fileId: string): Uint8Array {
     let cached = this.binaryIdCache.get(fileId);
@@ -346,7 +347,9 @@ class FileTransferManager {
           }
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      // Ignore errors in resume detection
+    }
 
     if (this.worker && typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.getDirectory === 'function') {
       incomingState.useWorker = true;
@@ -374,8 +377,8 @@ class FileTransferManager {
     const orphaned = this.orphanedChunks.get(metadata.id);
     if (orphaned) {
       console.log(`[FileTransfer] Processing ${orphaned.length} orphaned chunks for ${metadata.id}`);
-      for (const data of orphaned) {
-        this.handleBinaryChunk(peerId, data);
+      for (const chunk of orphaned) {
+        this.handleBinaryChunk(peerId, chunk);
       }
       this.orphanedChunks.delete(metadata.id);
     }
@@ -398,10 +401,9 @@ class FileTransferManager {
 
     // Bolt: Extract metadata from the binary header without extra JSON messages.
     const view = new DataView(data);
-    const decoder = new TextDecoder();
 
     // UUID is first 36 bytes
-    const fileId = decoder.decode(new Uint8Array(data, 0, FILE_ID_SIZE));
+    const fileId = this.decoder.decode(new Uint8Array(data, 0, FILE_ID_SIZE));
     // Chunk index is next 4 bytes (Uint32 LE)
     const chunkIndex = view.getUint32(FILE_ID_SIZE, true);
     // Real data starts after header
@@ -618,8 +620,7 @@ class FileTransferManager {
         // Bolt: Pack metadata and data into a single atomic binary message.
         // This reduces signaling overhead and eliminates inter-message race conditions.
         const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-        const encoder = new TextEncoder();
-        encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+        packedChunk.set(this.getBinaryId(fileId), 0);
         const chunkView = new DataView(packedChunk.buffer);
         chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
         packedChunk.set(rawChunk, HEADER_SIZE);
@@ -945,8 +946,7 @@ class FileTransferManager {
 
             // Bolt: Pack metadata and data into a single atomic binary message for broadcast.
             const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-            const encoder = new TextEncoder();
-            encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+            packedChunk.set(this.getBinaryId(fileId), 0);
             const chunkView = new DataView(packedChunk.buffer);
             chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
             packedChunk.set(rawChunk, HEADER_SIZE);
@@ -1219,7 +1219,7 @@ class FileTransferManager {
     
     try {
       const root = await navigator.storage.getDirectory();
-      const entries = (root as any).entries(); // Iteration helper
+      const entries = (root as unknown as { entries: () => AsyncIterable<[string, FileSystemHandle]> }).entries(); // Iteration helper
       
       for await (const [name, entry] of entries) {
         if (name.startsWith('lynkless-')) {
@@ -1230,7 +1230,7 @@ class FileTransferManager {
           // If the file is not currently active, and its older than 24 hours, purge it
           if (fileId && !this.incomingFiles.has(fileId)) {
              try {
-               const file = await entry.getFile();
+               const file = await (entry as FileSystemFileHandle).getFile();
                const isOld = (Date.now() - file.lastModified) > 24 * 60 * 60 * 1000;
                if (isOld) {
                  await root.removeEntry(name);
