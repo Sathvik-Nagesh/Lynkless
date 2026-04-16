@@ -421,6 +421,19 @@ html.light ::selection {
 
 @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
 
+.text-shadow-glow {
+  text-shadow: 0 0 8px rgba(59, 130, 246, 0.6), 0 0 16px rgba(59, 130, 246, 0.4);
+}
+
+@keyframes neon-pulse {
+  0%, 100% { opacity: 0.8; filter: drop-shadow(0 0 2px #3b82f6); }
+  50% { opacity: 1; filter: drop-shadow(0 0 8px #3b82f6); }
+}
+
+.neon-pulse {
+  animation: neon-pulse 2s infinite ease-in-out;
+}
+
 @media (max-width: 640px) {
   html { font-size: 14px; }
   main { padding: 16px !important; }

@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useRef, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { TransferProgress as TransferProgressType } from '@/lib/webrtc/fileTransfer';
 
 interface TransferProgressProps {
@@ -11,7 +11,6 @@ interface TransferProgressProps {
   onResume?: (fileId: string) => void;
 }
 
-// Helper functions moved outside to avoid recreation
 const formatSize = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -36,10 +35,14 @@ const formatTime = (seconds: number): string => {
 };
 
 const TransferProgress = memo(function TransferProgress({ transfer, onCancel, onPause, onResume }: TransferProgressProps) {
-
-  const isRecovering = transfer.status === 'transferring' && transfer.speed === 0 && transfer.progress > 0 && transfer.progress < 100;
-  const isSlow = transfer.status === 'transferring' && transfer.speed > 0 && transfer.speed < 50 * 1024; // < 50 KB/s
   const pipWindowRef = useRef<Window | null>(null);
+
+  // Speed math for Liquid Mercury effect
+  const maxSpeed = 50 * 1024 * 1024; // 50 MB/s for peak visuals
+  const intensity = Math.min(transfer.speed / maxSpeed, 1.0);
+  const flowDuration = Math.max(0.3, 2.5 - (intensity * 2.2)); // Speed up flow animation
+  const glowOpacity = 0.05 + (intensity * 0.4);
+  const glowBlur = 8 + (intensity * 20);
 
   const handlePiP = async () => {
     if (typeof window === 'undefined' || !('documentPictureInPicture' in window)) return;
@@ -53,22 +56,17 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
       pipWindow.document.head.innerHTML = `
         <title>Lynkless Transfer</title>
         <style>
-          body { background: #111; color: #ededed; font-family: system-ui, sans-serif; display: flex; flex-direction: column; justify-content: center; height: 100vh; overflow: hidden; margin: 0; padding: 24px; box-sizing: border-box; }
-          .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;}
-          .title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80%;}
-          .badge { font-size: 10px; background: rgba(56,189,248,0.1); color: #38bdf8; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(56,189,248,0.3);}
-          .track { width: 100%; height: 6px; background: #27272a; border-radius: 3px; overflow: hidden; margin-bottom: 10px; }
-          .bar { height: 100%; background: #38bdf8; border-radius: 3px; transition: width 0.2s linear; box-shadow: 0 0 10px rgba(56,189,248,0.6); }
-          .stats { display: flex; justify-content: space-between; font-size: 11px; color: #a1a1aa; font-family: monospace;}
-          .speed { color: #38bdf8; font-weight: bold; text-shadow: 0 0 5px rgba(56,189,248,0.4); }
+          body { background: #000; color: #fff; font-family: system-ui, sans-serif; display: flex; flex-direction: column; justify-content: center; height: 100vh; overflow: hidden; margin: 0; padding: 20px; box-sizing: border-box; }
+          .title { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 8px;}
+          .track { width: 100%; height: 6px; background: #111; border-radius: 3px; overflow: hidden; margin-bottom: 8px; border: 1px solid #222; }
+          .bar { height: 100%; background: #3b82f6; border-radius: 3px; transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 0 15px rgba(59,130,246,0.8); }
+          .stats { display: flex; justify-content: space-between; font-size: 11px; color: #aaa; font-family: monospace;}
+          .speed { color: #3b82f6; font-weight: bold;}
         </style>
       `;
 
       pipWindow.document.body.innerHTML = `
-        <div class="header">
-          <div class="title" id="pip-title">--</div>
-          <div class="badge">ACTIVE</div>
-        </div>
+        <div class="title" id="pip-title">--</div>
         <div class="track"><div class="bar" id="pip-bar" style="width: 0%"></div></div>
         <div class="stats">
           <span class="speed" id="pip-speed">--</span>
@@ -80,231 +78,161 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
       pipWindow.addEventListener('pagehide', () => {
         pipWindowRef.current = null;
       });
-
-    } catch (err) {
-      console.error('PiP request failed:', err);
-    }
+    } catch (err) {}
   };
 
-  // Sync to PiP window on every render
   useEffect(() => {
     if (pipWindowRef.current) {
       const doc = pipWindowRef.current.document;
       const titleEl = doc.getElementById('pip-title');
-      if (titleEl && titleEl.textContent !== transfer.fileName) titleEl.textContent = transfer.fileName;
-      
       const barEl = doc.getElementById('pip-bar');
-      if (barEl) barEl.style.width = `${transfer.progress}%`;
-      
       const speedEl = doc.getElementById('pip-speed');
-      if (speedEl) speedEl.textContent = formatSpeed(transfer.speed);
-      
       const pctEl = doc.getElementById('pip-pct');
-      if (pctEl) pctEl.textContent = `${transfer.progress.toFixed(1)}%`;
-      
       const timeEl = doc.getElementById('pip-time');
-      if (timeEl) timeEl.textContent = `${formatTime(transfer.remainingTime)} remaining`;
+
+      if (titleEl) titleEl.textContent = transfer.fileName;
+      if (barEl) barEl.style.width = `${transfer.progress}%`;
+      if (speedEl) speedEl.textContent = formatSpeed(transfer.speed);
+      if (pctEl) pctEl.textContent = `${transfer.progress.toFixed(1)}%`;
+      if (timeEl) timeEl.textContent = formatTime(transfer.remainingTime);
     }
   }, [transfer]);
 
-  const getStatusColor = () => {
-    if (isRecovering) return 'bg-[#f43f5e]'; // Rose/Red
-    if (isSlow) return 'bg-[#f59e0b]';       // Amber
-
-    switch (transfer.status) {
-      case 'completed':
-        return 'bg-[#10b981]';
-      case 'failed':
-      case 'cancelled':
-        return 'bg-[#ef4444]';
-      case 'paused':
-        return 'bg-[#f59e0b]';
-      default:
-        return 'bg-[#ededed]';
-    }
-  };
-
-  const getStatusIcon = () => {
-    switch (transfer.status) {
-      case 'completed':
-        return (
-          <svg className="w-5 h-5 text-[#10b981]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-          </svg>
-        );
-      case 'failed':
-        return (
-          <svg className="w-5 h-5 text-[#ef4444]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        );
-      case 'cancelled':
-        return (
-          <svg className="w-5 h-5 text-[#a1a1aa]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-          </svg>
-        );
-      case 'paused':
-        return (
-          <svg className="w-5 h-5 text-[#f59e0b]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        );
-      default:
-        return (
-          <motion.svg
-            className="w-5 h-5 text-[#ededed]"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            animate={{ rotate: 360 }}
-            transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </motion.svg>
-        );
-    }
-  };
-
   return (
     <motion.div
-      className="bg-[#111] rounded-xl p-4 border border-[#27272a] shadow-sm"
-      initial={{ opacity: 0, y: 20 }}
+      className="panel-elevated p-5 relative overflow-hidden"
+      initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -20 }}
+      exit={{ opacity: 0, scale: 0.98 }}
+      layout
     >
-      <div className="flex items-center gap-3 mb-3">
-        <div className={`w-10 h-10 rounded-lg bg-[#1f1f1f] border border-[#3f3f46] flex items-center justify-center flex-shrink-0`}>
-          <svg className="w-5 h-5 text-[#ededed]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-        </div>
-        
-        <div className="flex-1 min-w-0">
-          <p className="text-[#ededed] font-medium truncate">{transfer.fileName}</p>
-          <p className="text-[#a1a1aa] text-sm">
-            {formatSize(transfer.transferredSize)} / {formatSize(transfer.totalSize)}
-          </p>
-          {transfer.status === 'completed' && transfer.checksum && (
-            <p className="text-[10px] text-[#38bdf8] font-mono mt-1 opacity-70 truncate" title={`SHA-256: ${transfer.checksum}`}>
-              SHA-256: {transfer.checksum}
-            </p>
-          )}
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          {getStatusIcon()}
-          
-          {/* PiP button */}
-          {transfer.status === 'transferring' && typeof window !== 'undefined' && ('documentPictureInPicture' in window) && (
-            <button
-              onClick={handlePiP}
-              className="p-1.5 text-[#a1a1aa] hover:text-[#38bdf8] transition-colors rounded-lg hover:bg-[#38bdf8]/10"
-              title="Pop out monitor (Picture-in-Picture)"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <rect x="3" y="4" width="18" height="16" rx="2" strokeWidth={2}/>
-                <rect x="12" y="12" width="7" height="6" rx="1" fill="#38bdf8" stroke="none"/>
-              </svg>
-            </button>
-          )}
-
-          {/* Pause button */}
-          {transfer.status === 'transferring' && onPause && (
-            <button
-              onClick={() => onPause(transfer.fileId)}
-              className="p-1.5 text-[#a1a1aa] hover:text-[#f59e0b] transition-colors rounded-lg hover:bg-[#f59e0b]/10"
-              title="Pause transfer"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </button>
-          )}
-
-          {/* Resume button */}
-          {transfer.status === 'paused' && onResume && (
-            <button
-              onClick={() => onResume(transfer.fileId)}
-              className="p-1.5 text-[#a1a1aa] hover:text-[#10b981] transition-colors rounded-lg hover:bg-[#10b981]/10"
-              title="Resume transfer"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </button>
-          )}
-
-          {/* Cancel button */}
-          {(transfer.status === 'transferring' || transfer.status === 'paused') && onCancel && (
-            <button
-              onClick={() => onCancel(transfer.fileId)}
-              className="p-1.5 text-[#a1a1aa] hover:text-[#ef4444] transition-colors rounded-lg hover:bg-[#ef4444]/10"
-              title="Cancel transfer"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Progress bar */}
-      <div className="relative h-2 bg-[#27272a] rounded-full overflow-hidden mt-4">
-        <motion.div
-          className={`absolute inset-y-0 left-0 ${getStatusColor()} rounded-full`}
-          initial={{ width: 0 }}
-          animate={{ width: `${transfer.progress}%` }}
-          transition={{ duration: 0.3 }}
-        />
-        
-        {/* Shimmer effect for active transfers */}
+      {/* 120% Mercury: Reactive Background Glow */}
+      <AnimatePresence>
         {transfer.status === 'transferring' && (
-          <motion.div
-            className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent"
-            animate={{ x: ['-100%', '100%'] }}
-            transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
+          <motion.div 
+            className="absolute inset-x-0 bottom-0 h-1 bg-[#3b82f6] pointer-events-none"
+            initial={{ opacity: 0 }}
+            animate={{ 
+              opacity: glowOpacity,
+              filter: `blur(${glowBlur}px)`,
+              height: `${10 + intensity * 30}px`
+            }}
+            exit={{ opacity: 0 }}
           />
         )}
+      </AnimatePresence>
+
+      <div className="flex items-start justify-between mb-4 relative z-10">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-[#000] border border-white/5 flex items-center justify-center shadow-inner">
+            <span className="text-xl">
+              {transfer.status === 'completed' ? '✅' : 
+               transfer.status === 'failed' ? '❌' : 
+               transfer.type === 'incoming' ? '📥' : '📤'}
+            </span>
+          </div>
+          <div className="overflow-hidden">
+            <h3 className="text-sm font-semibold text-[#ededed] truncate max-w-[180px]">
+              {transfer.fileName}
+            </h3>
+            <div className="flex items-center gap-2 mt-0.5 font-mono text-[10px]">
+              <span className={transfer.status === 'completed' ? 'text-green-400' : 'text-[#a1a1aa]'}>
+                {formatSize(transfer.transferredSize)} / {formatSize(transfer.totalSize)}
+              </span>
+              {intensity > 0.8 && (
+                <span className="text-blue-400 animate-pulse font-bold tracking-tighter">HYPER-MESH</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {transfer.status === 'transferring' && (
+             <button onClick={handlePiP} className="btn-icon w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10" title="Pop-out">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+             </button>
+          )}
+          {transfer.status === 'transferring' && onPause && (
+            <button onClick={() => onPause(transfer.fileId)} className="btn-icon w-8 h-8 rounded-lg bg-white/5 hover:bg-yellow-500/10">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6" />
+              </svg>
+            </button>
+          )}
+          {transfer.status === 'paused' && onResume && (
+            <button onClick={() => onResume(transfer.fileId)} className="btn-icon w-8 h-8 rounded-lg bg-green-500/10 hover:bg-green-500/20 text-green-400">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+              </svg>
+            </button>
+          )}
+          <button onClick={() => onCancel?.(transfer.fileId)} className="btn-icon w-8 h-8 rounded-lg bg-white/5 hover:bg-red-500/10">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
 
-      {/* Stats */}
-      {transfer.status === 'transferring' && (
-        <div className="flex justify-between mt-2 text-xs text-[#a1a1aa]">
-          {isRecovering ? (
-            <span className="text-[#f43f5e] animate-pulse">Recovering connection...</span>
-          ) : isSlow ? (
-            <span className="text-[#f59e0b] drop-shadow-md">{formatSpeed(transfer.speed)} (Slow)</span>
-          ) : (
-            <span className="text-[#38bdf8] font-mono tracking-wider drop-shadow-[0_0_5px_rgba(56,189,248,0.8)] relative">
+      {/* 120% Liquid Mercury Progress Track */}
+      <div className="relative h-2 bg-[#000] rounded-full overflow-hidden border border-white/5 mb-4 shadow-inner">
+        <motion.div
+          className="absolute inset-y-0 left-0 bg-[#3b82f6] shadow-[0_0_15px_rgba(59,130,246,1)]"
+          initial={{ width: 0 }}
+          animate={{ width: `${transfer.progress}%` }}
+          transition={{ type: 'spring', bounce: 0, duration: 0.8 }}
+        >
+          {/* Surface Flow Pattern */}
+          <AnimatePresence>
+            {transfer.status === 'transferring' && transfer.speed > 0 && (
+              <motion.div 
+                className="absolute inset-0 opacity-60"
+                style={{
+                  background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%)',
+                  backgroundSize: '200% 100%',
+                }}
+                animate={{ backgroundPosition: ['200% 0%', '-200% 0%'] }}
+                transition={{ duration: flowDuration, repeat: Infinity, ease: 'linear' }}
+              />
+            )}
+          </AnimatePresence>
+
+          {/* Glowing Mercury Head */}
+          <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-full bg-white opacity-80 blur-[2px]" />
+        </motion.div>
+      </div>
+
+      <div className="flex items-center justify-between relative z-10">
+        <div className="flex gap-4">
+          <div className="flex flex-col">
+            <span className="text-[9px] text-[#a1a1aa] uppercase tracking-[0.1em] mb-0.5">Speed</span>
+            <span className={`font-mono text-xs font-bold transition-all ${intensity > 0.9 ? 'text-blue-400 scale-110 origin-left text-shadow-glow' : 'text-[#3b82f6]'}`}>
               {formatSpeed(transfer.speed)}
-              {transfer.speed > 10 * 1024 * 1024 && (
-                <span className="absolute -inset-1 bg-[#38bdf8]/20 blur-sm rounded-full -z-10 animate-pulse"></span>
-              )}
             </span>
-          )}
-          <span>{transfer.progress.toFixed(1)}%</span>
-          <span>{isRecovering ? '-- remaining' : `${formatTime(transfer.remainingTime)} remaining`}</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[9px] text-[#a1a1aa] uppercase tracking-[0.1em] mb-0.5">ETA</span>
+            <span className="text-[#ededed] font-mono text-xs">{formatTime(transfer.remainingTime)}</span>
+          </div>
         </div>
-      )}
-
-      {transfer.status === 'paused' && (
-        <div className="flex justify-between mt-2 text-xs">
-          <span className="text-[#f59e0b]">⏸ Paused</span>
-          <span className="text-[#a1a1aa]">{transfer.progress.toFixed(1)}% complete</span>
-          <span className="text-[#f59e0b]/70">Click ▶ to resume</span>
+        <div className="flex flex-col items-end">
+          <span className="text-[9px] text-[#a1a1aa] uppercase tracking-[0.1em] mb-0.5">Progress</span>
+          <span className="text-[#ededed] font-bold text-xs">{transfer.progress.toFixed(1)}%</span>
         </div>
-      )}
+      </div>
 
-      {transfer.status === 'completed' && (
-        <p className="mt-2 text-xs text-[#10b981]">✓ Transfer complete!</p>
-      )}
-
-      {transfer.status === 'failed' && (
-        <p className="mt-2 text-xs text-[#ef4444]">✗ Transfer failed</p>
-      )}
+      {/* Connection Quality Trace */}
+      <div className="mt-4 pt-3 flex items-center justify-between border-t border-white/5">
+        <div className="flex items-center gap-1.5 grayscale opacity-50">
+           <svg className="w-3 h-3 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+           </svg>
+           <span className="text-[9px] text-[#a1a1aa] uppercase font-mono tracking-widest">P2P DATA_PIPE ACTIVE</span>
+        </div>
+        <span className="text-[9px] font-mono text-[#71717a]">{transfer.peerId?.substring(0, 12)}</span>
+      </div>
     </motion.div>
   );
 });

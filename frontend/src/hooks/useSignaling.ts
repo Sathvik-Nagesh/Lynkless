@@ -98,7 +98,8 @@ export function useSignaling(): UseSignalingReturn {
         break;
 
       case 'nearby-peers':
-        setNearbyPeers(message.peers as NearbyPeer[]);
+        const filtered = (message.peers as NearbyPeer[] || []).filter(p => p.id !== clientId);
+        setNearbyPeers(filtered);
         break;
 
       case 'room-created':
@@ -124,18 +125,24 @@ export function useSignaling(): UseSignalingReturn {
         break;
 
       case 'user-joined':
+        const newUser: RoomUser = {
+          id: message.userId as string,
+          isNearby: message.isNearby as boolean,
+          isCreator: false,
+          isSelf: false,
+        };
         setRoomState((prev) => ({
           ...prev,
-          users: [
-            ...prev.users,
-            {
-              id: message.userId as string,
-              isNearby: message.isNearby as boolean,
-              isCreator: false,
-              isSelf: false,
-            },
-          ],
+          users: [...prev.users, newUser],
         }));
+        
+        // Immediate sync for nearby list
+        if (newUser.isNearby && newUser.id !== clientId) {
+          setNearbyPeers(prev => {
+            if (prev.some(p => p.id === newUser.id)) return prev;
+            return [...prev, { id: newUser.id, isNearby: true, isLocal: false }];
+          });
+        }
         break;
 
       case 'user-left':
@@ -332,6 +339,18 @@ export function useSignaling(): UseSignalingReturn {
       });
     }
   }, [removePeerState]);
+
+  // 120% Sync: Proactive Heartbeat to ensure all devices see each other
+  useEffect(() => {
+    if (isConnected && signalingRef.current) {
+      const interval = setInterval(() => {
+        if (signalingRef.current?.isConnected()) {
+          signalingRef.current.send({ type: 'get-nearby' });
+        }
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [isConnected]);
 
   useEffect(() => {
     return () => {

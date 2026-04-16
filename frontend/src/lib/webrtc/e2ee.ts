@@ -1,6 +1,6 @@
 export class E2EEHelper {
   private static readonly METADATA_SIZE = 28; // 16 bytes salt + 12 bytes IV
-  private static readonly MAX_E2EE_SIZE = 250 * 1024 * 1024; // 250MB safety cap
+  private static readonly MAX_E2EE_SIZE = 512 * 1024 * 1024; // 512MB safety cap
 
   // Derive a 256-bit AES-GCM key from a password
   private static async deriveKey(password: string, salt: Uint8Array, keyUsages: KeyUsage[]): Promise<CryptoKey> {

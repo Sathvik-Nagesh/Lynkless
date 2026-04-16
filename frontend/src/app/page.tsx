@@ -45,6 +45,8 @@ import { compressImage } from '@/lib/utils/imageCompression';
 const SIGNALING_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || 'ws://localhost:8080';
 const ENABLE_CALLS = process.env.NEXT_PUBLIC_ENABLE_CALLS !== 'false';
 
+import { checkSharedFiles } from '@/lib/pwa/shareTarget';
+
 export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedPeer, setSelectedPeer] = useState<string | null>(null);
@@ -52,6 +54,25 @@ export default function Home() {
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [showFilePreview, setShowFilePreview] = useState(false);
+  
+  // 120% Upgrade: Handle PWA Share Target Intent
+  useEffect(() => {
+    const handleSharedIntent = async () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.has('shared')) {
+        const sharedFiles = await checkSharedFiles();
+        if (sharedFiles.length > 0) {
+          setPendingFiles(sharedFiles);
+          setShowFilePreview(true);
+          showToast(`Prepared ${sharedFiles.length} shared files`, 'info');
+          // Clean up URL
+          window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+        }
+      }
+    };
+    handleSharedIntent();
+  }, []);
+
   const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
   const [isGlobalDragging, setIsGlobalDragging] = useState(false);
   const [isFocusMode, setIsFocusMode] = useState(false);

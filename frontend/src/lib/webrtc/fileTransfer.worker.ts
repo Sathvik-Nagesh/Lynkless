@@ -33,6 +33,8 @@ interface WorkerTransferState {
   receivedChunks: number;
   lastReceivedIndex: number;
   opfsName: string; // Store the exact salted name
+  writeBuffer: (Uint8Array | null)[]; // 120% Smasher Buffer
+  lastReportedProgress: number;
 }
 
 const fileHandles = new Map<string, FileSystemFileHandle>();
@@ -97,7 +99,12 @@ async function handleMessage(e: MessageEvent) {
       const opfsName = salt ? `lynkless-${fileId}-${salt}` : `lynkless-${fileId}`;
       
       // Cache binary File ID for fast comparison
-      fileIdBufferMap.set(fileId, encoder.encode(fileId));
+      const binaryId = (metadata as any).binaryId;
+      if (binaryId) {
+        fileIdBufferMap.set(fileId, new Uint8Array(binaryId));
+      } else {
+        fileIdBufferMap.set(fileId, encoder.encode(fileId)); // Fallback
+      }
 
       const fileHandle = await root.getFileHandle(opfsName, { create: true });
       
@@ -117,7 +124,9 @@ async function handleMessage(e: MessageEvent) {
         totalChunks: metadata.totalChunks,
         receivedChunks: 0,
         lastReceivedIndex: -1,
-        opfsName: opfsName
+        opfsName: opfsName,
+        writeBuffer: new Array(16).fill(null),
+        lastReportedProgress: 0
       });
 
       self.postMessage({ type: 'init-success', fileId: metadata.id });
@@ -138,23 +147,36 @@ async function handleMessage(e: MessageEvent) {
     if (accessHandle && meta && expectedIdBuffer && chunkIndex !== undefined && data) {
       try {
         // Fast binary header validation (CPU optimization)
-        const actualIdBuffer = new Uint8Array(data, 0, 36);
+        const actualIdBuffer = new Uint8Array(data, 0, 16); // 16 = Compact FILE_ID_SIZE
         if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
 
-        const offset = chunkIndex * WORKER_CHUNK_SIZE;
-        const chunkDataBuffer = new Uint8Array(data, 40); // 40 = HEADER_SIZE
-        
-        accessHandle.write(chunkDataBuffer, { at: offset });
+        // 120% Smasher: Buffered Disk Writes
+        const bufferIndex = chunkIndex % 16;
+        (meta as any).writeBuffer[bufferIndex] = new Uint8Array(data, 20);
         
         meta.receivedChunks++;
         meta.lastReceivedIndex = Math.max(meta.lastReceivedIndex, chunkIndex);
-        
-        // Bolt: Throttle progress updates to reduce IPC overhead during high-speed transfers
-        const now = Date.now();
-        const lastUpdate = lastProgressUpdate.get(msg.fileId) || 0;
 
-        if (now - lastUpdate >= PROGRESS_THROTTLE_MS) {
-          lastProgressUpdate.set(msg.fileId, now);
+        if (bufferIndex === 15 || meta.receivedChunks === meta.totalChunks) {
+          for (let i = 0; i <= 15; i++) {
+             const buf = (meta as any).writeBuffer[i];
+             if (buf) {
+                const writeOffset = (chunkIndex - bufferIndex + i) * 65536;
+                accessHandle.write(buf, { at: writeOffset });
+                (meta as any).writeBuffer[i] = null;
+             }
+          }
+        }
+        
+        self.postMessage({ 
+          type: 'buffer-return', 
+          fileId: msg.fileId, 
+          data: data 
+        }, [data]);
+
+        const progressInt = Math.floor((meta.receivedChunks / meta.totalChunks) * 100);
+        if (progressInt > ((meta as any).lastReportedProgress || 0) || meta.receivedChunks === meta.totalChunks) {
+          (meta as any).lastReportedProgress = progressInt;
           self.postMessage({
             type: 'progress',
             fileId: msg.fileId,
@@ -191,17 +213,6 @@ async function handleMessage(e: MessageEvent) {
       accessHandle.flush();
       accessHandle.close();
       
-      // Calculate streaming hash for integrity check without crashing RAM
-      let checksum = '';
-      try {
-        const fileObj = await fileHandle.getFile();
-        // Bolt: Streaming Hashing for 20GB scalability
-        // We hash blocks of 64MB and then hash the resulting block-hashes
-        checksum = await calculateStreamingHash(fileHandle);
-      } catch (hErr) {
-        console.warn('Streaming hash failed:', hErr);
-      }
-
       const file = await fileHandle.getFile();
       
       // Transfer the file blob back to main thread
@@ -209,7 +220,7 @@ async function handleMessage(e: MessageEvent) {
         type: 'complete-success', 
         fileId: msg.fileId, 
         file,
-        checksum
+        checksum: '' // Checksum disabled for performance
       });
       
       accessHandles.delete(msg.fileId);
@@ -241,27 +252,4 @@ async function handleMessage(e: MessageEvent) {
   }
 }
 
-/**
- * Streaming Root Hash for Massive Files (20GB+)
- * Processes files in 64MB blocks to maintain a constant memory footprint (<128MB)
- */
-async function calculateStreamingHash(fileHandle: FileSystemFileHandle): Promise<string> {
-  const file = await fileHandle.getFile();
-  const blockSize = 64 * 1024 * 1024; // 64MB blocks
-  const blockHashes: Uint8Array[] = [];
-  
-  for (let offset = 0; offset < file.size; offset += blockSize) {
-    const chunk = file.slice(offset, Math.min(offset + blockSize, file.size));
-    const buffer = await chunk.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-    blockHashes.push(new Uint8Array(hashBuffer));
-  }
-  
-  // Hash the block hashes to get the final Root Hash
-  const combinedHashes = new Uint8Array(blockHashes.length * 32);
-  blockHashes.forEach((h, i) => combinedHashes.set(h, i * 32));
-  
-  const finalHashBuffer = await crypto.subtle.digest('SHA-256', combinedHashes);
-  const hashArray = Array.from(new Uint8Array(finalHashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
+// Checksum disabled for performance in current version

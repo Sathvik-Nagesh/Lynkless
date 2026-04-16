@@ -273,22 +273,27 @@ const Radar = memo(function Radar({
 
   // Combine room users and nearby peers (without duplicates)
   const allNearbyUsers = useMemo(() => {
+    if (!currentUserId) return [];
+    
     const combined = new Map<string, RadarUser>();
     
-    // Always show available nearby peers
+    // 1. Fill from nearby discovery (filter out self and invalid)
     nearbyPeers.forEach(p => {
-      if (p.id !== currentUserId) {
-        combined.set(p.id, { ...p });
+      if (p && p.id && p.id !== currentUserId && p.id !== 'undefined' && p.id !== 'null') {
+        combined.set(p.id, { ...p, isNearby: true });
       }
     });
 
-    // Include room members that are also nearby
-    if (isInRoom) {
+    // 2. Merge room members (overwrite metadata if they are also in room)
+    if (isInRoom && users) {
       users.forEach(u => {
-        if (u.isNearby && u.id !== currentUserId) {
-          if (!combined.has(u.id)) {
-            combined.set(u.id, { ...u });
-          }
+        if (u && u.id && u.id !== currentUserId && u.isNearby) {
+          const existing = combined.get(u.id);
+          combined.set(u.id, { 
+            ...(existing || u), 
+            isNearby: true,
+            isCreator: u.isCreator || existing?.isCreator 
+          });
         }
       });
     }
@@ -296,9 +301,10 @@ const Radar = memo(function Radar({
     return Array.from(combined.values());
   }, [isInRoom, users, currentUserId, nearbyPeers]);
 
-  const remoteUsers = useMemo(() =>
-    users.filter(u => !u.isNearby && u.id !== currentUserId),
-  [users, currentUserId]);
+  const remoteUsers = useMemo(() => {
+    if (!currentUserId) return [];
+    return users.filter(u => u && u.id && !u.isNearby && u.id !== currentUserId);
+  }, [users, currentUserId]);
 
   // Keep refs updated for canvas
   useEffect(() => {
@@ -390,19 +396,37 @@ const Radar = memo(function Radar({
               )}
             </div>
 
-            <motion.span
-              className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] whitespace-nowrap font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-1"
+            {/* 120% Visibility: Smart Label Positioning */}
+            <motion.div
+              className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center gap-0.5"
               style={{
-                color: stateLabel
-                  ? (getNodeState(user.id) === 'connected' ? '#10b981' :
-                    getNodeState(user.id) === 'request-sent' ? '#a1a1aa' :
-                      getNodeState(user.id) === 'request-received' ? '#ededed' : '#71717a')
-                  : '#f59e0b'
+                // If node is in upper half, put label below. If lower half, put label above.
+                top: pos.y > 50 ? 'auto' : '36px',
+                bottom: pos.y > 50 ? '36px' : 'auto',
+                opacity: 0.9,
               }}
             >
-              <span>{getEmojiForPeer(user.id)}</span>
-              <span>{stateLabel || getPeerName(user.id).slice(0, 12)}</span>
-            </motion.span>
+              <div className="flex items-center gap-1 px-2 py-0.5 bg-black/40 backdrop-blur-sm rounded-full border border-white/5 whitespace-nowrap">
+                <span className="text-[9px]">{getEmojiForPeer(user.id)}</span>
+                <span 
+                  className="text-[9px] font-bold tracking-tight"
+                  style={{
+                    color: stateLabel
+                      ? (getNodeState(user.id) === 'connected' ? '#10b981' :
+                        getNodeState(user.id) === 'request-sent' ? '#a1a1aa' :
+                          getNodeState(user.id) === 'request-received' ? '#ededed' : '#71717a')
+                      : '#f59e0b'
+                  }}
+                >
+                  {stateLabel || getPeerName(user.id).slice(0, 8)}
+                </span>
+              </div>
+              
+              {/* Device ID Label (always visible) */}
+              <span className="text-[7px] text-white/40 font-black uppercase tracking-widest mt-0.5">
+                {user.id.substring(0, 4)} • {user.isLocal ? 'LOCAL' : 'CLOUD'}
+              </span>
+            </motion.div>
           </motion.button>
         );
       })}
@@ -447,19 +471,37 @@ const Radar = memo(function Radar({
               )}
             </div>
 
-            <motion.span
-              className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] whitespace-nowrap font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-1"
+            {/* 120% Visibility: Smart Label Positioning (Remote) */}
+            <motion.div
+              className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center gap-0.5"
               style={{
-                color: stateLabel
-                  ? (getNodeState(user.id) === 'connected' ? '#10b981' :
-                    getNodeState(user.id) === 'request-sent' ? '#a1a1aa' :
-                      getNodeState(user.id) === 'request-received' ? '#ededed' : '#71717a')
-                  : '#3b82f6'
+                // If node is in upper half, put label below. If lower half, put label above.
+                top: pos.y > 50 ? 'auto' : '36px',
+                bottom: pos.y > 50 ? '36px' : 'auto',
+                opacity: 0.9,
               }}
             >
-              <span>{getEmojiForPeer(user.id)}</span>
-              <span>{stateLabel || getPeerName(user.id).slice(0, 12)}</span>
-            </motion.span>
+              <div className="flex items-center gap-1 px-2 py-0.5 bg-black/40 backdrop-blur-sm rounded-full border border-white/5 whitespace-nowrap">
+                <span className="text-[9px]">{getEmojiForPeer(user.id)}</span>
+                <span 
+                  className="text-[9px] font-bold tracking-tight"
+                  style={{
+                    color: stateLabel
+                      ? (getNodeState(user.id) === 'connected' ? '#10b981' :
+                        getNodeState(user.id) === 'request-sent' ? '#a1a1aa' :
+                          getNodeState(user.id) === 'request-received' ? '#ededed' : '#71717a')
+                      : '#3b82f6'
+                  }}
+                >
+                  {stateLabel || getPeerName(user.id).slice(0, 8)}
+                </span>
+              </div>
+              
+              {/* Device ID Label (always visible) */}
+              <span className="text-[7px] text-white/40 font-black uppercase tracking-widest mt-0.5">
+                {user.id.substring(0, 4)} • WEB
+              </span>
+            </motion.div>
           </motion.button>
         );
       })}
