@@ -171,12 +171,21 @@ class FileTransferManager {
     this.setupDataHandler();
     this.setupConnectionMonitor();
 
-    if (typeof window !== 'undefined' && Worker) {
-      try {
-        this.worker = new Worker(new URL('./fileTransfer.worker.ts', import.meta.url));
-        this.worker.onmessage = this.handleWorkerMessage.bind(this);
-      } catch (err) {
-        console.warn('[FileTransfer] Failed to initialize Web Worker:', err);
+    if (typeof window !== 'undefined') {
+      // Proactively request persistent storage to avoid 2GB browser limits
+      if (navigator.storage && navigator.storage.persist) {
+        navigator.storage.persist().then(granted => {
+          if (granted) console.log('[FileTransfer] Proactive persistent storage granted.');
+        }).catch(() => {});
+      }
+
+      if (Worker) {
+        try {
+          this.worker = new Worker(new URL('./fileTransfer.worker.ts', import.meta.url));
+          this.worker.onmessage = this.handleWorkerMessage.bind(this);
+        } catch (err) {
+          console.warn('[FileTransfer] Failed to initialize Web Worker:', err);
+        }
       }
     }
 
@@ -206,6 +215,19 @@ class FileTransferManager {
       this.finalizeDownload(msg.fileId);
     } else if (msg.type === 'error') {
       console.error('[FileTransfer] Worker Error:', msg.error);
+      this.notifyProgress(msg.fileId, 'failed', {
+        status: 'failed',
+        resumable: false,
+      });
+      // Inform the peer that we are cancelling due to error
+      const incoming = this.incomingFiles.get(msg.fileId);
+      if (incoming) {
+        this.webrtc.sendToPeer(incoming.peerId, JSON.stringify({
+          type: 'file-cancel',
+          fileId: msg.fileId,
+        }));
+        this.incomingFiles.delete(msg.fileId);
+      }
     }
   }
 
@@ -278,26 +300,42 @@ class FileTransferManager {
     console.log('[FileTransfer] Receiving file:', metadata.name);
 
     // EDGE CASE #3: Storage Quota Verification (Disk Full prevention)
-    if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.estimate) {
+    if (typeof navigator !== 'undefined' && navigator.storage) {
       try {
-        const estimate = await navigator.storage.estimate();
-        if (estimate.quota !== undefined && estimate.usage !== undefined) {
-          const freeSpace = estimate.quota - estimate.usage;
-          // Leave 50MB breathing room, plus size of file
-          if (freeSpace < metadata.size + 50 * 1024 * 1024) {
-            console.error(`[FileTransfer] Insufficient storage space. Need ${metadata.size}, have ${freeSpace}`);
-            this.webrtc.sendToPeer(peerId, JSON.stringify({
-              type: 'file-cancel',
-              fileId: metadata.id,
-            }));
-            this.notifyProgress(metadata.id, 'failed', {
-              fileName: metadata.name,
-              totalSize: metadata.size,
-              transferredSize: 0,
-              type: 'incoming',
-              peerId,
-            });
-            return; // Abort silently
+        // Bolt: Attempt to request persistent storage to bypass conservative browser limits (e.g. 2GB)
+        if (navigator.storage.persist) {
+          const persisted = await navigator.storage.persist();
+          if (persisted) console.log('[FileTransfer] Persistent storage granted.');
+        }
+
+        if (navigator.storage.estimate) {
+          const estimate = await navigator.storage.estimate();
+          if (estimate.quota !== undefined && estimate.usage !== undefined) {
+            const freeSpace = estimate.quota - estimate.usage;
+            
+            // Critical check: if metadata size is strictly more than reported quota, we MUST notify.
+            // But some browsers return 2GB cap even if disk has 100GB. 
+            // We proceed but with a warning logged.
+            if (freeSpace < metadata.size) {
+              console.warn(`[FileTransfer] Reported storage space (${freeSpace} bytes) is less than file size (${metadata.size} bytes). Proceeding with caution...`);
+              
+              // Only block if its EXTREMELY low (e.g. less than 10MB or 1% of file)
+              if (freeSpace < 10 * 1024 * 1024) {
+                 console.error(`[FileTransfer] Insufficient storage space. Need ${metadata.size}, have ${freeSpace}`);
+                 this.webrtc.sendToPeer(peerId, JSON.stringify({
+                   type: 'file-cancel',
+                   fileId: metadata.id,
+                 }));
+                 this.notifyProgress(metadata.id, 'failed', {
+                   fileName: metadata.name,
+                   totalSize: metadata.size,
+                   transferredSize: 0,
+                   type: 'incoming',
+                   peerId,
+                 });
+                 return; 
+              }
+            }
           }
         }
       } catch (err) {
@@ -507,6 +545,21 @@ class FileTransferManager {
       }
       this.notifyProgress(fileId, 'cancelled');
       this.incomingFiles.delete(fileId);
+    }
+    
+    // Bolt: Handle cancellation of outgoing transfers (Sender side)
+    // This prevents the "stuck at 99.9%" issue when a receiver rejects a file early.
+    const outgoing = this.outgoingTransfers.get(fileId);
+    if (outgoing) {
+      console.log(`[FileTransfer] Peer cancelled outgoing transfer: ${fileId}`);
+      outgoing.cancelled = true;
+      this.notifyProgress(fileId, 'cancelled');
+      this.outgoingTransfers.delete(fileId);
+    }
+
+    // Clean up any orphaned chunks for this file
+    if (this.orphanedChunks.has(fileId)) {
+      this.orphanedChunks.delete(fileId);
     }
   }
 
