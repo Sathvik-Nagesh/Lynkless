@@ -61,3 +61,7 @@
 ## 2026-05-20 - OPFS Write Performance via Pre-allocation
 **Learning:** Origin Private File System (OPFS) `FileSystemSyncAccessHandle` writes can be slightly slower if the OS has to repeatedly allocate new disk blocks as the file grows.
 **Action:** Use `accessHandle.truncate(totalSize)` during transfer initialization to pre-allocate the entire file size on disk. This results in more contiguous disk writes and improved overall throughput.
+
+## 2025-05-22 - Optimized Binary Protocol Packing & UUID Conversions
+**Learning:** Per-chunk overhead in WebRTC file transfers (64KB chunks) adds up significantly. Standard UUID-to-Binary conversions using regex, `parseInt`, or `Array.from().map().join()` are surprisingly slow when called thousands of times per second.
+**Action:** Use pre-computed `byteToHex` and `hexToByte` lookup tables for UUID conversions. Avoid redundant object instantiations (like `TextDecoder`) and re-conversions in the hot path. Reuse binary buffers directly from headers when passing data to workers.
