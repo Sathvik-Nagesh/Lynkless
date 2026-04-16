@@ -95,11 +95,11 @@ async function handleMessage(e: MessageEvent) {
     try {
       const root = await navigator.storage.getDirectory();
       const fileId = metadata.id;
-      const salt = (metadata as any).salt || '';
+      const salt = (metadata as unknown as { salt?: string }).salt || '';
       const opfsName = salt ? `lynkless-${fileId}-${salt}` : `lynkless-${fileId}`;
       
       // Cache binary File ID for fast comparison
-      const binaryId = (metadata as any).binaryId;
+      const binaryId = (metadata as unknown as { binaryId?: ArrayBuffer }).binaryId;
       if (binaryId) {
         fileIdBufferMap.set(fileId, new Uint8Array(binaryId));
       } else {
@@ -152,18 +152,18 @@ async function handleMessage(e: MessageEvent) {
 
         // 120% Smasher: Buffered Disk Writes
         const bufferIndex = chunkIndex % 16;
-        (meta as any).writeBuffer[bufferIndex] = new Uint8Array(data, 20);
+        meta.writeBuffer[bufferIndex] = new Uint8Array(data, 20);
         
         meta.receivedChunks++;
         meta.lastReceivedIndex = Math.max(meta.lastReceivedIndex, chunkIndex);
 
         if (bufferIndex === 15 || meta.receivedChunks === meta.totalChunks) {
           for (let i = 0; i <= 15; i++) {
-             const buf = (meta as any).writeBuffer[i];
+             const buf = meta.writeBuffer[i];
              if (buf) {
-                const writeOffset = (chunkIndex - bufferIndex + i) * 65536;
-                accessHandle.write(buf, { at: writeOffset });
-                (meta as any).writeBuffer[i] = null;
+                const writeOffset = (chunkIndex - bufferIndex + i) * WORKER_CHUNK_SIZE;
+                accessHandle.write(buf as unknown as BufferSource, { at: writeOffset });
+                meta.writeBuffer[i] = null;
              }
           }
         }
@@ -175,8 +175,8 @@ async function handleMessage(e: MessageEvent) {
         }, [data]);
 
         const progressInt = Math.floor((meta.receivedChunks / meta.totalChunks) * 100);
-        if (progressInt > ((meta as any).lastReportedProgress || 0) || meta.receivedChunks === meta.totalChunks) {
-          (meta as any).lastReportedProgress = progressInt;
+        if (progressInt > (meta.lastReportedProgress || 0) || meta.receivedChunks === meta.totalChunks) {
+          meta.lastReportedProgress = progressInt;
           self.postMessage({
             type: 'progress',
             fileId: msg.fileId,
@@ -185,11 +185,11 @@ async function handleMessage(e: MessageEvent) {
           });
         }
        } catch (err: unknown) {
-        const error = err as any;
-        let message = error?.message || 'Unknown worker write error';
+        const error = err instanceof Error ? err : new Error('Unknown worker write error');
+        let message = error.message;
         
         // DETECT STORAGE QUOTA EXCEEDED (Edge Case Part 2)
-        if (error?.name === 'QuotaExceededError' || message.includes('quota')) {
+        if (error.name === 'QuotaExceededError' || message.includes('quota')) {
           message = 'DISK_FULL';
         }
 
