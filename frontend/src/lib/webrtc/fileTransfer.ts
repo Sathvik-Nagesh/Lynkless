@@ -50,24 +50,44 @@ function stopAudioAnchor() {
   }
 }
 
+// Bolt: Pre-computed lookup tables for O(1) UUID conversion performance
+const byteToHex: string[] = [];
+const hexToByte: Record<string, number> = {};
+for (let i = 0; i < 256; i++) {
+  const hex = i.toString(16).padStart(2, '0');
+  byteToHex[i] = hex;
+  hexToByte[hex] = i;
+}
+
 /**
  * Text-to-Binary UUID compaction (36 chars -> 16 bytes)
+ * Bolt: Optimized using lookup table to avoid slow regex and parseInt
  */
 function uuidToBytes(uuid: string): Uint8Array {
-  const hex = uuid.replace(/-/g, '');
   const bytes = new Uint8Array(16);
-  for (let i = 0; i < 16; i++) {
-    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  let j = 0;
+  for (let i = 0; i < uuid.length; i++) {
+    if (uuid[i] === '-') continue;
+    // Extract 2 hex chars and lookup byte value
+    const hex = uuid.substring(i, i + 2).toLowerCase();
+    bytes[j++] = hexToByte[hex] || 0;
+    i++;
   }
   return bytes;
 }
 
 /**
  * Binary-to-UUID decompaction (16 bytes -> 36 chars)
+ * Bolt: Optimized using lookup table and direct string concatenation to avoid Array.from overhead
  */
 function bytesToUuid(bytes: Uint8Array): string {
-  const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+  return (
+    byteToHex[bytes[0]] + byteToHex[bytes[1]] + byteToHex[bytes[2]] + byteToHex[bytes[3]] + '-' +
+    byteToHex[bytes[4]] + byteToHex[bytes[5]] + '-' +
+    byteToHex[bytes[6]] + byteToHex[bytes[7]] + '-' +
+    byteToHex[bytes[8]] + byteToHex[bytes[9]] + '-' +
+    byteToHex[bytes[10]] + byteToHex[bytes[11]] + byteToHex[bytes[12]] + byteToHex[bytes[13]] + byteToHex[bytes[14]] + byteToHex[bytes[15]]
+  );
 }
 
 // Request background sync tag if available
@@ -176,6 +196,7 @@ interface IncomingTransferState {
   chunks?: (ArrayBuffer | null)[]; // RAM fallback
   checksum?: string;
   metaReceivedViaP2P?: boolean; // Track redundant metadata
+  lastReportedProgress?: number;
 }
 
 class FileTransferManager {
@@ -298,7 +319,7 @@ class FileTransferManager {
              console.log('[FileTransfer] Received DIRECT metadata via P2P pipe for:', msg.fileId);
              this.handleFileMeta(peerId, { type: 'file-meta', fileId: msg.fileId, metadata: msg.metadata });
              const incoming = this.incomingFiles.get(msg.fileId);
-             if (incoming) (incoming as any).metaReceivedViaP2P = true;
+             if (incoming) incoming.metaReceivedViaP2P = true;
              return;
           }
           if (msg.type === 'file-ack') {
@@ -327,7 +348,7 @@ class FileTransferManager {
   /**
    * Monitor connection state for resume capability
    */
-  private diagnosticTimeouts: Map<string, any> = new Map();
+  private diagnosticTimeouts: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   private setupConnectionMonitor(): void {
     this.stateCleanupHandler = this.webrtc.onStateChange((peerId, state) => {
@@ -501,7 +522,9 @@ class FileTransferManager {
           }
         }
       }
-    } catch (e) {}
+    } catch {
+      // Resume detection failed, proceed normally
+    }
 
     if (this.worker && typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.getDirectory === 'function') {
       incomingState.useWorker = true;
@@ -549,12 +572,11 @@ class FileTransferManager {
    * Process an atomic binary chunk from a peer.
    * Bolt: Decodes the packed header (fileId + chunkIndex) and routes data to worker/buffer.
    */
-  private handleBinaryChunk(peerId: string, data: ArrayBuffer): void {
+  private handleBinaryChunk(_peerId: string, data: ArrayBuffer): void {
     if (data.byteLength < HEADER_SIZE) return;
 
     // Bolt: Extract metadata from the binary header without extra JSON messages.
     const view = new DataView(data);
-    const decoder = new TextDecoder();
 
     // Compact Binary Decode: ID is the first 16 bytes
     const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
@@ -580,20 +602,13 @@ class FileTransferManager {
       return;
     }
 
-    // Header Compaction: Use 16-byte raw ID instead of 36-byte string
-    const binaryId = uuidToBytes(fileId);
-    
-    // Start Audio Anchor for Mobile Performance
-    startAudioAnchor();
-
     if (incoming.useWorker && this.worker) {
       this.worker.postMessage({ 
         type: 'write', 
         fileId: fileId,
         payload: {
           chunkIndex: chunkIndex,
-          data: data,
-          binaryId: binaryId // Pass compacted ID for validation
+          data: data
         }
       }, [data]);
     } else if (incoming.chunks && incoming.chunks[chunkIndex] === null) {
@@ -661,10 +676,17 @@ class FileTransferManager {
 
       }, 60000); // Clean OPFS file after 60s
     } catch (err) {
-      console.error('[FileTransfer] Failed to download OPFS file:', err);
+      console.error('[FileTransfer] Failed to download OPFS file:', err instanceof Error ? err.message : err);
     }
     
     this.incomingFiles.delete(fileId);
+    this.maybeStopAudioAnchor();
+  }
+
+  private maybeStopAudioAnchor() {
+    if (this.incomingFiles.size === 0 && this.outgoingTransfers.size === 0) {
+      stopAudioAnchor();
+    }
   }
 
   private async handleFileCancel(fileId: string): Promise<void> {
@@ -675,6 +697,7 @@ class FileTransferManager {
       }
       this.notifyProgress(fileId, 'cancelled');
       this.incomingFiles.delete(fileId);
+      this.maybeStopAudioAnchor();
     }
     
     // Bolt: Handle cancellation of outgoing transfers (Sender side)
@@ -801,8 +824,11 @@ class FileTransferManager {
         // Bolt: Pack metadata and data into a single atomic binary message.
         // This reduces signaling overhead and eliminates inter-message race conditions.
         const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-        const encoder = new TextEncoder();
-        encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+
+        // Header Compaction (20-byte footprint)
+        const binaryId = this.getBinaryId(fileId);
+        packedChunk.set(binaryId, 0);
+
         const chunkView = new DataView(packedChunk.buffer);
         chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
         packedChunk.set(rawChunk, HEADER_SIZE);
@@ -838,6 +864,7 @@ class FileTransferManager {
         });
 
         this.outgoingTransfers.delete(fileId);
+        this.maybeStopAudioAnchor();
       }
     } catch (error) {
       console.error('[FileTransfer] Error resuming file:', error);
@@ -942,7 +969,7 @@ class FileTransferManager {
         const packedChunk = new Uint8Array(transferBuffer);
         
         // Header Compaction (20-byte footprint)
-        const binaryId = uuidToBytes(fileId);
+        const binaryId = this.getBinaryId(fileId);
         packedChunk.set(binaryId, 0);
         
         packedChunk[16] = chunkIndex & 0xFF;
@@ -966,7 +993,8 @@ class FileTransferManager {
         }
         
         // Dynamic High-Speed Backpressure
-        await this.webrtc.sendToPeer(peerId, transferBuffer);
+        // Bolt: Only send the actual bytes (header + chunk) to avoid trailing trash on last chunk
+        await this.webrtc.sendToPeer(peerId, packedChunk.subarray(0, HEADER_SIZE + rawChunk.length));
 
           // 100% Polish: Tail Redundancy Strategy
           // If we are in the final lap (last 2 chunks), broadcast them down all channels 
@@ -1008,6 +1036,7 @@ class FileTransferManager {
         });
 
         this.outgoingTransfers.delete(fileId);
+        this.maybeStopAudioAnchor();
       }
 
     } catch (error) {
@@ -1153,8 +1182,11 @@ class FileTransferManager {
 
             // Bolt: Pack metadata and data into a single atomic binary message for broadcast.
             const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-            const encoder = new TextEncoder();
-            encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+
+            // Header Compaction (20-byte footprint)
+            const binaryId = this.getBinaryId(fileId);
+            packedChunk.set(binaryId, 0);
+
             const chunkView = new DataView(packedChunk.buffer);
             chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
             packedChunk.set(rawChunk, HEADER_SIZE);
@@ -1196,6 +1228,7 @@ class FileTransferManager {
             this.outgoingTransfers.delete(`${fileId}-${peerId}`);
           }
         });
+        this.maybeStopAudioAnchor();
       } catch (error) {
         console.error('[FileTransfer] Error in mesh broadcast:', error);
         peerIds.forEach(peerId => {
@@ -1427,7 +1460,7 @@ class FileTransferManager {
     
     try {
       const root = await navigator.storage.getDirectory();
-      const entries = (root as any).entries(); // Iteration helper
+      const entries = (root as unknown as { entries(): AsyncIterableIterator<[string, FileSystemFileHandle]> }).entries(); // Iteration helper
       
       for await (const [name, entry] of entries) {
         if (name.startsWith('lynkless-')) {
@@ -1450,7 +1483,7 @@ class FileTransferManager {
           }
         }
       }
-    } catch (err) {
+    } catch {
       // Quiet fail for GC
     }
   }
@@ -1472,14 +1505,21 @@ export { CHUNK_SIZE, MAX_FILE_SIZE };
  * 120% Production: Screen Wake Lock
  * Prevents the OS from sleeping while a transfer is in progress.
  */
-let wakeLock: any = null;
+interface WakeLockSentinel {
+  release(): Promise<void>;
+  addEventListener(type: string, listener: () => void): void;
+}
+
+let wakeLock: WakeLockSentinel | null = null;
 async function requestWakeLock() {
   if (typeof window !== 'undefined' && 'wakeLock' in navigator && !wakeLock) {
     try {
-      wakeLock = await (navigator as any).wakeLock.request('screen');
+      wakeLock = await (navigator as unknown as { wakeLock: { request(type: string): Promise<WakeLockSentinel> } }).wakeLock.request('screen');
       console.log('[System] Screen Wake Lock active.');
       wakeLock.addEventListener('release', () => { wakeLock = null; });
-    } catch (err) {}
+    } catch {
+      // Wake lock request failed, proceed without it
+    }
   }
 }
 
