@@ -147,6 +147,7 @@ async function handleMessage(e: MessageEvent) {
     if (accessHandle && meta && expectedIdBuffer && chunkIndex !== undefined && data) {
       try {
         // Fast binary header validation (CPU optimization)
+        // Bolt: Extract binaryId directly from the transferred buffer
         const actualIdBuffer = new Uint8Array(data, 0, 16); // 16 = Compact FILE_ID_SIZE
         if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
 
