@@ -51,23 +51,55 @@ function stopAudioAnchor() {
 }
 
 /**
+ * 120% Polish: Silent Audio Anchor Manager
+ * Stops the anchor when no active transfers are remaining.
+ */
+function maybeStopAudioAnchor(incomingCount: number, outgoingCount: number) {
+  if (incomingCount === 0 && outgoingCount === 0) {
+    stopAudioAnchor();
+  }
+}
+
+// Bolt: Fast UUID conversion lookup tables to eliminate toString(16) and parseInt overhead
+const byteToHex: string[] = [];
+const hexToByte: Record<string, number> = {};
+
+for (let i = 0; i < 256; i++) {
+  const hex = i.toString(16).padStart(2, '0');
+  byteToHex[i] = hex;
+  hexToByte[hex] = i;
+  hexToByte[hex.toUpperCase()] = i; // Support both cases for robustness
+}
+
+/**
  * Text-to-Binary UUID compaction (36 chars -> 16 bytes)
+ * Bolt: Optimized with lookup table and index-based access to avoid regex and substr.
+ * Casing is handled via the lookup table to avoid .toLowerCase() allocations.
  */
 function uuidToBytes(uuid: string): Uint8Array {
-  const hex = uuid.replace(/-/g, '');
   const bytes = new Uint8Array(16);
-  for (let i = 0; i < 16; i++) {
-    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  let j = 0;
+  for (let i = 0; i < uuid.length; i++) {
+    if (uuid[i] === '-') continue;
+    const hex = uuid[i] + uuid[++i];
+    bytes[j++] = hexToByte[hex];
   }
   return bytes;
 }
 
 /**
  * Binary-to-UUID decompaction (16 bytes -> 36 chars)
+ * Bolt: Optimized with lookup table to avoid slow Array.from/map/padStart calls
  */
 function bytesToUuid(bytes: Uint8Array): string {
-  const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+  return (
+    byteToHex[bytes[0]] + byteToHex[bytes[1]] + byteToHex[bytes[2]] + byteToHex[bytes[3]] + '-' +
+    byteToHex[bytes[4]] + byteToHex[bytes[5]] + '-' +
+    byteToHex[bytes[6]] + byteToHex[bytes[7]] + '-' +
+    byteToHex[bytes[8]] + byteToHex[bytes[9]] + '-' +
+    byteToHex[bytes[10]] + byteToHex[bytes[11]] + byteToHex[bytes[12]] +
+    byteToHex[bytes[13]] + byteToHex[bytes[14]] + byteToHex[bytes[15]]
+  );
 }
 
 // Request background sync tag if available
@@ -250,6 +282,9 @@ class FileTransferManager {
 
   private handleWorkerMessage(e: MessageEvent): void {
     const msg = e.data;
+    const incomingCount = this.incomingFiles.size;
+    const outgoingCount = this.outgoingTransfers.size;
+
     if (msg.type === 'progress') {
       const incoming = this.incomingFiles.get(msg.fileId);
       if (incoming) {
@@ -267,7 +302,10 @@ class FileTransferManager {
       if (incoming) {
         incoming.checksum = msg.checksum;
       }
-      this.finalizeDownload(msg.fileId);
+      // Bolt: Wait for finalization before checking if we can stop the audio anchor
+      this.finalizeDownload(msg.fileId).then(() => {
+        maybeStopAudioAnchor(this.incomingFiles.size, this.outgoingTransfers.size);
+      });
     } else if (msg.type === 'error') {
       console.error('[FileTransfer] Worker Error:', msg.error);
       this.notifyProgress(msg.fileId, 'failed', {
@@ -275,6 +313,7 @@ class FileTransferManager {
         resumable: false,
       });
       this.incomingFiles.delete(msg.fileId);
+      maybeStopAudioAnchor(this.incomingFiles.size, outgoingCount);
     } else if (msg.type === 'buffer-return') {
       // Return a processed buffer to the transmitter pool for reuse
       this.bufferPool.push(msg.data);
@@ -554,7 +593,6 @@ class FileTransferManager {
 
     // Bolt: Extract metadata from the binary header without extra JSON messages.
     const view = new DataView(data);
-    const decoder = new TextDecoder();
 
     // Compact Binary Decode: ID is the first 16 bytes
     const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
@@ -580,20 +618,17 @@ class FileTransferManager {
       return;
     }
 
-    // Header Compaction: Use 16-byte raw ID instead of 36-byte string
-    const binaryId = uuidToBytes(fileId);
-    
     // Start Audio Anchor for Mobile Performance
     startAudioAnchor();
 
     if (incoming.useWorker && this.worker) {
+      // Bolt: Remove redundant binaryId as worker extracts it from buffer
       this.worker.postMessage({ 
         type: 'write', 
         fileId: fileId,
         payload: {
           chunkIndex: chunkIndex,
-          data: data,
-          binaryId: binaryId // Pass compacted ID for validation
+          data: data
         }
       }, [data]);
     } else if (incoming.chunks && incoming.chunks[chunkIndex] === null) {
@@ -626,6 +661,7 @@ class FileTransferManager {
       this.notifyProgress(fileId, 'completed', { transferredSize: incoming.metadata.size });
       this.downloadFile(blob, incoming.metadata.name);
       this.incomingFiles.delete(fileId);
+      maybeStopAudioAnchor(this.incomingFiles.size, this.outgoingTransfers.size);
     }
   }
 
@@ -686,6 +722,8 @@ class FileTransferManager {
       this.notifyProgress(fileId, 'cancelled');
       this.outgoingTransfers.delete(fileId);
     }
+
+    maybeStopAudioAnchor(this.incomingFiles.size, this.outgoingTransfers.size);
 
     // Clean up any orphaned chunks for this file
     if (this.orphanedChunks.has(fileId)) {
@@ -801,8 +839,7 @@ class FileTransferManager {
         // Bolt: Pack metadata and data into a single atomic binary message.
         // This reduces signaling overhead and eliminates inter-message race conditions.
         const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-        const encoder = new TextEncoder();
-        encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+        packedChunk.set(this.getBinaryId(fileId), 0);
         const chunkView = new DataView(packedChunk.buffer);
         chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
         packedChunk.set(rawChunk, HEADER_SIZE);
@@ -838,6 +875,7 @@ class FileTransferManager {
         });
 
         this.outgoingTransfers.delete(fileId);
+        maybeStopAudioAnchor(this.incomingFiles.size, this.outgoingTransfers.size);
       }
     } catch (error) {
       console.error('[FileTransfer] Error resuming file:', error);
@@ -942,8 +980,7 @@ class FileTransferManager {
         const packedChunk = new Uint8Array(transferBuffer);
         
         // Header Compaction (20-byte footprint)
-        const binaryId = uuidToBytes(fileId);
-        packedChunk.set(binaryId, 0);
+        packedChunk.set(this.getBinaryId(fileId), 0);
         
         packedChunk[16] = chunkIndex & 0xFF;
         packedChunk[17] = (chunkIndex >> 8) & 0xFF;
@@ -1008,6 +1045,7 @@ class FileTransferManager {
         });
 
         this.outgoingTransfers.delete(fileId);
+        maybeStopAudioAnchor(this.incomingFiles.size, this.outgoingTransfers.size);
       }
 
     } catch (error) {
@@ -1153,8 +1191,7 @@ class FileTransferManager {
 
             // Bolt: Pack metadata and data into a single atomic binary message for broadcast.
             const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-            const encoder = new TextEncoder();
-            encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+            packedChunk.set(this.getBinaryId(fileId), 0);
             const chunkView = new DataView(packedChunk.buffer);
             chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
             packedChunk.set(rawChunk, HEADER_SIZE);
@@ -1196,6 +1233,7 @@ class FileTransferManager {
             this.outgoingTransfers.delete(`${fileId}-${peerId}`);
           }
         });
+        maybeStopAudioAnchor(this.incomingFiles.size, this.outgoingTransfers.size);
       } catch (error) {
         console.error('[FileTransfer] Error in mesh broadcast:', error);
         peerIds.forEach(peerId => {
