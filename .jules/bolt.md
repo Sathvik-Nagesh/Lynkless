@@ -61,3 +61,11 @@
 ## 2026-05-20 - OPFS Write Performance via Pre-allocation
 **Learning:** Origin Private File System (OPFS) `FileSystemSyncAccessHandle` writes can be slightly slower if the OS has to repeatedly allocate new disk blocks as the file grows.
 **Action:** Use `accessHandle.truncate(totalSize)` during transfer initialization to pre-allocate the entire file size on disk. This results in more contiguous disk writes and improved overall throughput.
+
+## 2026-05-25 - Zero-Copy Blob Finalization in Next.js
+**Learning:** In some Next.js build environments, `Uint8Array` is treated as possibly backed by `SharedArrayBuffer`, making it incompatible with `BlobPart[]` due to strict type checking. While `new Uint8Array(chunk)` is a safe way to ensure compatibility, it adds a redundant memory copy.
+**Action:** Use `as unknown as BlobPart[]` cast when the source is known to be a standard `ArrayBuffer` (e.g. from WebRTC DataChannel) to maintain $O(1)$ finalization performance without sacrificing type safety or breaking the build.
+
+## 2026-05-25 - Post-Payload Handshake Strategy
+**Learning:** Moving the "Handshake Wait" (Awaiting Final ACK) after the final chunk transmission is critical. Doing it before the last chunk blocks the network pipe and adds unnecessary latency to the transfer completion.
+**Action:** Always ensure network-blocking synchronization happens after all data payload chunks have been dispatched to the transport layer.

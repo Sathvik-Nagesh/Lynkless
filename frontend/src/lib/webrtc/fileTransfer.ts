@@ -31,6 +31,17 @@ const FILE_ID_SIZE = 16; // UUID v4 as raw bytes
 const CHUNK_INDEX_SIZE = 4; // Uint32 (LE)
 const HEADER_SIZE = FILE_ID_SIZE + CHUNK_INDEX_SIZE;
 
+// Performance: Lookup tables for O(1) UUID conversion
+const byteToHex: string[] = [];
+const hexToByte: Record<string, number> = {};
+for (let i = 0; i < 256; i++) {
+  const h = i.toString(16).padStart(2, '0');
+  byteToHex[i] = h;
+  hexToByte[h] = i;
+  // Support upper case to avoid .toLowerCase() overhead
+  hexToByte[h.toUpperCase()] = i;
+}
+
 /**
  * Audio Anchor: Prevents Mobile OS Throttling during massive transfers
  */
@@ -52,22 +63,47 @@ function stopAudioAnchor() {
 
 /**
  * Text-to-Binary UUID compaction (36 chars -> 16 bytes)
+ * Bolt: Uses lookup tables to eliminate slow regex and parseInt calls.
  */
 function uuidToBytes(uuid: string): Uint8Array {
-  const hex = uuid.replace(/-/g, '');
   const bytes = new Uint8Array(16);
-  for (let i = 0; i < 16; i++) {
-    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
-  }
+  // UUID format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx (36 chars)
+  // Mapping offsets: 0, 2, 4, 6, - (8), 9, 11, - (13), 14, 16, - (18), 19, 21, - (23), 24, 26, 28, 30, 32, 34
+  bytes[0] = hexToByte[uuid.slice(0, 2)];
+  bytes[1] = hexToByte[uuid.slice(2, 4)];
+  bytes[2] = hexToByte[uuid.slice(4, 6)];
+  bytes[3] = hexToByte[uuid.slice(6, 8)];
+  // skip - at 8
+  bytes[4] = hexToByte[uuid.slice(9, 11)];
+  bytes[5] = hexToByte[uuid.slice(11, 13)];
+  // skip - at 13
+  bytes[6] = hexToByte[uuid.slice(14, 16)];
+  bytes[7] = hexToByte[uuid.slice(16, 18)];
+  // skip - at 18
+  bytes[8] = hexToByte[uuid.slice(19, 21)];
+  bytes[9] = hexToByte[uuid.slice(21, 23)];
+  // skip - at 23
+  bytes[10] = hexToByte[uuid.slice(24, 26)];
+  bytes[11] = hexToByte[uuid.slice(26, 28)];
+  bytes[12] = hexToByte[uuid.slice(28, 30)];
+  bytes[13] = hexToByte[uuid.slice(30, 32)];
+  bytes[14] = hexToByte[uuid.slice(32, 34)];
+  bytes[15] = hexToByte[uuid.slice(34, 36)];
   return bytes;
 }
 
 /**
  * Binary-to-UUID decompaction (16 bytes -> 36 chars)
+ * Bolt: Fast table lookup replaces O(N) map/join and toHex calls.
  */
 function bytesToUuid(bytes: Uint8Array): string {
-  const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+  return (
+    byteToHex[bytes[0]] + byteToHex[bytes[1]] + byteToHex[bytes[2]] + byteToHex[bytes[3]] + '-' +
+    byteToHex[bytes[4]] + byteToHex[bytes[5]] + '-' +
+    byteToHex[bytes[6]] + byteToHex[bytes[7]] + '-' +
+    byteToHex[bytes[8]] + byteToHex[bytes[9]] + '-' +
+    byteToHex[bytes[10]] + byteToHex[bytes[11]] + byteToHex[bytes[12]] + byteToHex[bytes[13]] + byteToHex[bytes[14]] + byteToHex[bytes[15]]
+  );
 }
 
 // Request background sync tag if available
@@ -173,7 +209,7 @@ interface IncomingTransferState {
   startOffset: number;
   peerId: string;
   useWorker?: boolean;
-  chunks?: (ArrayBuffer | null)[]; // RAM fallback
+  chunks?: (Uint8Array | null)[]; // RAM fallback
   checksum?: string;
   metaReceivedViaP2P?: boolean; // Track redundant metadata
 }
@@ -218,7 +254,9 @@ class FileTransferManager {
     setTimeout(() => {
        try {
          this.webrtc.prewarmICECandidates();
-       } catch (e) {}
+       } catch {
+         // Ignore
+       }
     }, 1000);
 
     if (typeof window !== 'undefined') {
@@ -233,7 +271,7 @@ class FileTransferManager {
         try {
           this.worker = new Worker(new URL('./fileTransfer.worker.ts', import.meta.url));
           this.worker.onmessage = this.handleWorkerMessage.bind(this);
-        } catch (err) {
+        } catch (err: unknown) {
           console.warn('[FileTransfer] Failed to initialize Web Worker:', err);
         }
       }
@@ -245,6 +283,12 @@ class FileTransferManager {
     // Liquid-Metal: Prime the buffer pool (32 slabs = 2MB pre-allocated)
     for (let i = 0; i < 32; i++) {
        this.bufferPool.push(new ArrayBuffer(HEADER_SIZE + CHUNK_SIZE));
+    }
+  }
+
+  private maybeStopAudioAnchor() {
+    if (this.outgoingTransfers.size === 0 && this.incomingFiles.size === 0) {
+      stopAudioAnchor();
     }
   }
 
@@ -298,7 +342,7 @@ class FileTransferManager {
              console.log('[FileTransfer] Received DIRECT metadata via P2P pipe for:', msg.fileId);
              this.handleFileMeta(peerId, { type: 'file-meta', fileId: msg.fileId, metadata: msg.metadata });
              const incoming = this.incomingFiles.get(msg.fileId);
-             if (incoming) (incoming as any).metaReceivedViaP2P = true;
+             if (incoming) incoming.metaReceivedViaP2P = true;
              return;
           }
           if (msg.type === 'file-ack') {
@@ -327,7 +371,7 @@ class FileTransferManager {
   /**
    * Monitor connection state for resume capability
    */
-  private diagnosticTimeouts: Map<string, any> = new Map();
+  private diagnosticTimeouts: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   private setupConnectionMonitor(): void {
     this.stateCleanupHandler = this.webrtc.onStateChange((peerId, state) => {
@@ -429,7 +473,7 @@ class FileTransferManager {
               
               // Only block if its EXTREMELY low (e.g. less than 10MB or 1% of file)
               // Liquid-Metal Backpressure: Increase threshold to 16MB for modern high-speed connections
-              if (freeSpace < 10 * 1024 * 1024) {
+              if (freeSpace < 16 * 1024 * 1024) {
                  console.error(`[FileTransfer] Insufficient storage space. Need ${metadata.size}, have ${freeSpace}`);
                  this.webrtc.sendToPeer(peerId, JSON.stringify({
                    type: 'file-cancel',
@@ -447,7 +491,7 @@ class FileTransferManager {
             }
           }
         }
-      } catch (err) {
+      } catch (err: unknown) {
         console.warn('[FileTransfer] Storage estimation failed:', err);
       }
     }
@@ -501,7 +545,9 @@ class FileTransferManager {
           }
         }
       }
-    } catch (e) {}
+    } catch {
+      // Ignore
+    }
 
     if (this.worker && typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.getDirectory === 'function') {
       incomingState.useWorker = true;
@@ -554,7 +600,6 @@ class FileTransferManager {
 
     // Bolt: Extract metadata from the binary header without extra JSON messages.
     const view = new DataView(data);
-    const decoder = new TextDecoder();
 
     // Compact Binary Decode: ID is the first 16 bytes
     const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
@@ -579,9 +624,6 @@ class FileTransferManager {
       this.orphanedChunks.get(fileId)!.push(data);
       return;
     }
-
-    // Header Compaction: Use 16-byte raw ID instead of 36-byte string
-    const binaryId = uuidToBytes(fileId);
     
     // Start Audio Anchor for Mobile Performance
     startAudioAnchor();
@@ -593,13 +635,11 @@ class FileTransferManager {
         payload: {
           chunkIndex: chunkIndex,
           data: data,
-          binaryId: binaryId // Pass compacted ID for validation
         }
       }, [data]);
     } else if (incoming.chunks && incoming.chunks[chunkIndex] === null) {
-      // RAM Fallback: Store only the data part
-      const chunkData = data.slice(HEADER_SIZE);
-      incoming.chunks[chunkIndex] = chunkData;
+      // RAM Fallback: Store zero-copy view of the data part
+      incoming.chunks[chunkIndex] = new Uint8Array(data, HEADER_SIZE);
       incoming.receivedChunks++;
       incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, chunkIndex);
       
@@ -619,8 +659,10 @@ class FileTransferManager {
       this.worker.postMessage({ type: 'complete', fileId });
       // The finalization blob grab happens async in finalizeDownload 
     } else {
-      const validChunks = (incoming.chunks || []) as ArrayBuffer[];
-      const blob = new Blob(validChunks, { type: incoming.metadata.type });
+      // Bolt: Use type assertion to satisfy strict BlobPart constraints without a memory copy.
+      // WebRTC DataChannel chunks are standard ArrayBuffers, so this is safe and efficient.
+      const validChunks = (incoming.chunks || []).filter((c): c is Uint8Array => c !== null);
+      const blob = new Blob(validChunks as unknown as BlobPart[], { type: incoming.metadata.type });
       
       this.fileReceivedHandlers.forEach((h) => h(blob, incoming.metadata));
       this.notifyProgress(fileId, 'completed', { transferredSize: incoming.metadata.size });
@@ -801,8 +843,11 @@ class FileTransferManager {
         // Bolt: Pack metadata and data into a single atomic binary message.
         // This reduces signaling overhead and eliminates inter-message race conditions.
         const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-        const encoder = new TextEncoder();
-        encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+
+        // Compact Binary Header Construction
+        const binaryId = this.getBinaryId(fileId);
+        packedChunk.set(binaryId, 0);
+
         const chunkView = new DataView(packedChunk.buffer);
         chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
         packedChunk.set(rawChunk, HEADER_SIZE);
@@ -942,7 +987,7 @@ class FileTransferManager {
         const packedChunk = new Uint8Array(transferBuffer);
         
         // Header Compaction (20-byte footprint)
-        const binaryId = uuidToBytes(fileId);
+        const binaryId = this.getBinaryId(fileId);
         packedChunk.set(binaryId, 0);
         
         packedChunk[16] = chunkIndex & 0xFF;
@@ -954,19 +999,10 @@ class FileTransferManager {
 
         // Mobile Throttling Defense
         startAudioAnchor();
-
-        // 120% Finish Logic: Handshake Wait
-        if (chunkIndex === totalChunks - 1) {
-           console.log('[FileTransfer] Stream complete. Awaiting Final ACK handshake from', peerId);
-           // Wait up to 5s for the peer to acknowledge they wrote everything to disk
-           for (let i = 0; i < 50; i++) {
-              if (outgoing.isConfirmed) break;
-              await new Promise(r => setTimeout(r, 100));
-           }
-        }
         
         // Dynamic High-Speed Backpressure
-        await this.webrtc.sendToPeer(peerId, transferBuffer);
+        // Bolt: subarray(0, size) ensures we don't send trailing garbage from the recycled slab
+        await this.webrtc.sendToPeer(peerId, packedChunk.subarray(0, HEADER_SIZE + rawChunk.length));
 
           // 100% Polish: Tail Redundancy Strategy
           // If we are in the final lap (last 2 chunks), broadcast them down all channels 
@@ -994,9 +1030,18 @@ class FileTransferManager {
       }
 
       const finalTransfer = this.outgoingTransfers.get(fileId);
-      if (!finalTransfer?.cancelled && !finalTransfer?.paused) {
+      if (finalTransfer && !finalTransfer.cancelled && !finalTransfer.paused) {
         // Switch to verifying state (briefly) before completion
         this.notifyProgress(fileId, 'verifying');
+
+        // 120% Finish Logic: Handshake Wait
+        // Bolt: Moved AFTER all chunks are sent to avoid blocking the last chunk!
+        console.log('[FileTransfer] Stream complete. Awaiting Final ACK handshake from', peerId);
+        // Wait up to 5s for the peer to acknowledge they wrote everything to disk
+        for (let i = 0; i < 50; i++) {
+           if (finalTransfer.isConfirmed) break;
+           await new Promise(r => setTimeout(r, 100));
+        }
         
         this.webrtc.sendToPeer(peerId, JSON.stringify({
           type: 'file-complete',
@@ -1153,8 +1198,11 @@ class FileTransferManager {
 
             // Bolt: Pack metadata and data into a single atomic binary message for broadcast.
             const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-            const encoder = new TextEncoder();
-            encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+
+            // Compact Binary Header Construction
+            const binaryId = this.getBinaryId(fileId);
+            packedChunk.set(binaryId, 0);
+
             const chunkView = new DataView(packedChunk.buffer);
             chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
             packedChunk.set(rawChunk, HEADER_SIZE);
@@ -1327,6 +1375,10 @@ class FileTransferManager {
                          status === 'cancelled' ||
                          status === 'paused';
 
+    if (isFinalState) {
+       this.maybeStopAudioAnchor();
+    }
+
     if (isFinalState || now - lastUpdate >= PROGRESS_UPDATE_INTERVAL) {
       this.lastUpdateTimes.set(fileId, now);
 
@@ -1427,7 +1479,7 @@ class FileTransferManager {
     
     try {
       const root = await navigator.storage.getDirectory();
-      const entries = (root as any).entries(); // Iteration helper
+      const entries = (root as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }).entries(); // Iteration helper
       
       for await (const [name, entry] of entries) {
         if (name.startsWith('lynkless-')) {
@@ -1438,7 +1490,7 @@ class FileTransferManager {
           // If the file is not currently active, and its older than 24 hours, purge it
           if (fileId && !this.incomingFiles.has(fileId)) {
              try {
-               const file = await entry.getFile();
+               const file = await (entry as FileSystemFileHandle).getFile();
                const isOld = (Date.now() - file.lastModified) > 24 * 60 * 60 * 1000;
                if (isOld) {
                  await root.removeEntry(name);
@@ -1450,7 +1502,7 @@ class FileTransferManager {
           }
         }
       }
-    } catch (err) {
+    } catch {
       // Quiet fail for GC
     }
   }
@@ -1472,14 +1524,17 @@ export { CHUNK_SIZE, MAX_FILE_SIZE };
  * 120% Production: Screen Wake Lock
  * Prevents the OS from sleeping while a transfer is in progress.
  */
-let wakeLock: any = null;
+let wakeLock: { release(): Promise<void>, addEventListener(type: string, listener: () => void): void } | null = null;
 async function requestWakeLock() {
   if (typeof window !== 'undefined' && 'wakeLock' in navigator && !wakeLock) {
     try {
-      wakeLock = await (navigator as any).wakeLock.request('screen');
+      const lock = await (navigator as unknown as { wakeLock: { request(type: 'screen'): Promise<{ release(): Promise<void>, addEventListener(type: string, listener: () => void): void }> } }).wakeLock.request('screen');
+      wakeLock = lock;
       console.log('[System] Screen Wake Lock active.');
       wakeLock.addEventListener('release', () => { wakeLock = null; });
-    } catch (err) {}
+    } catch {
+       // Silent fail
+    }
   }
 }
 
