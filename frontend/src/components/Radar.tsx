@@ -348,7 +348,7 @@ const Radar = memo(function Radar({
             transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
           />
         </div>
-        {currentUserId && hasAnyPeers && (
+        {currentUserId && (
           <span className="mt-2 text-[10px] whitespace-nowrap font-medium text-[#10b981] drop-shadow-md flex items-center gap-1">
             <span>{getEmojiForPeer(currentUserId)}</span>
             <span>{getPeerName(currentUserId).slice(0, 12)} ({currentUserId.replace('client_', '').substring(0, 6).toUpperCase()})</span>
@@ -505,49 +505,6 @@ const Radar = memo(function Radar({
           </motion.button>
         );
       })}
-
-      {/* Empty state message - Contextual Onboarding (Nudged further down to clear the center) */}
-      {!hasAnyPeers && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          <motion.div 
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mt-32 flex flex-col items-center gap-6 pointer-events-auto"
-          >
-             <div className="flex flex-col items-center">
-                <p className="text-[#ededed] text-base font-bold text-center tracking-tight">
-                {isInRoom ? 'Awaiting peers...' : 'No one nearby.'}
-              </p>
-              <p className="text-[#71717a] text-xs text-center max-w-[200px] mt-2 leading-relaxed opacity-80">
-                {isInRoom ? 'Share your room code with others to start transferring.' : 'Share this private link to invite someone to your direct channel.'}
-              </p>
-            </div>
-            <button
-               onClick={() => {
-                 const url = window.location.href;
-                 navigator.clipboard.writeText(url);
-                 // We can't easily trigger the toast from here without passing it as prop, 
-                 // but we can change the text temporarily
-                 const btn = document.activeElement as HTMLButtonElement;
-                 if (btn) {
-                   const original = btn.innerText;
-                   btn.innerText = 'Copied!';
-                   btn.style.borderColor = '#10b981';
-                   btn.style.color = '#10b981';
-                   setTimeout(() => {
-                     btn.innerText = original;
-                     btn.style.borderColor = '';
-                     btn.style.color = '';
-                   }, 2000);
-                 }
-               }}
-               className="px-5 py-2 bg-[#ededed] text-black rounded-full text-[11px] font-black hover:bg-[#d4d4d8] transition-all active:scale-95 shadow-lg shadow-blue-500/10"
-             >
-               INVITE FRIEND
-             </button>
-          </motion.div>
-        </div>
-      )}
 
       {/* Legend - cleaner design */}
       <div className="absolute bottom-1 left-3 flex items-center gap-3 text-[10px]">
