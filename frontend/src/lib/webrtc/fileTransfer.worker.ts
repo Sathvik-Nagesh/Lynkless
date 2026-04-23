@@ -39,10 +39,11 @@ interface WorkerTransferState {
 const fileHandles = new Map<string, FileSystemFileHandle>();
 const accessHandles = new Map<string, SyncHandle>();
 const metadataMap = new Map<string, WorkerTransferState>();
-const lastProgressUpdate = new Map<string, number>();
 
-const PROGRESS_THROTTLE_MS = 100;
 const WORKER_CHUNK_SIZE = 64 * 1024; // 64KB - MUST match CHUNK_SIZE in fileTransfer.ts
+const FILE_ID_SIZE = 16; // UUID v4 as raw bytes
+const CHUNK_INDEX_SIZE = 4; // Uint32 (LE)
+const HEADER_SIZE = FILE_ID_SIZE + CHUNK_INDEX_SIZE;
 
 // Speed performance: Pre-allocate reusable buffers and encoders
 const encoder = new TextEncoder();
@@ -145,12 +146,12 @@ async function handleMessage(e: MessageEvent) {
     if (accessHandle && meta && expectedIdBuffer && chunkIndex !== undefined && data) {
       try {
         // Fast binary header validation (CPU optimization)
-        const actualIdBuffer = new Uint8Array(data, 0, 16); // 16 = Compact FILE_ID_SIZE
+        const actualIdBuffer = new Uint8Array(data, 0, FILE_ID_SIZE);
         if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
 
         // Direct Synchronous Write (Atomic and Safe for out-of-order)
-        const writeOffset = chunkIndex * 65536;
-        const chunkData = new Uint8Array(data, 20); // 20-byte header
+        const writeOffset = chunkIndex * WORKER_CHUNK_SIZE;
+        const chunkData = new Uint8Array(data, HEADER_SIZE);
         accessHandle.write(chunkData, { at: writeOffset });
         
         meta.receivedChunks++;
@@ -214,7 +215,6 @@ async function handleMessage(e: MessageEvent) {
       accessHandles.delete(msg.fileId);
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
-      lastProgressUpdate.delete(msg.fileId);
     }
   }
   else if (msg.type === 'abort') {
@@ -233,7 +233,6 @@ async function handleMessage(e: MessageEvent) {
       accessHandles.delete(msg.fileId);
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
-      lastProgressUpdate.delete(msg.fileId);
       
       self.postMessage({ type: 'abort-success', fileId: msg.fileId });
     }
