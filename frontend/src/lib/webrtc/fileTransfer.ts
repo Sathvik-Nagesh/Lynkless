@@ -50,24 +50,71 @@ function stopAudioAnchor() {
   }
 }
 
+// Bolt: Fast UUID Lookup Tables
+const byteToHex: string[] = [];
+const hexToByte: Record<string, number> = {};
+
+for (let i = 0; i < 256; i++) {
+  const hex = i.toString(16).padStart(2, '0');
+  byteToHex[i] = hex;
+}
+
+// Support all case variations for hexToByte (e.g. "0a", "0A", "a0", "A0")
+// to eliminate .toLowerCase() calls during high-frequency chunk processing.
+const chars = '0123456789abcdef';
+const charsUpper = '0123456789ABCDEF';
+for (let i = 0; i < 16; i++) {
+  for (let j = 0; j < 16; j++) {
+    const val = (i << 4) | j;
+    hexToByte[chars[i] + chars[j]] = val;
+    hexToByte[chars[i] + charsUpper[j]] = val;
+    hexToByte[charsUpper[i] + chars[j]] = val;
+    hexToByte[charsUpper[i] + charsUpper[j]] = val;
+  }
+}
+
 /**
  * Text-to-Binary UUID compaction (36 chars -> 16 bytes)
+ * Bolt: Optimized using hexToByte lookup table to avoid slow regex and parseInt
  */
 function uuidToBytes(uuid: string): Uint8Array {
-  const hex = uuid.replace(/-/g, '');
   const bytes = new Uint8Array(16);
-  for (let i = 0; i < 16; i++) {
-    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
-  }
+  bytes[0] = hexToByte[uuid.substring(0, 2)];
+  bytes[1] = hexToByte[uuid.substring(2, 4)];
+  bytes[2] = hexToByte[uuid.substring(4, 6)];
+  bytes[3] = hexToByte[uuid.substring(6, 8)];
+  // skip - at index 8
+  bytes[4] = hexToByte[uuid.substring(9, 11)];
+  bytes[5] = hexToByte[uuid.substring(11, 13)];
+  // skip - at index 13
+  bytes[6] = hexToByte[uuid.substring(14, 16)];
+  bytes[7] = hexToByte[uuid.substring(16, 18)];
+  // skip - at index 18
+  bytes[8] = hexToByte[uuid.substring(19, 21)];
+  bytes[9] = hexToByte[uuid.substring(21, 23)];
+  // skip - at index 23
+  bytes[10] = hexToByte[uuid.substring(24, 26)];
+  bytes[11] = hexToByte[uuid.substring(26, 28)];
+  bytes[12] = hexToByte[uuid.substring(28, 30)];
+  bytes[13] = hexToByte[uuid.substring(30, 32)];
+  bytes[14] = hexToByte[uuid.substring(32, 34)];
+  bytes[15] = hexToByte[uuid.substring(34, 36)];
   return bytes;
 }
 
 /**
  * Binary-to-UUID decompaction (16 bytes -> 36 chars)
+ * Bolt: Optimized using byteToHex lookup table to avoid Array.from and map allocations
  */
 function bytesToUuid(bytes: Uint8Array): string {
-  const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+  return (
+    byteToHex[bytes[0]] + byteToHex[bytes[1]] + byteToHex[bytes[2]] + byteToHex[bytes[3]] + '-' +
+    byteToHex[bytes[4]] + byteToHex[bytes[5]] + '-' +
+    byteToHex[bytes[6]] + byteToHex[bytes[7]] + '-' +
+    byteToHex[bytes[8]] + byteToHex[bytes[9]] + '-' +
+    byteToHex[bytes[10]] + byteToHex[bytes[11]] + byteToHex[bytes[12]] +
+    byteToHex[bytes[13]] + byteToHex[bytes[14]] + byteToHex[bytes[15]]
+  );
 }
 
 // Request background sync tag if available
@@ -194,7 +241,6 @@ class FileTransferManager {
   private stateCleanupHandler: (() => void) | null = null;
   private worker: Worker | null = null;
   private binaryIdCache: Map<string, Uint8Array> = new Map();
-  private encoder = new TextEncoder();
 
   private getBinaryId(fileId: string): Uint8Array {
     let cached = this.binaryIdCache.get(fileId);
@@ -554,8 +600,8 @@ class FileTransferManager {
     if (data.byteLength < HEADER_SIZE) return;
 
     // Bolt: Extract metadata from the binary header without extra JSON messages.
+    // Optimized: Use Uint8Array directly for ID and DataView for chunkIndex. Removed unused TextDecoder.
     const view = new DataView(data);
-    const decoder = new TextDecoder();
 
     // Compact Binary Decode: ID is the first 16 bytes
     const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
@@ -581,8 +627,7 @@ class FileTransferManager {
       return;
     }
 
-    // Header Compaction: Use 16-byte raw ID instead of 36-byte string
-    const binaryId = uuidToBytes(fileId);
+    // Header Compaction: Use the already extracted fileIdBytes view instead of re-encoding
     
     // Start Audio Anchor for Mobile Performance
     startAudioAnchor();
@@ -594,7 +639,7 @@ class FileTransferManager {
         payload: {
           chunkIndex: chunkIndex,
           data: data,
-          binaryId: binaryId // Pass compacted ID for validation
+          // Bolt: Omit binaryId as it's already cached in the worker during init, reducing IPC overhead.
         }
       }, [data]);
     } else if (incoming.chunks && incoming.chunks[chunkIndex] === null) {
@@ -802,8 +847,8 @@ class FileTransferManager {
         // Bolt: Pack metadata and data into a single atomic binary message.
         // This reduces signaling overhead and eliminates inter-message race conditions.
         const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-        const encoder = new TextEncoder();
-        encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+        // Corrected: Use getBinaryId instead of TextEncoder.encodeInto for correct 16-byte UUID packing
+        packedChunk.set(this.getBinaryId(fileId), 0);
         const chunkView = new DataView(packedChunk.buffer);
         chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
         packedChunk.set(rawChunk, HEADER_SIZE);
@@ -943,8 +988,8 @@ class FileTransferManager {
         const packedChunk = new Uint8Array(transferBuffer);
         
         // Header Compaction (20-byte footprint)
-        const binaryId = uuidToBytes(fileId);
-        packedChunk.set(binaryId, 0);
+        // Optimized: Reuse cached binaryId
+        packedChunk.set(this.getBinaryId(fileId), 0);
         
         packedChunk[16] = chunkIndex & 0xFF;
         packedChunk[17] = (chunkIndex >> 8) & 0xFF;
@@ -1157,8 +1202,8 @@ class FileTransferManager {
 
             // Bolt: Pack metadata and data into a single atomic binary message for broadcast.
             const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-            const encoder = new TextEncoder();
-            encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+            // Corrected: Use getBinaryId instead of TextEncoder.encodeInto for correct 16-byte UUID packing
+            packedChunk.set(this.getBinaryId(fileId), 0);
             const chunkView = new DataView(packedChunk.buffer);
             chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
             packedChunk.set(rawChunk, HEADER_SIZE);
@@ -1493,4 +1538,6 @@ function releaseWakeLock() {
     wakeLock = null;
     console.log('[System] Screen Wake Lock released.');
   }
+  // Also stop audio anchor to release background resources
+  stopAudioAnchor();
 }

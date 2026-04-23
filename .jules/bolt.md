@@ -61,3 +61,7 @@
 ## 2026-05-20 - OPFS Write Performance via Pre-allocation
 **Learning:** Origin Private File System (OPFS) `FileSystemSyncAccessHandle` writes can be slightly slower if the OS has to repeatedly allocate new disk blocks as the file grows.
 **Action:** Use `accessHandle.truncate(totalSize)` during transfer initialization to pre-allocate the entire file size on disk. This results in more contiguous disk writes and improved overall throughput.
+
+## 2026-06-10 - Optimizing Hot-Path UUID Conversions
+**Learning:** UUID-to-binary conversions in a high-frequency chunk loop (e.g., every 64KB) are expensive when using Regex and `parseInt`. Optimized lookup tables provide $O(1)$ conversion but MUST support mixed-case hex pairs (e.g., "aB", "Ab") to remain robust against non-normalized strings. Additionally, IPC overhead between main and worker threads can be reduced by omitting redundant metadata (like `binaryId`) that is already cached in the worker's state.
+**Action:** Use a comprehensive 16x16 hex lookup table that pre-calculates all 256 case-insensitive combinations. Cache metadata in the WebWorker during initialization to minimize per-chunk payload size.
