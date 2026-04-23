@@ -274,6 +274,7 @@ class FileTransferManager {
         status: 'failed',
         resumable: false,
       });
+      this.worker?.postMessage({ type: 'abort', fileId: msg.fileId });
       this.incomingFiles.delete(msg.fileId);
     } else if (msg.type === 'buffer-return') {
       // Return a processed buffer to the transmitter pool for reuse
@@ -955,16 +956,6 @@ class FileTransferManager {
         // Mobile Throttling Defense
         startAudioAnchor();
 
-        // 120% Finish Logic: Handshake Wait
-        if (chunkIndex === totalChunks - 1) {
-           console.log('[FileTransfer] Stream complete. Awaiting Final ACK handshake from', peerId);
-           // Wait up to 5s for the peer to acknowledge they wrote everything to disk
-           for (let i = 0; i < 50; i++) {
-              if (outgoing.isConfirmed) break;
-              await new Promise(r => setTimeout(r, 100));
-           }
-        }
-        
         // Create a view containing only the valid data length for this chunk
         const validChunkView = new Uint8Array(transferBuffer, 0, HEADER_SIZE + rawChunk.length);
 
@@ -993,6 +984,16 @@ class FileTransferManager {
               resumable: true,
             });
           }
+
+        // 120% Finish Logic: Handshake Wait
+        if (chunkIndex === totalChunks) {
+           console.log('[FileTransfer] Stream complete. Awaiting Final ACK handshake from', peerId);
+           // Wait up to 5s for the peer to acknowledge they wrote everything to disk
+           for (let i = 0; i < 50; i++) {
+              if (outgoing.isConfirmed) break;
+              await new Promise(r => setTimeout(r, 100));
+           }
+        }
         }
       }
 
@@ -1442,7 +1443,7 @@ class FileTransferManager {
           if (fileId && !this.incomingFiles.has(fileId)) {
              try {
                const file = await entry.getFile();
-               const isOld = (Date.now() - file.lastModified) > 24 * 60 * 60 * 1000;
+               const isOld = (Date.now() - file.lastModified) > 5 * 60 * 1000;
                if (isOld) {
                  await root.removeEntry(name);
                  console.log(`[GC] Purged abandoned file: ${name}`);

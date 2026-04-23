@@ -33,7 +33,6 @@ interface WorkerTransferState {
   receivedChunks: number;
   lastReceivedIndex: number;
   opfsName: string; // Store the exact salted name
-  writeBuffer: (Uint8Array | null)[]; // 120% Smasher Buffer
   lastReportedProgress: number;
 }
 
@@ -125,7 +124,6 @@ async function handleMessage(e: MessageEvent) {
         receivedChunks: 0,
         lastReceivedIndex: -1,
         opfsName: opfsName,
-        writeBuffer: new Array(16).fill(null),
         lastReportedProgress: 0
       });
 
@@ -150,23 +148,13 @@ async function handleMessage(e: MessageEvent) {
         const actualIdBuffer = new Uint8Array(data, 0, 16); // 16 = Compact FILE_ID_SIZE
         if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
 
-        // 120% Smasher: Buffered Disk Writes
-        const bufferIndex = chunkIndex % 16;
-        (meta as any).writeBuffer[bufferIndex] = new Uint8Array(data, 20);
+        // Direct Synchronous Write (Atomic and Safe for out-of-order)
+        const writeOffset = chunkIndex * 65536;
+        const chunkData = new Uint8Array(data, 20); // 20-byte header
+        accessHandle.write(chunkData, { at: writeOffset });
         
         meta.receivedChunks++;
         meta.lastReceivedIndex = Math.max(meta.lastReceivedIndex, chunkIndex);
-
-        if (bufferIndex === 15 || meta.receivedChunks === meta.totalChunks) {
-          for (let i = 0; i <= 15; i++) {
-             const buf = (meta as any).writeBuffer[i];
-             if (buf) {
-                const writeOffset = (chunkIndex - bufferIndex + i) * 65536;
-                accessHandle.write(buf, { at: writeOffset });
-                (meta as any).writeBuffer[i] = null;
-             }
-          }
-        }
         
         self.postMessage({ 
           type: 'buffer-return', 
