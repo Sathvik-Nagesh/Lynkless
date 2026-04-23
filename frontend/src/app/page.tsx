@@ -254,42 +254,8 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [activeTransfersCount]);
 
-  // Handle incoming files from Web Share Target Native OS Menu
-  useEffect(() => {
-    if (typeof window !== 'undefined' && window.location.search.includes('shared=true')) {
-      setTimeout(async () => {
-        try {
-          const db = await new Promise<IDBDatabase>((resolve, reject) => {
-            const req = indexedDB.open('LynklessShareDB', 1);
-            req.onsuccess = (e) => resolve((e.target as IDBOpenDBRequest).result);
-            req.onerror = () => reject(req.error);
-          });
-
-          if (!db.objectStoreNames.contains('shared_files')) {
-            db.close();
-            return;
-          }
-
-          const tx = db.transaction('shared_files', 'readwrite');
-          const getReq = tx.objectStore('shared_files').get('pending_share');
-
-          getReq.onsuccess = () => {
-            if (getReq.result && Array.isArray(getReq.result)) {
-              handleFileDrop(getReq.result);
-              tx.objectStore('shared_files').delete('pending_share');
-
-              const url = new URL(window.location.href);
-              url.searchParams.delete('shared');
-              window.history.replaceState({}, '', url.toString());
-            }
-          };
-          tx.oncomplete = () => db.close();
-        } catch (err) {
-          console.error('[Web Share Target] Failed to load shared files:', err);
-        }
-      }, 500); // Wait for signaling to initialize
-    }
-  }, [handleFileDrop]);
+  // Removed redundant manual IndexedDB Share Target effect. 
+  // Intent is properly handled by the checkSharedFiles() useEffect block at the top of this component.
 
   // Confirm and send files
   const handleConfirmSend = useCallback(async (password?: string, shouldZip?: boolean, compressImagesFlag?: boolean) => {
@@ -325,13 +291,19 @@ export default function Home() {
       }
 
       if (shouldZip && finalFiles.length > 1) {
-        showToast('Zipping files...', 'info');
-        try {
-          const zippedFile = await createZipFromFiles(finalFiles, `Lynkless_Bundle_${Date.now()}.zip`);
-          finalFiles = [zippedFile];
-        } catch (e) {
-          console.error('Zipping failed', e);
-          showToast('Zipping failed, sending individually', 'error');
+        // 100% Fail-Safe: Prevent Out Of Memory (OOM) crash if user tries to ZIP massive files
+        const totalSize = finalFiles.reduce((acc, f) => acc + f.size, 0);
+        if (totalSize > 500 * 1024 * 1024) { // 500MB Safety Limit
+          showToast('Total size exceeds 500MB. Sending files individually to prevent browser crash.', 'warning');
+        } else {
+          showToast('Zipping files...', 'info');
+          try {
+            const zippedFile = await createZipFromFiles(finalFiles, `Lynkless_Bundle_${Date.now()}.zip`);
+            finalFiles = [zippedFile];
+          } catch (e) {
+            console.error('Zipping failed', e);
+            showToast('Zipping failed, sending individually', 'error');
+          }
         }
       }
 
@@ -439,6 +411,12 @@ export default function Home() {
           if (isEncrypted) {
             showToast(`Note: Received encrypted file "${transfer.fileName}". Use the Decryption Tool below to open it.`, 'success');
           }
+        }
+      } else if (transfer.status === 'failed') {
+        if (!notifiedTransfersRef.current.has(transfer.fileId + '-failed')) {
+          notifiedTransfersRef.current.add(transfer.fileId + '-failed');
+          sounds.current.playError();
+          showToast(`Transfer failed for "${transfer.fileName}". They might be out of storage or disconnected.`, 'error');
         }
       }
     });

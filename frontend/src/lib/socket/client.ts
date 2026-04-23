@@ -171,7 +171,11 @@ let signalingClient: SignalingClient | null = null;
 
 export function getSignalingClient(): SignalingClient {
   if (!signalingClient) {
-    const url = process.env.NEXT_PUBLIC_SIGNALING_URL || 'ws://localhost:8080';
+    let defaultUrl = 'ws://localhost:8080';
+    if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+      defaultUrl = `ws://${window.location.hostname}:8080`;
+    }
+    const url = process.env.NEXT_PUBLIC_SIGNALING_URL || defaultUrl;
     signalingClient = new SignalingClientImpl(url);
   }
   return signalingClient;

@@ -19,15 +19,20 @@ try {
 }
 
 // Default STUN servers (Google's are very reliable for most connections)
-// TURN servers are required for Symmetric NAT (e.g., enterprise firewalls/cellular).
-// Providing a free open TURN server is difficult as they frequently shut down or get abused.
-// Users should configure NEXT_PUBLIC_ICE_SERVERS to add their own TURN credentials.
+// Added OpenRelay TURN servers as a fallback to guarantee demo success on strict University/Enterprise Wi-Fi (Symmetric NAT)
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun3.l.google.com:19302' },
-  { urls: 'stun:stun4.l.google.com:19302' },
+  { 
+    urls: 'turn:openrelay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  },
+  { 
+    urls: 'turn:openrelay.metered.ca:443',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  }
 ];
 
 const ICE_SERVERS: RTCConfiguration = {
