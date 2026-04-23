@@ -965,15 +965,18 @@ class FileTransferManager {
            }
         }
         
+        // Create a view containing only the valid data length for this chunk
+        const validChunkView = new Uint8Array(transferBuffer, 0, HEADER_SIZE + rawChunk.length);
+
         // Dynamic High-Speed Backpressure
-        await this.webrtc.sendToPeer(peerId, transferBuffer);
+        await this.webrtc.sendToPeer(peerId, validChunkView);
 
           // 100% Polish: Tail Redundancy Strategy
           // If we are in the final lap (last 2 chunks), broadcast them down all channels 
           // to kill tail latency from a single slow SCTP stream.
           const isFinalLap = (chunkIndex >= metadata.totalChunks - 2);
           if (isFinalLap) {
-             this.webrtc.sendToPeer(peerId, transferBuffer); 
+             this.webrtc.sendToPeer(peerId, validChunkView); 
           }
 
           // Liquid-Metal: Manual return to pool for sender (Transmitter-side recycling)
