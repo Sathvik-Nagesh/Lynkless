@@ -440,8 +440,8 @@ class WebRTCManager {
     , channels[0]);
 
     // Backpressure: wait if the chosen channel's buffer is overwhelmed (~8MB for high-speed saturation)
-    // Liquid-Metal Backpressure: Tuned to 16MB for high-speed P2P saturation
-    if (channel.bufferedAmount > 16 * 1024 * 1024) {
+    // Liquid-Metal Backpressure: Tuned to 8MB to prevent Chrome's 16MB strict limit queue-full crashes
+    while (channel.bufferedAmount > 8 * 1024 * 1024) {
       await new Promise<void>((resolve) => {
         const onLow = () => {
           channel.removeEventListener('bufferedamountlow', onLow);
@@ -451,7 +451,7 @@ class WebRTCManager {
         setTimeout(() => {
           channel.removeEventListener('bufferedamountlow', onLow);
           resolve();
-        }, 3000);
+        }, 100); // Shorter fallback timeout to keep throughput high
       });
     }
 
@@ -460,7 +460,12 @@ class WebRTCManager {
         channel.send(data as Parameters<RTCDataChannel['send']>[0]);
         return true;
       }
-    } catch (e) {
+    } catch (e: any) {
+      if (e.name === 'OperationError' || (e.message && e.message.includes('queue is full'))) {
+        // Queue is completely full despite backpressure checks. Wait and retry instead of dropping data.
+        await new Promise(r => setTimeout(r, 50));
+        return this.sendToPeer(peerId, data);
+      }
       console.error('[WebRTC] Data channel send error:', e);
     }
     
