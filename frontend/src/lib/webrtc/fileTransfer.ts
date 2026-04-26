@@ -31,6 +31,18 @@ const FILE_ID_SIZE = 16; // UUID v4 as raw bytes
 const CHUNK_INDEX_SIZE = 4; // Uint32 (LE)
 const HEADER_SIZE = FILE_ID_SIZE + CHUNK_INDEX_SIZE;
 
+// Bolt: Fast UUID conversion lookup tables
+// Pre-calculating hex values avoids repeated string allocations and parseInt calls during transfers.
+const byteToHex: string[] = [];
+for (let n = 0; n <= 0xff; ++n) {
+  byteToHex[n] = n.toString(16).padStart(2, '0');
+}
+
+const hexToByte: Record<string, number> = {};
+for (let n = 0; n <= 0xff; ++n) {
+  hexToByte[n.toString(16).padStart(2, '0')] = n;
+}
+
 /**
  * Audio Anchor: Prevents Mobile OS Throttling during massive transfers
  */
@@ -52,22 +64,33 @@ function stopAudioAnchor() {
 
 /**
  * Text-to-Binary UUID compaction (36 chars -> 16 bytes)
+ * Bolt: Optimized to skip hyphens and use lookup tables, avoiding regex and parseInt.
  */
 function uuidToBytes(uuid: string): Uint8Array {
-  const hex = uuid.replace(/-/g, '');
   const bytes = new Uint8Array(16);
-  for (let i = 0; i < 16; i++) {
-    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  let j = 0;
+  for (let i = 0; i < uuid.length; i++) {
+    if (uuid[i] === '-') continue;
+    const hexPair = uuid.substring(i, i + 2).toLowerCase();
+    bytes[j++] = hexToByte[hexPair];
+    i++;
   }
   return bytes;
 }
 
 /**
  * Binary-to-UUID decompaction (16 bytes -> 36 chars)
+ * Bolt: Optimized using lookup tables and template literals, avoiding Array.from and map.
  */
 function bytesToUuid(bytes: Uint8Array): string {
-  const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+  return (
+    byteToHex[bytes[0]] + byteToHex[bytes[1]] + byteToHex[bytes[2]] + byteToHex[bytes[3]] + '-' +
+    byteToHex[bytes[4]] + byteToHex[bytes[5]] + '-' +
+    byteToHex[bytes[6]] + byteToHex[bytes[7]] + '-' +
+    byteToHex[bytes[8]] + byteToHex[bytes[9]] + '-' +
+    byteToHex[bytes[10]] + byteToHex[bytes[11]] + byteToHex[bytes[12]] +
+    byteToHex[bytes[13]] + byteToHex[bytes[14]] + byteToHex[bytes[15]]
+  );
 }
 
 // Request background sync tag if available
@@ -173,7 +196,7 @@ interface IncomingTransferState {
   startOffset: number;
   peerId: string;
   useWorker?: boolean;
-  chunks?: (ArrayBuffer | null)[]; // RAM fallback
+  chunks?: (Uint8Array | null)[]; // Bolt: Store Uint8Array views to avoid re-allocations
   checksum?: string;
   metaReceivedViaP2P?: boolean; // Track redundant metadata
 }
@@ -555,7 +578,6 @@ class FileTransferManager {
 
     // Bolt: Extract metadata from the binary header without extra JSON messages.
     const view = new DataView(data);
-    const decoder = new TextDecoder();
 
     // Compact Binary Decode: ID is the first 16 bytes
     const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
@@ -598,8 +620,8 @@ class FileTransferManager {
         }
       }, [data]);
     } else if (incoming.chunks && incoming.chunks[chunkIndex] === null) {
-      // RAM Fallback: Store only the data part
-      const chunkData = data.slice(HEADER_SIZE);
+      // Bolt: RAM Fallback - Store a zero-copy Uint8Array view instead of a slice (copy).
+      const chunkData = new Uint8Array(data, HEADER_SIZE);
       incoming.chunks[chunkIndex] = chunkData;
       incoming.receivedChunks++;
       incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, chunkIndex);
@@ -620,8 +642,9 @@ class FileTransferManager {
       this.worker.postMessage({ type: 'complete', fileId });
       // The finalization blob grab happens async in finalizeDownload 
     } else {
-      const validChunks = (incoming.chunks || []) as ArrayBuffer[];
-      const blob = new Blob(validChunks, { type: incoming.metadata.type });
+      // Bolt: validChunks are now Uint8Array views, which Blob constructor handles efficiently.
+      const validChunks = (incoming.chunks || []) as (Uint8Array | null)[];
+      const blob = new Blob(validChunks as unknown as BlobPart[], { type: incoming.metadata.type });
       
       this.fileReceivedHandlers.forEach((h) => h(blob, incoming.metadata));
       this.notifyProgress(fileId, 'completed', { transferredSize: incoming.metadata.size });
