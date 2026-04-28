@@ -33,8 +33,6 @@ import DecryptionTool from '@/components/DecryptionTool';
 import { SoundToggle } from '@/components/SoundToggle';
 import { ConnectionQualityDashboard } from '@/components/ConnectionQualityDashboard';
 import { TextSnippetShare } from '@/components/TextSnippetShare';
-import { getFileInfo } from '@/lib/utils/fileTypeIcons';
-import { getTrustedPeersManager } from '@/lib/utils/trustedPeers';
 import Link from 'next/link';
 import { createZipFromFiles } from '@/lib/utils/zipper';
 import { processEntry } from '@/lib/utils/fileUpload';
@@ -43,7 +41,6 @@ import { ServerWakeupGame } from '@/components/ServerWakeupGame';
 import { compressImage } from '@/lib/utils/imageCompression';
 
 const SIGNALING_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || 'ws://localhost:8080';
-const ENABLE_CALLS = process.env.NEXT_PUBLIC_ENABLE_CALLS !== 'false';
 
 import { checkSharedFiles } from '@/lib/pwa/shareTarget';
 
@@ -53,8 +50,13 @@ export default function Home() {
   const [showQRCode, setShowQRCode] = useState(false);
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [showFilePreview, setShowFilePreview] = useState(false);
   
+  const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
+  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
+  const dragCounter = useRef(0);
+  const sounds = useRef(getSounds());
+  const { showToast } = useToast();
+
   // 120% Upgrade: Handle PWA Share Target Intent
   useEffect(() => {
     const handleSharedIntent = async () => {
@@ -63,7 +65,6 @@ export default function Home() {
         const sharedFiles = await checkSharedFiles();
         if (sharedFiles.length > 0) {
           setPendingFiles(sharedFiles);
-          setShowFilePreview(true);
           showToast(`Prepared ${sharedFiles.length} shared files`, 'info');
           // Clean up URL
           window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
@@ -71,14 +72,7 @@ export default function Home() {
       }
     };
     handleSharedIntent();
-  }, []);
-
-  const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
-  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
-  const [isFocusMode, setIsFocusMode] = useState(false);
-  const dragCounter = useRef(0);
-  const sounds = useRef(getSounds());
-  const { showToast } = useToast();
+  }, [showToast]);
 
   const {
     clientId,
@@ -114,9 +108,6 @@ export default function Home() {
     remoteStreams,
     startScreenShare,
     stopScreenShare,
-    startCall,
-    endCall,
-    callStream,
   } = useWebRTC(clientId);
 
   useSignalingAutoConnect({
@@ -135,9 +126,8 @@ export default function Home() {
     transfers.filter(t => t.status === 'transferring' || t.status === 'paused').length,
     [transfers]);
 
-  useEffect(() => {
-    setIsFocusMode(activeTransfersCount > 0);
-  }, [activeTransfersCount]);
+  // Bolt: Use derived state for Focus Mode to avoid cascading renders
+  const isFocusMode = activeTransfersCount > 0;
 
   useTransferProtection(activeTransfersCount);
 
@@ -230,16 +220,7 @@ export default function Home() {
     }
 
     setPendingFiles(files);
-    setShowFilePreview(true);
   }, [peers, showToast]);
-
-  // Handle queued files when a peer connects eventually
-  useEffect(() => {
-    const connectedPeers = peers.filter(p => p.state === 'connected');
-    if (pendingFiles.length > 0 && connectedPeers.length > 0 && !showFilePreview) {
-      setShowFilePreview(true);
-    }
-  }, [pendingFiles, peers, showFilePreview]);
 
   // Invulnerability Patch: Service Worker Keep-Alive Loop
   useEffect(() => {
@@ -259,9 +240,7 @@ export default function Home() {
 
   // Confirm and send files
   const handleConfirmSend = useCallback(async (password?: string, shouldZip?: boolean, compressImagesFlag?: boolean) => {
-    setShowFilePreview(false);
-
-    // Clear pending files immediately so useEffect doesn't reopen modal
+    // Clear pending files immediately so derived state closes modal
     const finalFilesToProcess = [...pendingFiles];
     setPendingFiles([]);
 
@@ -427,6 +406,9 @@ export default function Home() {
     peers.filter(p => p.state === 'connected'),
     [peers]);
 
+  // Bolt: Use derived state for File Preview to avoid cascading renders
+  const showFilePreview = pendingFiles.length > 0 && connectedPeers.length > 0;
+
   // Count connected peers
   const connectedPeersCount = connectedPeers.length;
 
@@ -576,7 +558,6 @@ export default function Home() {
             peerNames={connectedPeers.map(p => getPeerName(p.id))}
             onConfirm={handleConfirmSend}
             onCancel={() => {
-              setShowFilePreview(false);
               setPendingFiles([]);
             }}
           />
