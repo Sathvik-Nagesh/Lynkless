@@ -139,7 +139,6 @@ function formatBytes(bytes: number): string {
 export function AppProvider({ children }: { children: ReactNode }) {
   // ── Core state ──
   const [isLoading, setIsLoading] = useState(true);
-  const [isLocalMode, setIsLocalMode] = useState(false);
   const [selectedPeer, setSelectedPeer] = useState<string | null>(null);
   const [showQRCode, setShowQRCode] = useState(false);
   const [showQRScanner, setShowQRScanner] = useState(false);
@@ -170,7 +169,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     disconnectFromPeer, getFingerprint,
     localStream, remoteStreams,
     startScreenShare, stopScreenShare,
-    startCall, endCall, callStream,
   } = useWebRTC(clientId);
 
   // ── Local LAN Fallback Discovery ──
@@ -181,12 +179,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     onLoaded: () => setIsLoading(false),
   });
 
-  useEffect(() => {
-    if (!isConnected) return;
+  // Bolt: Use memoized derived state for isLocalMode to avoid cascading renders
+  const isLocalMode = useMemo(() => {
+    if (!isConnected) return false;
     // Detect if we're on LAN: check if the WebSocket URL resolved to localhost or a private IP
     const url = SIGNALING_URL;
-    const isLAN = /localhost|127\.0\.0\.1|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\./.test(url);
-    setIsLocalMode(isLAN);
+    return /localhost|127\.0\.0\.1|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\./.test(url);
   }, [isConnected]);
 
   useAutoJoinRoom({
