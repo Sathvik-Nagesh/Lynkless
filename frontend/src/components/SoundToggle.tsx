@@ -8,7 +8,10 @@ export const SoundToggle = memo(function SoundToggle() {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
+    // Bolt: Defer mounting state to requestAnimationFrame to ensure hydration is complete
+    // and avoid synchronous cascading renders immediately upon mount.
+    requestAnimationFrame(() => setMounted(true));
+
     const saved = localStorage.getItem('lynkless-sounds-enabled');
     const isEnabled = saved !== 'false';
     setEnabled(isEnabled);

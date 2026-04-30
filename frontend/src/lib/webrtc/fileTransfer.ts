@@ -228,6 +228,13 @@ class FileTransferManager {
     return cached;
   }
 
+  private maybeStopAudioAnchor(): void {
+    const hasActive = this.outgoingTransfers.size > 0 || this.incomingFiles.size > 0;
+    if (!hasActive) {
+      stopAudioAnchor();
+    }
+  }
+
   constructor() {
     this.setupDataHandler();
     this.setupConnectionMonitor();
@@ -319,7 +326,7 @@ class FileTransferManager {
              console.log('[FileTransfer] Received DIRECT metadata via P2P pipe for:', msg.fileId);
              this.handleFileMeta(peerId, { type: 'file-meta', fileId: msg.fileId, metadata: msg.metadata });
              const incoming = this.incomingFiles.get(msg.fileId);
-             if (incoming) (incoming as any).metaReceivedViaP2P = true;
+             if (incoming) (incoming as unknown as { metaReceivedViaP2P: boolean }).metaReceivedViaP2P = true;
              return;
           }
           if (msg.type === 'file-ack') {
@@ -348,7 +355,7 @@ class FileTransferManager {
   /**
    * Monitor connection state for resume capability
    */
-  private diagnosticTimeouts: Map<string, any> = new Map();
+  private diagnosticTimeouts: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   private setupConnectionMonitor(): void {
     this.stateCleanupHandler = this.webrtc.onStateChange((peerId, state) => {
@@ -1423,6 +1430,8 @@ class FileTransferManager {
       // Cleanup update time when finished
       if (isFinalState) {
         setTimeout(() => this.lastUpdateTimes.delete(fileId), 1000);
+        // Bolt: Check if we can stop the audio anchor now that a transfer ended
+        this.maybeStopAudioAnchor();
       }
     }
   }
@@ -1452,7 +1461,7 @@ class FileTransferManager {
     
     try {
       const root = await navigator.storage.getDirectory();
-      const entries = (root as any).entries(); // Iteration helper
+      const entries = (root as unknown as { entries(): AsyncIterableIterator<[string, FileSystemFileHandle]> }).entries(); // Iteration helper
       
       for await (const [name, entry] of entries) {
         if (name.startsWith('lynkless-')) {
@@ -1497,11 +1506,15 @@ export { CHUNK_SIZE, MAX_FILE_SIZE };
  * 120% Production: Screen Wake Lock
  * Prevents the OS from sleeping while a transfer is in progress.
  */
-let wakeLock: any = null;
+interface WakeLockSentinel {
+  release(): Promise<void>;
+  addEventListener(type: string, listener: () => void): void;
+}
+let wakeLock: WakeLockSentinel | null = null;
 async function requestWakeLock() {
   if (typeof window !== 'undefined' && 'wakeLock' in navigator && !wakeLock) {
     try {
-      wakeLock = await (navigator as any).wakeLock.request('screen');
+      wakeLock = await (navigator as unknown as { wakeLock: { request(type: string): Promise<WakeLockSentinel> } }).wakeLock.request('screen');
       console.log('[System] Screen Wake Lock active.');
       wakeLock.addEventListener('release', () => { wakeLock = null; });
     } catch (err) {}
@@ -1513,5 +1526,7 @@ function releaseWakeLock() {
     wakeLock.release();
     wakeLock = null;
     console.log('[System] Screen Wake Lock released.');
+    // Bolt: System idle, definitely stop the anchor
+    stopAudioAnchor();
   }
 }
