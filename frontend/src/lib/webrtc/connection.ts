@@ -465,8 +465,9 @@ class WebRTCManager {
         channel.send(data as Parameters<RTCDataChannel['send']>[0]);
         return true;
       }
-    } catch (e: any) {
-      if (e.name === 'OperationError' || (e.message && e.message.includes('queue is full'))) {
+    } catch (e: unknown) {
+      const err = e as { name?: string; message?: string };
+      if (err.name === 'OperationError' || (err.message && err.message.includes('queue is full'))) {
         // Queue is completely full despite backpressure checks. Wait and retry instead of dropping data.
         await new Promise(r => setTimeout(r, 50));
         return this.sendToPeer(peerId, data);

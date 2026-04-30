@@ -143,9 +143,16 @@ export default function QRScannerModal({
 
   useEffect(() => {
     if (isOpen) {
-      startCamera();
+      // Bolt: Defer camera startup to requestAnimationFrame to avoid synchronous setState
+      // inside useEffect which triggers cascading renders and linter warnings.
+      requestAnimationFrame(() => {
+        if (isOpen) startCamera();
+      });
     } else {
-      stopCamera();
+      // Bolt: Also defer stopCamera if it causes setState-in-effect warnings
+      requestAnimationFrame(() => {
+        if (!isOpen) stopCamera();
+      });
     }
 
     return () => {

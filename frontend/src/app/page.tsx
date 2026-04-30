@@ -53,8 +53,10 @@ export default function Home() {
   const [showQRCode, setShowQRCode] = useState(false);
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [showFilePreview, setShowFilePreview] = useState(false);
-  
+  const dragCounter = useRef(0);
+  const sounds = useRef(getSounds());
+  const { showToast } = useToast();
+
   // 120% Upgrade: Handle PWA Share Target Intent
   useEffect(() => {
     const handleSharedIntent = async () => {
@@ -63,7 +65,6 @@ export default function Home() {
         const sharedFiles = await checkSharedFiles();
         if (sharedFiles.length > 0) {
           setPendingFiles(sharedFiles);
-          setShowFilePreview(true);
           showToast(`Prepared ${sharedFiles.length} shared files`, 'info');
           // Clean up URL
           window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
@@ -71,14 +72,10 @@ export default function Home() {
       }
     };
     handleSharedIntent();
-  }, []);
+  }, [showToast]);
 
   const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
   const [isGlobalDragging, setIsGlobalDragging] = useState(false);
-  const [isFocusMode, setIsFocusMode] = useState(false);
-  const dragCounter = useRef(0);
-  const sounds = useRef(getSounds());
-  const { showToast } = useToast();
 
   const {
     clientId,
@@ -135,9 +132,8 @@ export default function Home() {
     transfers.filter(t => t.status === 'transferring' || t.status === 'paused').length,
     [transfers]);
 
-  useEffect(() => {
-    setIsFocusMode(activeTransfersCount > 0);
-  }, [activeTransfersCount]);
+  // Bolt: Derived state avoids cascading renders triggered by useEffect + setState
+  const isFocusMode = activeTransfersCount > 0;
 
   useTransferProtection(activeTransfersCount);
 
@@ -220,9 +216,9 @@ export default function Home() {
 
   // Handle file drop - show preview modal
   const handleFileDrop = useCallback((files: File[]) => {
-    const connectedPeers = peers.filter(p => p.state === 'connected');
+    const connectedPeersCount = peers.filter(p => p.state === 'connected').length;
 
-    if (connectedPeers.length === 0) {
+    if (connectedPeersCount === 0) {
       console.warn('[File Drop] No connected peers. Queueing files.');
       setPendingFiles(files);
       showToast('Files queued! Select a peer on the radar to send them.', 'info');
@@ -230,16 +226,7 @@ export default function Home() {
     }
 
     setPendingFiles(files);
-    setShowFilePreview(true);
   }, [peers, showToast]);
-
-  // Handle queued files when a peer connects eventually
-  useEffect(() => {
-    const connectedPeers = peers.filter(p => p.state === 'connected');
-    if (pendingFiles.length > 0 && connectedPeers.length > 0 && !showFilePreview) {
-      setShowFilePreview(true);
-    }
-  }, [pendingFiles, peers, showFilePreview]);
 
   // Invulnerability Patch: Service Worker Keep-Alive Loop
   useEffect(() => {
@@ -259,9 +246,7 @@ export default function Home() {
 
   // Confirm and send files
   const handleConfirmSend = useCallback(async (password?: string, shouldZip?: boolean, compressImagesFlag?: boolean) => {
-    setShowFilePreview(false);
-
-    // Clear pending files immediately so useEffect doesn't reopen modal
+    // Clear pending files immediately to close derived FilePreviewModal
     const finalFilesToProcess = [...pendingFiles];
     setPendingFiles([]);
 
@@ -430,16 +415,23 @@ export default function Home() {
   // Count connected peers
   const connectedPeersCount = connectedPeers.length;
 
+  // Bolt: Derived state avoids cascading renders and keeps UI in sync with state
+  const showFilePreview = pendingFiles.length > 0 && connectedPeersCount > 0;
+
   // Check if we can send files (have a connected peer)
   const canSendFile = useMemo(() =>
     !!selectedPeer && connectedPeers.some(p => p.id === selectedPeer),
     [selectedPeer, connectedPeers]);
 
   // Prepare users for radar with their connection states - Memoized to prevent Radar re-renders
-  const radarUsers = useMemo(() => roomState.users.map(user => ({
-    ...user,
-    isConnected: connectedPeers.some(p => p.id === user.id),
-  })), [roomState.users, connectedPeers]);
+  const radarUsers = useMemo(() => {
+    // Bolt: Use a Set for O(1) lookup in the map loop, optimizing from O(N*M) to O(N+M)
+    const connectedIds = new Set(connectedPeers.map(p => p.id));
+    return roomState.users.map(user => ({
+      ...user,
+      isConnected: connectedIds.has(user.id),
+    }));
+  }, [roomState.users, connectedPeers]);
 
   // Memoize peers for ChatPanel to prevent unnecessary re-renders
   const chatPeers = useMemo(() =>
@@ -576,7 +568,6 @@ export default function Home() {
             peerNames={connectedPeers.map(p => getPeerName(p.id))}
             onConfirm={handleConfirmSend}
             onCancel={() => {
-              setShowFilePreview(false);
               setPendingFiles([]);
             }}
           />
