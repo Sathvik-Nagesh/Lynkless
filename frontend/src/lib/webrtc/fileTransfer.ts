@@ -215,6 +215,15 @@ class FileTransferManager {
   private stateCleanupHandler: (() => void) | null = null;
   private worker: Worker | null = null;
   private binaryIdCache: Map<string, Uint8Array> = new Map();
+  private lastSeenFileId: string = '';
+  private lastSeenBytes: Uint8Array | null = null;
+
+  private compareIdBuffers(a: Uint8Array, b: Uint8Array): boolean {
+    for (let i = 0; i < 16; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
 
   private getBinaryId(fileId: string): Uint8Array {
     let cached = this.binaryIdCache.get(fileId);
@@ -574,14 +583,23 @@ class FileTransferManager {
     if (data.byteLength < HEADER_SIZE) return;
 
     // Bolt: Extract metadata from the binary header without extra JSON messages.
-    const view = new DataView(data);
+    // Optimized: Use a Uint8Array view for faster header parsing via bit-shifting
+    const headerView = new Uint8Array(data, 0, HEADER_SIZE);
 
-    // Compact Binary Decode: ID is the first 16 bytes
-    const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
-    const fileId = bytesToUuid(fileIdBytes);
+    // Bolt: Fast ID Check. If this chunk belongs to the same file as the previous chunk (99% likely),
+    // we bypass the expensive bytesToUuid conversion and string allocations.
+    let fileId = this.lastSeenFileId;
+    const currentIdBytes = headerView.subarray(0, FILE_ID_SIZE);
+
+    if (!this.lastSeenBytes || !this.compareIdBuffers(currentIdBytes, this.lastSeenBytes)) {
+      this.lastSeenBytes = new Uint8Array(currentIdBytes);
+      fileId = bytesToUuid(this.lastSeenBytes);
+      this.lastSeenFileId = fileId;
+    }
+
+    // Chunk index is the next 4 bytes (Uint32 LE) at offset 16 - bit-shifting is faster than DataView
+    const chunkIndex = headerView[16] | (headerView[17] << 8) | (headerView[18] << 16) | (headerView[19] << 24);
     
-    // Chunk index is the next 4 bytes (Uint32 LE) at offset 16
-    const chunkIndex = view.getUint32(FILE_ID_SIZE, true);
     // Real data starts after header
     const incoming = this.incomingFiles.get(fileId);
     if (!incoming) {
@@ -800,6 +818,9 @@ class FileTransferManager {
     const totalChunks = transfer.metadata.totalChunks;
     let transferredSize = startOffset;
 
+    // Bolt: Lift binary ID out of the loop
+    const binaryId = this.getBinaryId(fileId);
+
     // Update status
     this.notifyProgress(fileId, 'transferring', {
       resumable: true,
@@ -814,20 +835,29 @@ class FileTransferManager {
         const slice = file.slice(startByte, endByte);
         const rawChunk = new Uint8Array(await slice.arrayBuffer());
 
-        // Bolt: Pack metadata and data into a single atomic binary message.
-        // This reduces signaling overhead and eliminates inter-message race conditions.
-        const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
+        // Bolt: Recycling Buffer Slab (reduced allocations)
+        const transferBuffer = this.getBufferFromPool();
+        const packedChunk = new Uint8Array(transferBuffer);
 
         // Header Compaction (20-byte footprint)
-        const binaryId = this.getBinaryId(fileId);
         packedChunk.set(binaryId, 0);
 
-        const chunkView = new DataView(packedChunk.buffer);
-        chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
+        // Uint32 LE manual packing
+        packedChunk[16] = chunkIndex & 0xFF;
+        packedChunk[17] = (chunkIndex >> 8) & 0xFF;
+        packedChunk[18] = (chunkIndex >> 16) & 0xFF;
+        packedChunk[19] = (chunkIndex >> 24) & 0xFF;
+
         packedChunk.set(rawChunk, HEADER_SIZE);
 
+        // Create a view containing only the valid data length
+        const validChunkView = new Uint8Array(transferBuffer, 0, HEADER_SIZE + rawChunk.length);
+
         // Send atomic chunk
-        await this.webrtc.sendToPeer(peerId, packedChunk);
+        await this.webrtc.sendToPeer(peerId, validChunkView);
+
+        // Return to pool
+        this.bufferPool.push(transferBuffer);
 
         transfer.lastChunkIndex = chunkIndex;
         chunkIndex++;
@@ -935,6 +965,9 @@ class FileTransferManager {
       metadata,
     }));
 
+    // Bolt: Lift binary ID out of the loop
+    const binaryId = this.getBinaryId(fileId);
+
     // Restore Rock-Solid Chunking: Sender and Receiver MUST use identical sizes
     const streamReader = file.stream().getReader();
     let chunkIndex = 0;
@@ -961,7 +994,6 @@ class FileTransferManager {
         const packedChunk = new Uint8Array(transferBuffer);
         
         // Header Compaction (20-byte footprint)
-        const binaryId = this.getBinaryId(fileId);
         packedChunk.set(binaryId, 0);
         
         packedChunk[16] = chunkIndex & 0xFF;
@@ -1120,6 +1152,9 @@ class FileTransferManager {
 
     this.meshTransfers.set(meshId, { file, peerIds, transfers });
 
+    // Bolt: Lift binary ID out of the loop
+    const binaryId = this.getBinaryId(fileId);
+
     peerIds.forEach(peerId => {
       transfers.set(peerId, `${fileId}-${peerId}`);
 
@@ -1173,26 +1208,36 @@ class FileTransferManager {
             const rawChunk = value.subarray(offset, Math.min(offset + CHUNK_SIZE, value.length));
             offset += CHUNK_SIZE;
 
-            // Bolt: Pack metadata and data into a single atomic binary message for broadcast.
-            const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
+            // Bolt: Recycling Buffer Slab (reduced allocations in mesh mode)
+            const transferBuffer = this.getBufferFromPool();
+            const packedChunk = new Uint8Array(transferBuffer);
 
             // Header Compaction (20-byte footprint)
-            const binaryId = this.getBinaryId(fileId);
             packedChunk.set(binaryId, 0);
 
-            const chunkView = new DataView(packedChunk.buffer);
-            chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
+            // Uint32 LE manual packing
+            packedChunk[16] = chunkIndex & 0xFF;
+            packedChunk[17] = (chunkIndex >> 8) & 0xFF;
+            packedChunk[18] = (chunkIndex >> 16) & 0xFF;
+            packedChunk[19] = (chunkIndex >> 24) & 0xFF;
+
             packedChunk.set(rawChunk, HEADER_SIZE);
+
+            // Create a view containing only the valid data length
+            const validChunkView = new Uint8Array(transferBuffer, 0, HEADER_SIZE + rawChunk.length);
 
             // Bolt: Parallelize transmission to all active peers in the mesh
             // This prevents a single slow connection from bottlenecking the entire broadcast.
             await Promise.all(activePeers.map(async (peerId) => {
               const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
               if (tx && !tx.cancelled && !tx.paused) {
-                await this.webrtc.sendToPeer(peerId, packedChunk);
+                await this.webrtc.sendToPeer(peerId, validChunkView);
                 tx.lastChunkIndex = chunkIndex;
               }
             }));
+
+            // Return to pool after all peers in mesh have been dispatched
+            this.bufferPool.push(transferBuffer);
 
             chunkIndex++;
             transferredSize += rawChunk.length;
