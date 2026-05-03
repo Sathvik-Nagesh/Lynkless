@@ -436,10 +436,14 @@ export default function Home() {
     [selectedPeer, connectedPeers]);
 
   // Prepare users for radar with their connection states - Memoized to prevent Radar re-renders
-  const radarUsers = useMemo(() => roomState.users.map(user => ({
-    ...user,
-    isConnected: connectedPeers.some(p => p.id === user.id),
-  })), [roomState.users, connectedPeers]);
+  // Bolt: Optimized from O(N*M) to O(N+M) using a Set for constant-time connection lookups.
+  const radarUsers = useMemo(() => {
+    const connectedPeerIds = new Set(connectedPeers.map(p => p.id));
+    return roomState.users.map(user => ({
+      ...user,
+      isConnected: connectedPeerIds.has(user.id),
+    }));
+  }, [roomState.users, connectedPeers]);
 
   // Memoize peers for ChatPanel to prevent unnecessary re-renders
   const chatPeers = useMemo(() =>
