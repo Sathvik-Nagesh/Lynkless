@@ -223,13 +223,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [selectedPeer, connectedPeers],
   );
 
-  const radarUsers = useMemo(
-    () => roomState.users.map(user => ({
+  const radarUsers = useMemo(() => {
+    // Bolt: Optimized from O(N*M) to O(N+M) using a Set for connected peer lookups.
+    const connectedPeerIds = new Set(connectedPeers.map(p => p.id));
+    return roomState.users.map(user => ({
       ...user,
-      isConnected: connectedPeers.some(p => p.id === user.id),
-    })),
-    [roomState.users, connectedPeers],
-  );
+      isConnected: connectedPeerIds.has(user.id),
+    }));
+  }, [roomState.users, connectedPeers]);
 
   const chatPeers = useMemo(
     () => connectedPeers.map(p => ({ id: p.id })),
