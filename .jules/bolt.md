@@ -65,3 +65,7 @@
 ## 2026-04-27 - O(1) UUID Conversion via Lookup Tables
 **Learning:** Performing regex-based string replacements and `parseInt` inside high-frequency transfer loops (every 64KB chunk) creates significant CPU overhead and garbage collection pressure.
 **Action:** Use pre-computed `byteToHex` and `hexToByte` lookup tables for UUID-to-binary conversions. A manual loop that skips hyphens avoids regex and string allocations, making the hot path much leaner.
+
+## 2026-05-05 - Stable Identity for High-Frequency State Derivatives
+**Learning:** Derived arrays (like a list of active peer IDs) from high-frequency state (like 100ms transfer progress) trigger redundant re-renders of memoized children if their reference identity changes. Using a useRef to stabilize identity during render is flagged by linters as an anti-pattern.
+**Action:** Use a stable string key (e.g. `join(',')`) in the `useMemo` dependency array to ensure the memoized value only recalculates when the underlying set of data actually changes, preserving reference identity for memoized children.
