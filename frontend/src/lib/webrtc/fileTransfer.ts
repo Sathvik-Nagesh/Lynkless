@@ -805,6 +805,9 @@ class FileTransferManager {
       resumable: true,
     });
 
+    // Bolt: Hoist binaryId out of the loop to avoid redundant map lookups
+    const binaryId = this.getBinaryId(fileId);
+
     try {
       while (chunkIndex < totalChunks) {
         if (transfer.cancelled || transfer.paused) break;
@@ -819,7 +822,6 @@ class FileTransferManager {
         const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
 
         // Header Compaction (20-byte footprint)
-        const binaryId = this.getBinaryId(fileId);
         packedChunk.set(binaryId, 0);
 
         const chunkView = new DataView(packedChunk.buffer);
@@ -940,6 +942,9 @@ class FileTransferManager {
     let chunkIndex = 0;
     let transferredSize = 0;
 
+    // Bolt: Hoist binaryId out of the loop to avoid redundant map lookups
+    const binaryId = this.getBinaryId(fileId);
+
     try {
       while (true) {
         const { done, value } = await streamReader.read();
@@ -961,7 +966,6 @@ class FileTransferManager {
         const packedChunk = new Uint8Array(transferBuffer);
         
         // Header Compaction (20-byte footprint)
-        const binaryId = this.getBinaryId(fileId);
         packedChunk.set(binaryId, 0);
         
         packedChunk[16] = chunkIndex & 0xFF;
@@ -1154,6 +1158,9 @@ class FileTransferManager {
     let chunkIndex = 0;
     let transferredSize = 0;
 
+    // Bolt: Hoist binaryId out of the loop to avoid redundant map lookups
+    const binaryId = this.getBinaryId(fileId);
+
     // Run async mesh transfer loop without blocking the return of meshId
     (async () => {
       try {
@@ -1177,7 +1184,6 @@ class FileTransferManager {
             const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
 
             // Header Compaction (20-byte footprint)
-            const binaryId = this.getBinaryId(fileId);
             packedChunk.set(binaryId, 0);
 
             const chunkView = new DataView(packedChunk.buffer);
