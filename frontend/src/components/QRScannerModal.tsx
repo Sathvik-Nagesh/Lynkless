@@ -143,9 +143,14 @@ export default function QRScannerModal({
 
   useEffect(() => {
     if (isOpen) {
-      startCamera();
+      // Bolt: Use requestAnimationFrame to defer state update and avoid cascading render
+      requestAnimationFrame(() => {
+        startCamera();
+      });
     } else {
-      stopCamera();
+      requestAnimationFrame(() => {
+        stopCamera();
+      });
     }
 
     return () => {

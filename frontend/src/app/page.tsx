@@ -54,7 +54,14 @@ export default function Home() {
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [showFilePreview, setShowFilePreview] = useState(false);
-  
+  const [filePreviewDismissed, setFilePreviewDismissed] = useState(false);
+
+  const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
+  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
+  const dragCounter = useRef(0);
+  const sounds = useRef(getSounds());
+  const { showToast } = useToast();
+
   // 120% Upgrade: Handle PWA Share Target Intent
   useEffect(() => {
     const handleSharedIntent = async () => {
@@ -71,14 +78,7 @@ export default function Home() {
       }
     };
     handleSharedIntent();
-  }, []);
-
-  const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
-  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
-  const [isFocusMode, setIsFocusMode] = useState(false);
-  const dragCounter = useRef(0);
-  const sounds = useRef(getSounds());
-  const { showToast } = useToast();
+  }, [showToast]);
 
   const {
     clientId,
@@ -135,9 +135,8 @@ export default function Home() {
     transfers.filter(t => t.status === 'transferring' || t.status === 'paused').length,
     [transfers]);
 
-  useEffect(() => {
-    setIsFocusMode(activeTransfersCount > 0);
-  }, [activeTransfersCount]);
+  // Bolt: Use derived state instead of useEffect to avoid cascading renders
+  const isFocusMode = activeTransfersCount > 0;
 
   useTransferProtection(activeTransfersCount);
 
@@ -233,13 +232,17 @@ export default function Home() {
     setShowFilePreview(true);
   }, [peers, showToast]);
 
-  // Handle queued files when a peer connects eventually
+  // Bolt: Use derived state instead of useEffect to avoid cascading renders
+  const shouldShowFilePreview = pendingFiles.length > 0 && peers.filter(p => p.state === 'connected').length > 0 && !filePreviewDismissed;
+
+  // Reset dismissal when pending files change
+  const prevPendingFilesLength = useRef(pendingFiles.length);
   useEffect(() => {
-    const connectedPeers = peers.filter(p => p.state === 'connected');
-    if (pendingFiles.length > 0 && connectedPeers.length > 0 && !showFilePreview) {
-      setShowFilePreview(true);
+    if (pendingFiles.length !== prevPendingFilesLength.current) {
+      setFilePreviewDismissed(false);
+      prevPendingFilesLength.current = pendingFiles.length;
     }
-  }, [pendingFiles, peers, showFilePreview]);
+  }, [pendingFiles.length]);
 
   // Invulnerability Patch: Service Worker Keep-Alive Loop
   useEffect(() => {
@@ -447,10 +450,16 @@ export default function Home() {
     [connectedPeers]);
 
   // Active transfer peers for Radar Particle Animation
-  const activeTransferPeerIds = useMemo(() => {
+  // Bolt: Stabilize identity using a sorted string key to prevent Radar re-renders
+  const activeTransferPeerIdsString = useMemo(() => {
     const active = transfers.filter(t => t.status === 'transferring');
-    return Array.from(new Set(active.map(t => t.peerId)));
+    return Array.from(new Set(active.map(t => t.peerId))).sort().join(',');
   }, [transfers]);
+
+  const activeTransferPeerIds = useMemo(() => {
+    if (!activeTransferPeerIdsString) return [];
+    return activeTransferPeerIdsString.split(',');
+  }, [activeTransferPeerIdsString]);
 
   return (
     <main
@@ -569,14 +578,15 @@ export default function Home() {
 
       {/* File Preview Modal */}
       <AnimatePresence>
-        {showFilePreview && (
+        {(showFilePreview || shouldShowFilePreview) && (
           <FilePreviewModal
             files={pendingFiles}
             peerCount={connectedPeersCount}
-            peerNames={connectedPeers.map(p => getPeerName(p.id))}
+            peerNames={peers.filter(p => p.state === 'connected').map(p => getPeerName(p.id))}
             onConfirm={handleConfirmSend}
             onCancel={() => {
               setShowFilePreview(false);
+              setFilePreviewDismissed(true);
               setPendingFiles([]);
             }}
           />
