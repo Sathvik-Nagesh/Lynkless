@@ -215,6 +215,15 @@ class FileTransferManager {
   private stateCleanupHandler: (() => void) | null = null;
   private worker: Worker | null = null;
   private binaryIdCache: Map<string, Uint8Array> = new Map();
+  private lastIncoming: { binaryId: Uint8Array; uuid: string; state: IncomingTransferState } | null = null;
+
+  private compareIdBuffers(a: Uint8Array, b: Uint8Array): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
 
   private getBinaryId(fileId: string): Uint8Array {
     let cached = this.binaryIdCache.get(fileId);
@@ -574,16 +583,33 @@ class FileTransferManager {
     if (data.byteLength < HEADER_SIZE) return;
 
     // Bolt: Extract metadata from the binary header without extra JSON messages.
-    const view = new DataView(data);
+    const binaryIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
 
-    // Compact Binary Decode: ID is the first 16 bytes
-    const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
-    const fileId = bytesToUuid(fileIdBytes);
+    let fileId: string;
+    let incoming: IncomingTransferState | undefined;
+
+    // Bolt: Use lastIncoming cache to bypass redundant bytesToUuid and Map lookups
+    if (this.lastIncoming && this.compareIdBuffers(binaryIdBytes, this.lastIncoming.binaryId)) {
+      fileId = this.lastIncoming.uuid;
+      incoming = this.lastIncoming.state;
+    } else {
+      fileId = bytesToUuid(binaryIdBytes);
+      incoming = this.incomingFiles.get(fileId);
+      if (incoming) {
+        // Update cache for this new file stream (copying ID to avoid transfer issues)
+        this.lastIncoming = {
+          binaryId: new Uint8Array(binaryIdBytes),
+          uuid: fileId,
+          state: incoming
+        };
+      }
+    }
     
-    // Chunk index is the next 4 bytes (Uint32 LE) at offset 16
-    const chunkIndex = view.getUint32(FILE_ID_SIZE, true);
+    // Bolt: Extract chunk index using manual bit-shifting (LE) for better performance than DataView
+    const headerView = new Uint8Array(data, FILE_ID_SIZE, CHUNK_INDEX_SIZE);
+    const chunkIndex = headerView[0] | (headerView[1] << 8) | (headerView[2] << 16) | (headerView[3] << 24);
+
     // Real data starts after header
-    const incoming = this.incomingFiles.get(fileId);
     if (!incoming) {
       // Buffer orphaned chunks if they arrive before file-meta (due to parallel channel striping)
       if (!this.orphanedChunks.has(fileId)) {
