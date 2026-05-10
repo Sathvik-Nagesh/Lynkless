@@ -215,6 +215,11 @@ class FileTransferManager {
   private stateCleanupHandler: (() => void) | null = null;
   private worker: Worker | null = null;
   private binaryIdCache: Map<string, Uint8Array> = new Map();
+  private lastIncoming: {
+    idBuffer: Uint8Array;
+    idString: string;
+    state: IncomingTransferState;
+  } | null = null;
 
   private getBinaryId(fileId: string): Uint8Array {
     let cached = this.binaryIdCache.get(fileId);
@@ -569,21 +574,39 @@ class FileTransferManager {
   /**
    * Process an atomic binary chunk from a peer.
    * Bolt: Decodes the packed header (fileId + chunkIndex) and routes data to worker/buffer.
+   * Optimized with a fast-path cache for high-frequency intake.
    */
   private handleBinaryChunk(peerId: string, data: ArrayBuffer): void {
     if (data.byteLength < HEADER_SIZE) return;
 
     // Bolt: Extract metadata from the binary header without extra JSON messages.
-    const view = new DataView(data);
-
-    // Compact Binary Decode: ID is the first 16 bytes
     const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
-    const fileId = bytesToUuid(fileIdBytes);
     
-    // Chunk index is the next 4 bytes (Uint32 LE) at offset 16
-    const chunkIndex = view.getUint32(FILE_ID_SIZE, true);
+    let fileId: string;
+    let incoming: IncomingTransferState | undefined;
+
+    // Bolt: Fast-path cache check to avoid bytesToUuid and Map lookups
+    if (this.lastIncoming && this.compareIdBuffers(fileIdBytes, this.lastIncoming.idBuffer)) {
+      fileId = this.lastIncoming.idString;
+      incoming = this.lastIncoming.state;
+    } else {
+      fileId = bytesToUuid(fileIdBytes);
+      incoming = this.incomingFiles.get(fileId);
+
+      if (incoming) {
+        this.lastIncoming = {
+          idBuffer: new Uint8Array(fileIdBytes), // Copy bytes to avoid pinning large chunk buffer
+          idString: fileId,
+          state: incoming
+        };
+      }
+    }
+
+    // Bolt: Use manual bit-shifting instead of DataView for chunkIndex extraction (lower CPU overhead)
+    const headerView = new Uint8Array(data, FILE_ID_SIZE, CHUNK_INDEX_SIZE);
+    const chunkIndex = (headerView[0] | (headerView[1] << 8) | (headerView[2] << 16) | (headerView[3] << 24)) >>> 0;
+
     // Real data starts after header
-    const incoming = this.incomingFiles.get(fileId);
     if (!incoming) {
       // Buffer orphaned chunks if they arrive before file-meta (due to parallel channel striping)
       if (!this.orphanedChunks.has(fileId)) {
@@ -777,6 +800,7 @@ class FileTransferManager {
 
   /**
    * Resume sending a file from a specific chunk
+   * Bolt: Optimized to use stream() and bufferPool for zero-allocation performance.
    */
   private async resumeSendFile(fileId: string, peerId: string, fromChunk: number): Promise<void> {
     const transfer = this.outgoingTransfers.get(fileId);
@@ -797,7 +821,6 @@ class FileTransferManager {
     transfer.startTime = Date.now();
     transfer.startOffset = startOffset;
     let chunkIndex = fromChunk;
-    const totalChunks = transfer.metadata.totalChunks;
     let transferredSize = startOffset;
 
     // Update status
@@ -806,46 +829,61 @@ class FileTransferManager {
     });
 
     try {
-      while (chunkIndex < totalChunks) {
-        if (transfer.cancelled || transfer.paused) break;
+      const streamReader = file.slice(startOffset).stream().getReader();
+      const binaryId = this.getBinaryId(fileId);
 
-        const startByte = chunkIndex * CHUNK_SIZE;
-        const endByte = Math.min(startByte + CHUNK_SIZE, file.size);
-        const slice = file.slice(startByte, endByte);
-        const rawChunk = new Uint8Array(await slice.arrayBuffer());
+      while (true) {
+        const { done, value } = await streamReader.read();
+        if (done) break;
 
-        // Bolt: Pack metadata and data into a single atomic binary message.
-        // This reduces signaling overhead and eliminates inter-message race conditions.
-        const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
+        const currentTx = this.outgoingTransfers.get(fileId);
+        if (currentTx?.cancelled || currentTx?.paused) break;
 
-        // Header Compaction (20-byte footprint)
-        const binaryId = this.getBinaryId(fileId);
-        packedChunk.set(binaryId, 0);
+        let offset = 0;
+        while (offset < value.length) {
+          const rawChunk = value.subarray(offset, Math.min(offset + CHUNK_SIZE, value.length));
+          offset += CHUNK_SIZE;
 
-        const chunkView = new DataView(packedChunk.buffer);
-        chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
-        packedChunk.set(rawChunk, HEADER_SIZE);
+          // Liquid-Metal: Recycling Buffer Slab
+          const transferBuffer = this.getBufferFromPool();
+          const packedChunk = new Uint8Array(transferBuffer);
 
-        // Send atomic chunk
-        await this.webrtc.sendToPeer(peerId, packedChunk);
+          // Header Compaction (20-byte footprint)
+          packedChunk.set(binaryId, 0);
 
-        transfer.lastChunkIndex = chunkIndex;
-        chunkIndex++;
-        transferredSize += rawChunk.length;
+          // Manual bit-shifting for chunkIndex (LE)
+          packedChunk[16] = chunkIndex & 0xFF;
+          packedChunk[17] = (chunkIndex >> 8) & 0xFF;
+          packedChunk[18] = (chunkIndex >> 16) & 0xFF;
+          packedChunk[19] = (chunkIndex >> 24) & 0xFF;
 
-        // Bolt: Throttled progress update with lazy metrics calculation
-        this.notifyProgress(fileId, 'transferring', {
-          transferredSize,
-          resumable: true,
-        });
+          packedChunk.set(rawChunk, HEADER_SIZE);
 
-        // Bolt: Yield the event loop every 16 chunks to keep UI responsive without killing performance
-        if (chunkIndex % 16 === 0) {
-          await new Promise((resolve) => setTimeout(resolve, 0));
+          // Create a view containing only the valid data length for this chunk
+          const validChunkView = new Uint8Array(transferBuffer, 0, HEADER_SIZE + rawChunk.length);
+
+          // Send atomic chunk
+          await this.webrtc.sendToPeer(peerId, validChunkView);
+
+          // Return to pool
+          this.bufferPool.push(transferBuffer);
+
+          if (currentTx) currentTx.lastChunkIndex = chunkIndex;
+          chunkIndex++;
+          transferredSize += rawChunk.length;
+
+          // Bolt: Throttled progress update with lazy metrics calculation
+          if (chunkIndex % 16 === 0) {
+            this.notifyProgress(fileId, 'transferring', {
+              transferredSize,
+              resumable: true,
+            });
+          }
         }
       }
 
-      if (!transfer.cancelled && !transfer.paused) {
+      const finalTransfer = this.outgoingTransfers.get(fileId);
+      if (finalTransfer && !finalTransfer.cancelled && !finalTransfer.paused) {
         // Send completion message
         this.webrtc.sendToPeer(peerId, JSON.stringify({
           type: 'file-complete',
@@ -1157,6 +1195,8 @@ class FileTransferManager {
     // Run async mesh transfer loop without blocking the return of meshId
     (async () => {
       try {
+        const binaryId = this.getBinaryId(fileId);
+
         while (true) {
           const activePeers = peerIds.filter(peerId => {
             const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
@@ -1173,35 +1213,47 @@ class FileTransferManager {
             const rawChunk = value.subarray(offset, Math.min(offset + CHUNK_SIZE, value.length));
             offset += CHUNK_SIZE;
 
-            // Bolt: Pack metadata and data into a single atomic binary message for broadcast.
-            const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
+            // Liquid-Metal: Recycling Buffer Slab
+            const transferBuffer = this.getBufferFromPool();
+            const packedChunk = new Uint8Array(transferBuffer);
 
             // Header Compaction (20-byte footprint)
-            const binaryId = this.getBinaryId(fileId);
             packedChunk.set(binaryId, 0);
 
-            const chunkView = new DataView(packedChunk.buffer);
-            chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
+            // Manual bit-shifting for chunkIndex (LE)
+            packedChunk[16] = chunkIndex & 0xFF;
+            packedChunk[17] = (chunkIndex >> 8) & 0xFF;
+            packedChunk[18] = (chunkIndex >> 16) & 0xFF;
+            packedChunk[19] = (chunkIndex >> 24) & 0xFF;
+
             packedChunk.set(rawChunk, HEADER_SIZE);
+
+            // Create a view containing only the valid data length for this chunk
+            const validChunkView = new Uint8Array(transferBuffer, 0, HEADER_SIZE + rawChunk.length);
 
             // Bolt: Parallelize transmission to all active peers in the mesh
             // This prevents a single slow connection from bottlenecking the entire broadcast.
             await Promise.all(activePeers.map(async (peerId) => {
               const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
               if (tx && !tx.cancelled && !tx.paused) {
-                await this.webrtc.sendToPeer(peerId, packedChunk);
+                await this.webrtc.sendToPeer(peerId, validChunkView);
                 tx.lastChunkIndex = chunkIndex;
               }
             }));
+
+            // Return to pool
+            this.bufferPool.push(transferBuffer);
 
             chunkIndex++;
             transferredSize += rawChunk.length;
 
             activePeers.forEach(peerId => {
-              this.notifyProgress(`${fileId}-${peerId}`, 'transferring', {
-                transferredSize,
-                resumable: true,
-              });
+              if (chunkIndex % 16 === 0) {
+                this.notifyProgress(`${fileId}-${peerId}`, 'transferring', {
+                  transferredSize,
+                  resumable: true,
+                });
+              }
             });
 
             // Bolt: Yield the event loop every 16 chunks to keep UI responsive without killing performance
@@ -1441,6 +1493,16 @@ class FileTransferManager {
     this.fileReceivedHandlers.clear();
     this.incomingFiles.clear();
     this.outgoingTransfers.clear();
+  }
+
+  /**
+   * Fast 16-byte buffer comparison
+   */
+  private compareIdBuffers(a: Uint8Array, b: Uint8Array): boolean {
+    for (let i = 0; i < 16; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
   }
 
   /**
