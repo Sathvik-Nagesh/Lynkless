@@ -9,15 +9,15 @@ export async function checkSharedFiles(): Promise<File[]> {
   return new Promise((resolve) => {
     const request = indexedDB.open('LynklessShareDB', 1);
     
-    request.onupgradeneeded = (e: any) => {
-      const db = e.target.result;
+    request.onupgradeneeded = (e: IDBVersionChangeEvent) => {
+      const db = (e.target as IDBOpenDBRequest).result;
       if (!db.objectStoreNames.contains('shared_files')) {
         db.createObjectStore('shared_files');
       }
     };
 
-    request.onsuccess = async (e: any) => {
-      const db = e.target.result;
+    request.onsuccess = async (e: Event) => {
+      const db = (e.target as IDBOpenDBRequest).result;
       if (!db.objectStoreNames.contains('shared_files')) {
         resolve([]);
         return;
