@@ -65,3 +65,11 @@
 ## 2026-04-27 - O(1) UUID Conversion via Lookup Tables
 **Learning:** Performing regex-based string replacements and `parseInt` inside high-frequency transfer loops (every 64KB chunk) creates significant CPU overhead and garbage collection pressure.
 **Action:** Use pre-computed `byteToHex` and `hexToByte` lookup tables for UUID-to-binary conversions. A manual loop that skips hyphens avoids regex and string allocations, making the hot path much leaner.
+
+## 2026-05-25 - High-Frequency Intake Caching for Hot Paths
+**Learning:** Even with optimized UUID conversions, performing `Map` lookups and string regenerations for every 64KB chunk (16,000+ times for a 1GB file) creates significant main-thread CPU pressure. Since chunks for the same file usually arrive consecutively, a single-entry cache is highly effective.
+**Action:** Implement a `lastIncoming` cache that stores the last-seen binary ID and its resolved `IncomingTransferState`. Use a fast `Uint8Array` comparison to bypass the entire conversion/lookup pipeline for consecutive chunks.
+
+## 2026-05-25 - Eliminating Cascading Renders via Derived State
+**Learning:** Using `useEffect` to synchronize a state variable with other state (e.g., `isFocusMode` based on `activeTransfersCount`) triggers a redundant second render cycle and is flagged by modern React linters.
+**Action:** Prefer derived constants (e.g., `const isFocusMode = activeTransfersCount > 0`) inside the component body. This ensures the UI remains consistent within a single render cycle and improves overall responsiveness.

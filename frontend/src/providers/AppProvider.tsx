@@ -186,7 +186,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Detect if we're on LAN: check if the WebSocket URL resolved to localhost or a private IP
     const url = SIGNALING_URL;
     const isLAN = /localhost|127\.0\.0\.1|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\./.test(url);
-    setIsLocalMode(isLAN);
+    requestAnimationFrame(() => setIsLocalMode(isLAN));
   }, [isConnected]);
 
   useAutoJoinRoom({

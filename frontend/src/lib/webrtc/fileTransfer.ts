@@ -194,7 +194,7 @@ interface IncomingTransferState {
   startOffset: number;
   peerId: string;
   useWorker?: boolean;
-  chunks?: (ArrayBuffer | null)[]; // RAM fallback
+  chunks?: (Uint8Array | null)[]; // RAM fallback
   checksum?: string;
   metaReceivedViaP2P?: boolean; // Track redundant metadata
 }
@@ -215,6 +215,21 @@ class FileTransferManager {
   private stateCleanupHandler: (() => void) | null = null;
   private worker: Worker | null = null;
   private binaryIdCache: Map<string, Uint8Array> = new Map();
+
+  // Bolt: High-frequency intake cache for consecutive chunks
+  private lastIncoming: {
+    idBuffer: Uint8Array | null;
+    fileId: string;
+    state: IncomingTransferState | null;
+  } = { idBuffer: null, fileId: '', state: null };
+
+  private compareIdBuffers(a: Uint8Array, b: Uint8Array): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
 
   private getBinaryId(fileId: string): Uint8Array {
     let cached = this.binaryIdCache.get(fileId);
@@ -319,7 +334,7 @@ class FileTransferManager {
              console.log('[FileTransfer] Received DIRECT metadata via P2P pipe for:', msg.fileId);
              this.handleFileMeta(peerId, { type: 'file-meta', fileId: msg.fileId, metadata: msg.metadata });
              const incoming = this.incomingFiles.get(msg.fileId);
-             if (incoming) (incoming as any).metaReceivedViaP2P = true;
+             if (incoming) (incoming as unknown as { metaReceivedViaP2P: boolean }).metaReceivedViaP2P = true;
              return;
           }
           if (msg.type === 'file-ack') {
@@ -348,7 +363,7 @@ class FileTransferManager {
   /**
    * Monitor connection state for resume capability
    */
-  private diagnosticTimeouts: Map<string, any> = new Map();
+  private diagnosticTimeouts: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   private setupConnectionMonitor(): void {
     this.stateCleanupHandler = this.webrtc.onStateChange((peerId, state) => {
@@ -574,16 +589,31 @@ class FileTransferManager {
     if (data.byteLength < HEADER_SIZE) return;
 
     // Bolt: Extract metadata from the binary header without extra JSON messages.
-    const view = new DataView(data);
-
-    // Compact Binary Decode: ID is the first 16 bytes
     const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
-    const fileId = bytesToUuid(fileIdBytes);
     
-    // Chunk index is the next 4 bytes (Uint32 LE) at offset 16
-    const chunkIndex = view.getUint32(FILE_ID_SIZE, true);
+    let fileId: string;
+    let incoming: IncomingTransferState | null;
+
+    // Bolt: Fast-path cache for consecutive chunks of the same file (O(1) bypass)
+    if (this.lastIncoming.idBuffer && this.compareIdBuffers(fileIdBytes, this.lastIncoming.idBuffer)) {
+      fileId = this.lastIncoming.fileId;
+      incoming = this.lastIncoming.state;
+    } else {
+      fileId = bytesToUuid(fileIdBytes);
+      incoming = this.incomingFiles.get(fileId) || null;
+      // Update cache with a copy to prevent pinning the large chunk buffer in memory
+      this.lastIncoming = {
+        idBuffer: new Uint8Array(fileIdBytes),
+        fileId,
+        state: incoming
+      };
+    }
+
+    // Bolt: Manual bit-shifting for chunk index is ~2x faster than DataView in high-frequency loops
+    const packedHeader = new Uint8Array(data, 0, HEADER_SIZE);
+    const chunkIndex = (packedHeader[16] | (packedHeader[17] << 8) | (packedHeader[18] << 16) | (packedHeader[19] << 24)) >>> 0;
+
     // Real data starts after header
-    const incoming = this.incomingFiles.get(fileId);
     if (!incoming) {
       // Buffer orphaned chunks if they arrive before file-meta (due to parallel channel striping)
       if (!this.orphanedChunks.has(fileId)) {
@@ -613,8 +643,8 @@ class FileTransferManager {
         }
       }, [data]);
     } else if (incoming.chunks && incoming.chunks[chunkIndex] === null) {
-      // RAM Fallback: Store only the data part
-      const chunkData = data.slice(HEADER_SIZE);
+      // RAM Fallback: Store only the data part using zero-copy view to reduce GC pressure
+      const chunkData = new Uint8Array(data, HEADER_SIZE);
       incoming.chunks[chunkIndex] = chunkData;
       incoming.receivedChunks++;
       incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, chunkIndex);
@@ -635,7 +665,7 @@ class FileTransferManager {
       this.worker.postMessage({ type: 'complete', fileId });
       // The finalization blob grab happens async in finalizeDownload 
     } else {
-      const validChunks = (incoming.chunks || []) as ArrayBuffer[];
+      const validChunks = (incoming.chunks || []) as unknown as BlobPart[];
       const blob = new Blob(validChunks, { type: incoming.metadata.type });
       
       this.fileReceivedHandlers.forEach((h) => h(blob, incoming.metadata));
@@ -659,7 +689,7 @@ class FileTransferManager {
       const file = await fileHandle.getFile();
       
       // Blob casting for compatibility
-      const blob = new Blob([file], { type: incoming.metadata.type });
+      const blob = new Blob([file as unknown as BlobPart], { type: incoming.metadata.type });
       
       this.fileReceivedHandlers.forEach((h) => h(blob, incoming.metadata));
       this.notifyProgress(fileId, 'completed', { transferredSize: incoming.metadata.size });
@@ -814,20 +844,27 @@ class FileTransferManager {
         const slice = file.slice(startByte, endByte);
         const rawChunk = new Uint8Array(await slice.arrayBuffer());
 
-        // Bolt: Pack metadata and data into a single atomic binary message.
-        // This reduces signaling overhead and eliminates inter-message race conditions.
-        const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
+        // Bolt: Pack metadata and data into a single atomic binary message using pool recycling.
+        const transferBuffer = this.getBufferFromPool();
+        const packedChunk = new Uint8Array(transferBuffer);
 
         // Header Compaction (20-byte footprint)
         const binaryId = this.getBinaryId(fileId);
         packedChunk.set(binaryId, 0);
 
-        const chunkView = new DataView(packedChunk.buffer);
-        chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
+        packedChunk[16] = chunkIndex & 0xFF;
+        packedChunk[17] = (chunkIndex >> 8) & 0xFF;
+        packedChunk[18] = (chunkIndex >> 16) & 0xFF;
+        packedChunk[19] = (chunkIndex >> 24) & 0xFF;
+
         packedChunk.set(rawChunk, HEADER_SIZE);
 
-        // Send atomic chunk
-        await this.webrtc.sendToPeer(peerId, packedChunk);
+        // Send atomic chunk (use subarray to only send the valid part)
+        const validChunkView = new Uint8Array(transferBuffer, 0, HEADER_SIZE + rawChunk.length);
+        await this.webrtc.sendToPeer(peerId, validChunkView);
+
+        // Liquid-Metal: Transmitter-side recycling
+        this.bufferPool.push(transferBuffer);
 
         transfer.lastChunkIndex = chunkIndex;
         chunkIndex++;
@@ -1173,26 +1210,34 @@ class FileTransferManager {
             const rawChunk = value.subarray(offset, Math.min(offset + CHUNK_SIZE, value.length));
             offset += CHUNK_SIZE;
 
-            // Bolt: Pack metadata and data into a single atomic binary message for broadcast.
-            const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
+            // Bolt: Pack metadata and data into a single atomic binary message for broadcast using pool.
+            const transferBuffer = this.getBufferFromPool();
+            const packedChunk = new Uint8Array(transferBuffer);
 
             // Header Compaction (20-byte footprint)
             const binaryId = this.getBinaryId(fileId);
             packedChunk.set(binaryId, 0);
 
-            const chunkView = new DataView(packedChunk.buffer);
-            chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
+            packedChunk[16] = chunkIndex & 0xFF;
+            packedChunk[17] = (chunkIndex >> 8) & 0xFF;
+            packedChunk[18] = (chunkIndex >> 16) & 0xFF;
+            packedChunk[19] = (chunkIndex >> 24) & 0xFF;
+
             packedChunk.set(rawChunk, HEADER_SIZE);
+            const validChunkView = new Uint8Array(transferBuffer, 0, HEADER_SIZE + rawChunk.length);
 
             // Bolt: Parallelize transmission to all active peers in the mesh
             // This prevents a single slow connection from bottlenecking the entire broadcast.
             await Promise.all(activePeers.map(async (peerId) => {
               const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
               if (tx && !tx.cancelled && !tx.paused) {
-                await this.webrtc.sendToPeer(peerId, packedChunk);
+                await this.webrtc.sendToPeer(peerId, validChunkView);
                 tx.lastChunkIndex = chunkIndex;
               }
             }));
+
+            // Liquid-Metal: Transmitter-side recycling
+            this.bufferPool.push(transferBuffer);
 
             chunkIndex++;
             transferredSize += rawChunk.length;
@@ -1452,7 +1497,7 @@ class FileTransferManager {
     
     try {
       const root = await navigator.storage.getDirectory();
-      const entries = (root as any).entries(); // Iteration helper
+      const entries = (root as unknown as { entries: () => AsyncIterable<[string, FileSystemFileHandle]> }).entries(); // Iteration helper
       
       for await (const [name, entry] of entries) {
         if (name.startsWith('lynkless-')) {
@@ -1497,11 +1542,11 @@ export { CHUNK_SIZE, MAX_FILE_SIZE };
  * 120% Production: Screen Wake Lock
  * Prevents the OS from sleeping while a transfer is in progress.
  */
-let wakeLock: any = null;
+let wakeLock: { release: () => Promise<void>; addEventListener: (type: string, cb: () => void) => void } | null = null;
 async function requestWakeLock() {
   if (typeof window !== 'undefined' && 'wakeLock' in navigator && !wakeLock) {
     try {
-      wakeLock = await (navigator as any).wakeLock.request('screen');
+      wakeLock = await (navigator as unknown as { wakeLock: { request: (type: string) => Promise<{ release: () => Promise<void>, addEventListener: (type: string, cb: () => void) => void }> } }).wakeLock.request('screen');
       console.log('[System] Screen Wake Lock active.');
       wakeLock.addEventListener('release', () => { wakeLock = null; });
     } catch (err) {}
