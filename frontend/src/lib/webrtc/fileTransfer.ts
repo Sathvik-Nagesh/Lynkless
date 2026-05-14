@@ -194,7 +194,7 @@ interface IncomingTransferState {
   startOffset: number;
   peerId: string;
   useWorker?: boolean;
-  chunks?: (ArrayBuffer | null)[]; // RAM fallback
+  chunks?: (Uint8Array | null)[]; // RAM fallback
   checksum?: string;
   metaReceivedViaP2P?: boolean; // Track redundant metadata
 }
@@ -215,6 +215,21 @@ class FileTransferManager {
   private stateCleanupHandler: (() => void) | null = null;
   private worker: Worker | null = null;
   private binaryIdCache: Map<string, Uint8Array> = new Map();
+
+  // Bolt: High-frequency intake cache for incoming chunks.
+  // This avoids redundant O(N) UUID string conversions and Map lookups.
+  private lastIncoming: {
+    idBuffer: Uint8Array;
+    fileId: string;
+    state: IncomingTransferState;
+  } | null = null;
+
+  private compareIdBuffers(a: Uint8Array, b: Uint8Array): boolean {
+    for (let i = 0; i < FILE_ID_SIZE; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
 
   private getBinaryId(fileId: string): Uint8Array {
     let cached = this.binaryIdCache.get(fileId);
@@ -294,6 +309,7 @@ class FileTransferManager {
         status: 'failed',
         resumable: false,
       });
+      if (this.lastIncoming?.fileId === msg.fileId) this.lastIncoming = null;
       this.worker?.postMessage({ type: 'abort', fileId: msg.fileId });
       this.incomingFiles.delete(msg.fileId);
     } else if (msg.type === 'buffer-return') {
@@ -547,6 +563,13 @@ class FileTransferManager {
 
     this.incomingFiles.set(metadata.id, incomingState);
 
+    // Bolt: Seed the cache so the first chunk immediately hits the fast-path
+    this.lastIncoming = {
+      idBuffer: uuidToBytes(metadata.id),
+      fileId: metadata.id,
+      state: incomingState
+    };
+
     // Process any out-of-order chunks that arrived before metadata
     const orphaned = this.orphanedChunks.get(metadata.id);
     if (orphaned) {
@@ -578,12 +601,31 @@ class FileTransferManager {
 
     // Compact Binary Decode: ID is the first 16 bytes
     const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
-    const fileId = bytesToUuid(fileIdBytes);
+
+    // Bolt: Fast-path for high-frequency intake
+    let fileId: string;
+    let incoming: IncomingTransferState | undefined;
+
+    if (this.lastIncoming && this.compareIdBuffers(fileIdBytes, this.lastIncoming.idBuffer)) {
+      fileId = this.lastIncoming.fileId;
+      incoming = this.lastIncoming.state;
+    } else {
+      fileId = bytesToUuid(fileIdBytes);
+      incoming = this.incomingFiles.get(fileId);
+
+      if (incoming) {
+        this.lastIncoming = {
+          // Store a copy to avoid tracking the view of a transferred buffer
+          idBuffer: new Uint8Array(fileIdBytes),
+          fileId,
+          state: incoming
+        };
+      }
+    }
     
     // Chunk index is the next 4 bytes (Uint32 LE) at offset 16
     const chunkIndex = view.getUint32(FILE_ID_SIZE, true);
-    // Real data starts after header
-    const incoming = this.incomingFiles.get(fileId);
+
     if (!incoming) {
       // Buffer orphaned chunks if they arrive before file-meta (due to parallel channel striping)
       if (!this.orphanedChunks.has(fileId)) {
@@ -613,8 +655,8 @@ class FileTransferManager {
         }
       }, [data]);
     } else if (incoming.chunks && incoming.chunks[chunkIndex] === null) {
-      // RAM Fallback: Store only the data part
-      const chunkData = data.slice(HEADER_SIZE);
+      // Bolt: Zero-copy RAM Fallback. Store only the data part as a view.
+      const chunkData = new Uint8Array(data, HEADER_SIZE);
       incoming.chunks[chunkIndex] = chunkData;
       incoming.receivedChunks++;
       incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, chunkIndex);
@@ -631,12 +673,15 @@ class FileTransferManager {
     const incoming = this.incomingFiles.get(fileId);
     if (!incoming) return;
 
+    if (this.lastIncoming?.fileId === fileId) this.lastIncoming = null;
+
     if (incoming.useWorker && this.worker) {
       this.worker.postMessage({ type: 'complete', fileId });
       // The finalization blob grab happens async in finalizeDownload 
     } else {
-      const validChunks = (incoming.chunks || []) as ArrayBuffer[];
-      const blob = new Blob(validChunks, { type: incoming.metadata.type });
+      const validChunks = (incoming.chunks || []) as Uint8Array[];
+      // Bolt: Use casting for compatibility - Uint8Array is known to be a BlobPart
+      const blob = new Blob(validChunks as unknown as BlobPart[], { type: incoming.metadata.type });
       
       this.fileReceivedHandlers.forEach((h) => h(blob, incoming.metadata));
       this.notifyProgress(fileId, 'completed', { transferredSize: incoming.metadata.size });
@@ -680,12 +725,14 @@ class FileTransferManager {
       console.error('[FileTransfer] Failed to download OPFS file:', err);
     }
     
+    if (this.lastIncoming?.fileId === fileId) this.lastIncoming = null;
     this.incomingFiles.delete(fileId);
   }
 
   private async handleFileCancel(fileId: string): Promise<void> {
     const incoming = this.incomingFiles.get(fileId);
     if (incoming) {
+      if (this.lastIncoming?.fileId === fileId) this.lastIncoming = null;
       if (incoming.useWorker && this.worker) {
         this.worker.postMessage({ type: 'abort', fileId });
       }
@@ -1338,6 +1385,13 @@ class FileTransferManager {
    * Notify progress with throttling to prevent UI thrashing
    * Bolt: Moves expensive metrics calculation inside the throttled block
    */
+  private maybeStopAudioAnchor(): void {
+    const hasActive = this.outgoingTransfers.size > 0 || this.incomingFiles.size > 0;
+    if (!hasActive) {
+      stopAudioAnchor();
+    }
+  }
+
   private notifyProgress(
     fileId: string,
     status: TransferProgress['status'],
@@ -1351,6 +1405,10 @@ class FileTransferManager {
                          status === 'failed' ||
                          status === 'cancelled' ||
                          status === 'paused';
+
+    if (isFinalState) {
+      this.maybeStopAudioAnchor();
+    }
 
     if (isFinalState || now - lastUpdate >= PROGRESS_UPDATE_INTERVAL) {
       this.lastUpdateTimes.set(fileId, now);
@@ -1514,4 +1572,5 @@ function releaseWakeLock() {
     wakeLock = null;
     console.log('[System] Screen Wake Lock released.');
   }
+  stopAudioAnchor();
 }
