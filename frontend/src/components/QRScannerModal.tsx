@@ -143,9 +143,15 @@ export default function QRScannerModal({
 
   useEffect(() => {
     if (isOpen) {
-      startCamera();
+      // Bolt: Wrap in requestAnimationFrame to avoid synchronous cascading render
+      requestAnimationFrame(() => {
+        startCamera();
+      });
     } else {
-      stopCamera();
+      // Bolt: Wrap in requestAnimationFrame to avoid synchronous cascading render
+      requestAnimationFrame(() => {
+        stopCamera();
+      });
     }
 
     return () => {
