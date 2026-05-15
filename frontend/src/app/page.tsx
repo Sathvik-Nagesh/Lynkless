@@ -55,6 +55,12 @@ export default function Home() {
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [showFilePreview, setShowFilePreview] = useState(false);
   
+  const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
+  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
+  const dragCounter = useRef(0);
+  const sounds = useRef(getSounds());
+  const { showToast } = useToast();
+
   // 120% Upgrade: Handle PWA Share Target Intent
   useEffect(() => {
     const handleSharedIntent = async () => {
@@ -71,14 +77,7 @@ export default function Home() {
       }
     };
     handleSharedIntent();
-  }, []);
-
-  const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
-  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
-  const [isFocusMode, setIsFocusMode] = useState(false);
-  const dragCounter = useRef(0);
-  const sounds = useRef(getSounds());
-  const { showToast } = useToast();
+  }, [showToast]);
 
   const {
     clientId,
@@ -135,9 +134,8 @@ export default function Home() {
     transfers.filter(t => t.status === 'transferring' || t.status === 'paused').length,
     [transfers]);
 
-  useEffect(() => {
-    setIsFocusMode(activeTransfersCount > 0);
-  }, [activeTransfersCount]);
+  // Bolt: Use derived value for focus mode to eliminate cascading renders
+  const isFocusMode = activeTransfersCount > 0;
 
   useTransferProtection(activeTransfersCount);
 
@@ -237,7 +235,10 @@ export default function Home() {
   useEffect(() => {
     const connectedPeers = peers.filter(p => p.state === 'connected');
     if (pendingFiles.length > 0 && connectedPeers.length > 0 && !showFilePreview) {
-      setShowFilePreview(true);
+      // Bolt: Wrap in requestAnimationFrame to avoid synchronous cascading render
+      requestAnimationFrame(() => {
+        setShowFilePreview(true);
+      });
     }
   }, [pendingFiles, peers, showFilePreview]);
 
