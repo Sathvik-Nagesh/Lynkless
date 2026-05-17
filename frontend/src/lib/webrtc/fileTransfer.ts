@@ -215,6 +215,15 @@ class FileTransferManager {
   private stateCleanupHandler: (() => void) | null = null;
   private worker: Worker | null = null;
   private binaryIdCache: Map<string, Uint8Array> = new Map();
+  private lastIncoming: { idBytes: Uint8Array, fileId: string, state: IncomingTransferState } | null = null;
+
+  private compareUint8Arrays(a: Uint8Array, b: Uint8Array): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
 
   private getBinaryId(fileId: string): Uint8Array {
     let cached = this.binaryIdCache.get(fileId);
@@ -290,6 +299,7 @@ class FileTransferManager {
       this.finalizeDownload(msg.fileId);
     } else if (msg.type === 'error') {
       console.error('[FileTransfer] Worker Error:', msg.error);
+      this.lastIncoming = null; // Bolt: Invalidate cache on error
       this.notifyProgress(msg.fileId, 'failed', {
         status: 'failed',
         resumable: false,
@@ -348,7 +358,7 @@ class FileTransferManager {
   /**
    * Monitor connection state for resume capability
    */
-  private diagnosticTimeouts: Map<string, any> = new Map();
+  private diagnosticTimeouts: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   private setupConnectionMonitor(): void {
     this.stateCleanupHandler = this.webrtc.onStateChange((peerId, state) => {
@@ -546,6 +556,8 @@ class FileTransferManager {
     }
 
     this.incomingFiles.set(metadata.id, incomingState);
+    // Bolt: Seed cache to optimize immediate incoming chunks
+    this.lastIncoming = { idBytes: uuidToBytes(metadata.id), fileId: metadata.id, state: incomingState };
 
     // Process any out-of-order chunks that arrived before metadata
     const orphaned = this.orphanedChunks.get(metadata.id);
@@ -578,12 +590,25 @@ class FileTransferManager {
 
     // Compact Binary Decode: ID is the first 16 bytes
     const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
-    const fileId = bytesToUuid(fileIdBytes);
+
+    // Bolt: Performance Optimization - check lastIncoming cache to bypass bytesToUuid and Map lookups
+    let fileId: string;
+    let incoming: IncomingTransferState | undefined;
+
+    if (this.lastIncoming && this.compareUint8Arrays(fileIdBytes, this.lastIncoming.idBytes)) {
+      fileId = this.lastIncoming.fileId;
+      incoming = this.lastIncoming.state;
+    } else {
+      fileId = bytesToUuid(fileIdBytes);
+      incoming = this.incomingFiles.get(fileId);
+      if (incoming) {
+        this.lastIncoming = { idBytes: fileIdBytes, fileId, state: incoming };
+      }
+    }
     
     // Chunk index is the next 4 bytes (Uint32 LE) at offset 16
     const chunkIndex = view.getUint32(FILE_ID_SIZE, true);
     // Real data starts after header
-    const incoming = this.incomingFiles.get(fileId);
     if (!incoming) {
       // Buffer orphaned chunks if they arrive before file-meta (due to parallel channel striping)
       if (!this.orphanedChunks.has(fileId)) {
@@ -641,6 +666,7 @@ class FileTransferManager {
       this.fileReceivedHandlers.forEach((h) => h(blob, incoming.metadata));
       this.notifyProgress(fileId, 'completed', { transferredSize: incoming.metadata.size });
       this.downloadFile(blob, incoming.metadata.name);
+      this.lastIncoming = null; // Bolt: Invalidate cache
       this.incomingFiles.delete(fileId);
     }
   }
@@ -680,6 +706,7 @@ class FileTransferManager {
       console.error('[FileTransfer] Failed to download OPFS file:', err);
     }
     
+    this.lastIncoming = null; // Bolt: Invalidate cache
     this.incomingFiles.delete(fileId);
   }
 
@@ -690,6 +717,7 @@ class FileTransferManager {
         this.worker.postMessage({ type: 'abort', fileId });
       }
       this.notifyProgress(fileId, 'cancelled');
+      this.lastIncoming = null; // Bolt: Invalidate cache
       this.incomingFiles.delete(fileId);
     }
     
