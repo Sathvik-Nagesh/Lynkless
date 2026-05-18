@@ -65,3 +65,7 @@
 ## 2026-04-27 - O(1) UUID Conversion via Lookup Tables
 **Learning:** Performing regex-based string replacements and `parseInt` inside high-frequency transfer loops (every 64KB chunk) creates significant CPU overhead and garbage collection pressure.
 **Action:** Use pre-computed `byteToHex` and `hexToByte` lookup tables for UUID-to-binary conversions. A manual loop that skips hyphens avoids regex and string allocations, making the hot path much leaner.
+
+## 2026-05-25 - O(1) Cache for High-Frequency Chunk Intake
+**Learning:** Even with optimized lookup tables, performing `bytesToUuid` and `Map.get()` for every 64KB chunk (16,000+ times per GB) adds significant CPU overhead. Since reliable DataChannels mostly deliver chunks for a single file sequentially, a one-element cache for the last active file state is highly effective.
+**Action:** Implement a `lastIncoming` cache that stores the `fileId`, its `BigUint64` binary representation, and the `IncomingTransferState`. Use `DataView.getBigUint64` for zero-allocation 128-bit header matching to bypass the entire lookup logic for consecutive chunks.
