@@ -65,3 +65,7 @@
 ## 2026-04-27 - O(1) UUID Conversion via Lookup Tables
 **Learning:** Performing regex-based string replacements and `parseInt` inside high-frequency transfer loops (every 64KB chunk) creates significant CPU overhead and garbage collection pressure.
 **Action:** Use pre-computed `byteToHex` and `hexToByte` lookup tables for UUID-to-binary conversions. A manual loop that skips hyphens avoids regex and string allocations, making the hot path much leaner.
+
+## 2026-05-22 - ES2017 Compatibility with BigInt
+**Learning:** Although modern browsers support BigInt, the codebase's `tsconfig.json` targets `ES2017`. Using BigInt literals like `0n` will trigger build-time failures in the Next.js/TypeScript pipeline.
+**Action:** For performance-critical 128-bit header comparisons, use four `uint32` checks via `DataView.getUint32` instead of `BigUint64` with literals. This achieves the same performance without breaking the ES2017 build.
