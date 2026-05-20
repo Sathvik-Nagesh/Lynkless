@@ -16,7 +16,7 @@ export default function ShareTargetPage() {
     <div className="min-h-screen bg-black flex flex-col items-center justify-center p-8 text-center">
       <div className="w-16 h-16 rounded-full border-t-2 border-blue-500 animate-spin mb-6" />
       <h1 className="text-xl font-bold text-white mb-2">Processing Share...</h1>
-      <p className="text-gray-400 text-sm">Hold on, we're bringing your files into Lynkless.</p>
+      <p className="text-gray-400 text-sm">Hold on, we&apos;re bringing your files into Lynkless.</p>
     </div>
   );
 }

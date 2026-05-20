@@ -47,7 +47,7 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
   const handlePiP = async () => {
     if (typeof window === 'undefined' || !('documentPictureInPicture' in window)) return;
     try {
-      const pipWindow = await (window as any).documentPictureInPicture.requestWindow({
+      const pipWindow = await (window as unknown as { documentPictureInPicture: { requestWindow: (opts: { width: number; height: number }) => Promise<Window> } }).documentPictureInPicture.requestWindow({
         width: 340,
         height: 140,
       });
