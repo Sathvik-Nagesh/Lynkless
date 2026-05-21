@@ -188,13 +188,11 @@ class FileTransferManager {
   private lastUpdateTimes: Map<string, number> = new Map();
   private meshTransfers: Map<string, { file: File; peerIds: string[]; transfers: Map<string, string> }> = new Map();
   private orphanedChunks: Map<string, ArrayBuffer[]> = new Map();
-  private speedSamples: Map<string, number[]> = new Map();
   private readonly EMA_ALPHA = 0.2; // Smoothing factor for transfer speed
   private cleanupHandler: (() => void) | null = null;
   private stateCleanupHandler: (() => void) | null = null;
   private worker: Worker | null = null;
   private binaryIdCache: Map<string, Uint8Array> = new Map();
-  private encoder = new TextEncoder();
 
   private getBinaryId(fileId: string): Uint8Array {
     let cached = this.binaryIdCache.get(fileId);
@@ -242,8 +240,8 @@ class FileTransferManager {
     // Bolt: Startup Garbage Collector for OPFS
     this.cleanupOrphanedFiles();
 
-    // Liquid-Metal: Prime the buffer pool (32 slabs = 2MB pre-allocated)
-    for (let i = 0; i < 32; i++) {
+    // Buffer Pool: Prime with 8 slabs (544KB pre-allocated, scales up on demand)
+    for (let i = 0; i < 8; i++) {
        this.bufferPool.push(new ArrayBuffer(HEADER_SIZE + CHUNK_SIZE));
     }
   }
@@ -277,7 +275,7 @@ class FileTransferManager {
       this.worker?.postMessage({ type: 'abort', fileId: msg.fileId });
       this.incomingFiles.delete(msg.fileId);
     } else if (msg.type === 'buffer-return') {
-      // Return a processed buffer to the transmitter pool for reuse
+      // Receiver-side: Worker finished writing this buffer to OPFS, safe to recycle
       this.bufferPool.push(msg.data);
     }
   }
@@ -555,7 +553,6 @@ class FileTransferManager {
 
     // Bolt: Extract metadata from the binary header without extra JSON messages.
     const view = new DataView(data);
-    const decoder = new TextDecoder();
 
     // Compact Binary Decode: ID is the first 16 bytes
     const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
@@ -581,8 +578,8 @@ class FileTransferManager {
       return;
     }
 
-    // Header Compaction: Use 16-byte raw ID instead of 36-byte string
-    const binaryId = uuidToBytes(fileId);
+    // Header Compaction: Use cached 16-byte binary ID
+    const binaryId = this.getBinaryId(fileId);
     
     // Start Audio Anchor for Mobile Performance
     startAudioAnchor();
@@ -627,6 +624,11 @@ class FileTransferManager {
       this.notifyProgress(fileId, 'completed', { transferredSize: incoming.metadata.size });
       this.downloadFile(blob, incoming.metadata.name);
       this.incomingFiles.delete(fileId);
+      this.binaryIdCache.delete(fileId);
+      // Release audio anchor if no more active transfers
+      if (this.incomingFiles.size === 0 && this.outgoingTransfers.size === 0) {
+        stopAudioAnchor();
+      }
     }
   }
 
@@ -655,9 +657,11 @@ class FileTransferManager {
       
       setTimeout(async () => {
         try {
-          await root.removeEntry(`lynkless-${incoming.metadata.id}`);
+          await root.removeEntry(opfsName);
+          // Clean up salt from localStorage
+          if (typeof window !== 'undefined') localStorage.removeItem(saltKey);
         } catch {
-          // Silent fail on cleanup is acceptable for Bolt optimizations
+          // Silent fail on cleanup
         }
 
       }, 60000); // Clean OPFS file after 60s
@@ -666,6 +670,11 @@ class FileTransferManager {
     }
     
     this.incomingFiles.delete(fileId);
+    this.binaryIdCache.delete(fileId);
+    // Release audio anchor if no more active transfers
+    if (this.incomingFiles.size === 0 && this.outgoingTransfers.size === 0) {
+      stopAudioAnchor();
+    }
   }
 
   private async handleFileCancel(fileId: string): Promise<void> {
@@ -802,8 +811,8 @@ class FileTransferManager {
         // Bolt: Pack metadata and data into a single atomic binary message.
         // This reduces signaling overhead and eliminates inter-message race conditions.
         const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-        const encoder = new TextEncoder();
-        encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+        const binaryId = uuidToBytes(fileId);
+        packedChunk.set(binaryId, 0);
         const chunkView = new DataView(packedChunk.buffer);
         chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
         packedChunk.set(rawChunk, HEADER_SIZE);
@@ -942,8 +951,8 @@ class FileTransferManager {
         const transferBuffer = this.getBufferFromPool();
         const packedChunk = new Uint8Array(transferBuffer);
         
-        // Header Compaction (20-byte footprint)
-        const binaryId = uuidToBytes(fileId);
+        // Header Compaction: Cache binary UUID for entire transfer (avoid per-chunk conversion)
+        const binaryId = this.getBinaryId(fileId);
         packedChunk.set(binaryId, 0);
         
         packedChunk[16] = chunkIndex & 0xFF;
@@ -970,15 +979,15 @@ class FileTransferManager {
              this.webrtc.sendToPeer(peerId, validChunkView); 
           }
 
-          // Liquid-Metal: Manual return to pool for sender (Transmitter-side recycling)
-          this.bufferPool.push(transferBuffer);
+          // Buffer is not returned to pool here — the data channel may still be reading from it.
+          // Buffers are recycled via the worker's buffer-return message instead.
 
           if (transfer) transfer.lastChunkIndex = chunkIndex;
           chunkIndex++;
           transferredSize += rawChunk.length;
 
           // Throttled notification: Update UI every 16 chunks to keep visuals smooth
-          if (chunkIndex % 16 === 0) {
+          if (chunkIndex % 16 === 0 || chunkIndex === totalChunks) {
             this.notifyProgress(fileId, 'transferring', {
               transferredSize,
               resumable: true,
@@ -1012,6 +1021,12 @@ class FileTransferManager {
         });
 
         this.outgoingTransfers.delete(fileId);
+        this.binaryIdCache.delete(fileId);
+
+        // Release audio anchor if no more active transfers
+        if (this.outgoingTransfers.size === 0) {
+          stopAudioAnchor();
+        }
       }
 
     } catch (error) {
@@ -1157,8 +1172,8 @@ class FileTransferManager {
 
             // Bolt: Pack metadata and data into a single atomic binary message for broadcast.
             const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
-            const encoder = new TextEncoder();
-            encoder.encodeInto(fileId, packedChunk.subarray(0, FILE_ID_SIZE));
+            const binaryId = uuidToBytes(fileId);
+            packedChunk.set(binaryId, 0);
             const chunkView = new DataView(packedChunk.buffer);
             chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
             packedChunk.set(rawChunk, HEADER_SIZE);
@@ -1355,7 +1370,7 @@ class FileTransferManager {
           ...outgoing.progress,
           status,
           transferredSize,
-          progress: (transferredSize / outgoing.metadata.size) * 100,
+          progress: Math.min((transferredSize / outgoing.metadata.size) * 100, 100),
           speed,
           remainingTime,
           ...overrides,
@@ -1382,7 +1397,7 @@ class FileTransferManager {
           fileName: incoming.metadata.name,
           totalSize: incoming.metadata.size,
           transferredSize,
-          progress: (incoming.receivedChunks / incoming.metadata.totalChunks) * 100,
+          progress: Math.min((incoming.receivedChunks / incoming.metadata.totalChunks) * 100, 100),
           speed,
           remainingTime,
           status,
@@ -1416,10 +1431,28 @@ class FileTransferManager {
     if (this.stateCleanupHandler) {
       this.stateCleanupHandler();
     }
+    // Terminate worker
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
+    // Clear all diagnostic timeouts
+    this.diagnosticTimeouts.forEach(timeout => clearTimeout(timeout));
+    this.diagnosticTimeouts.clear();
+    // Clear all state maps
     this.progressHandlers.clear();
     this.fileReceivedHandlers.clear();
+    this.meshProgressHandlers.clear();
     this.incomingFiles.clear();
     this.outgoingTransfers.clear();
+    this.lastUpdateTimes.clear();
+    this.meshTransfers.clear();
+    this.orphanedChunks.clear();
+    this.binaryIdCache.clear();
+    this.bufferPool.length = 0;
+    // Release system resources
+    stopAudioAnchor();
+    releaseWakeLock();
   }
 
   /**
@@ -1435,9 +1468,11 @@ class FileTransferManager {
       
       for await (const [name, entry] of entries) {
         if (name.startsWith('lynkless-')) {
-          // Extract fileId from 'lynkless-{id}-{salt}'
-          const parts = name.split('-');
-          const fileId = parts.length >= 2 ? parts[1] : '';
+          // Extract fileId (UUID) from 'lynkless-{uuid}-{salt}'
+          // UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (36 chars)
+          // Remove 'lynkless-' prefix, then extract 36-char UUID
+          const withoutPrefix = name.substring('lynkless-'.length);
+          const fileId = withoutPrefix.length >= 36 ? withoutPrefix.substring(0, 36) : '';
           
           // If the file is not currently active, and its older than 24 hours, purge it
           if (fileId && !this.incomingFiles.has(fileId)) {

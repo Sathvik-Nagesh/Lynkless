@@ -183,11 +183,17 @@ export default function Home() {
   }, [acceptConnectionRequest, roomState.users, nearbyPeers, incomingRequests, connectToPeer]);
 
   // Auto-accept incoming connection requests from room members
+  const autoAcceptedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!roomState.code) return;
+    if (!roomState.code) {
+      autoAcceptedRef.current.clear();
+      return;
+    }
     incomingRequests.forEach(req => {
+      if (autoAcceptedRef.current.has(req.fromId)) return;
       const isRoomMember = roomState.users.some(u => u.id === req.fromId);
       if (isRoomMember) {
+        autoAcceptedRef.current.add(req.fromId);
         console.log('[Auto-Accept] Accepting room member:', req.fromId);
         handleAcceptRequest(req.fromId);
       }

@@ -102,6 +102,7 @@ export const TextSnippetShare = memo(function TextSnippetShare({
                   placeholder="Paste your code here..."
                   className="w-full h-32 bg-[#1f1f1f] border border-[#27272a] rounded-lg p-3 text-sm font-mono text-[#ededed] placeholder-[#71717a] focus:outline-none focus:border-[#3f3f46] resize-none"
                   disabled={disabled}
+                  maxLength={5000}
                 />
               ) : (
                 <textarea
@@ -111,6 +112,7 @@ export const TextSnippetShare = memo(function TextSnippetShare({
                   placeholder="Type your message..."
                   className="w-full h-24 bg-[#1f1f1f] border border-[#27272a] rounded-lg p-3 text-sm text-[#ededed] placeholder-[#71717a] focus:outline-none focus:border-[#3f3f46] resize-none"
                   disabled={disabled}
+                  maxLength={5000}
                 />
               )}
 

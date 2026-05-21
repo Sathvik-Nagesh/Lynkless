@@ -37,6 +37,10 @@ const formatTime = (seconds: number): string => {
 const TransferProgress = memo(function TransferProgress({ transfer, onCancel, onPause, onResume }: TransferProgressProps) {
   const pipWindowRef = useRef<Window | null>(null);
 
+  // Defence-in-depth: clamp progress to [0, 100] regardless of upstream calculations
+  const clampedProgress = Math.min(Math.max(transfer.progress, 0), 100);
+  const clampedTransferredSize = Math.min(transfer.transferredSize, transfer.totalSize);
+
   // Speed math for Liquid Mercury effect
   const maxSpeed = 50 * 1024 * 1024; // 50 MB/s for peak visuals
   const intensity = Math.min(transfer.speed / maxSpeed, 1.0);
@@ -91,9 +95,9 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
       const timeEl = doc.getElementById('pip-time');
 
       if (titleEl) titleEl.textContent = transfer.fileName;
-      if (barEl) barEl.style.width = `${transfer.progress}%`;
+      if (barEl) barEl.style.width = `${clampedProgress}%`;
       if (speedEl) speedEl.textContent = formatSpeed(transfer.speed);
-      if (pctEl) pctEl.textContent = `${transfer.progress.toFixed(1)}%`;
+      if (pctEl) pctEl.textContent = `${clampedProgress.toFixed(1)}%`;
       if (timeEl) timeEl.textContent = formatTime(transfer.remainingTime);
     }
   }, [transfer]);
@@ -137,7 +141,7 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
             </h3>
             <div className="flex items-center gap-2 mt-0.5 font-mono text-[10px]">
               <span className={transfer.status === 'completed' ? 'text-green-400' : 'text-[#a1a1aa]'}>
-                {formatSize(transfer.transferredSize)} / {formatSize(transfer.totalSize)}
+                {formatSize(clampedTransferredSize)} / {formatSize(transfer.totalSize)}
               </span>
               {intensity > 0.8 && (
                 <span className="text-blue-400 animate-pulse font-bold tracking-tighter">HYPER-MESH</span>
@@ -181,7 +185,7 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
         <motion.div
           className="absolute inset-y-0 left-0 bg-[#3b82f6] shadow-[0_0_15px_rgba(59,130,246,1)]"
           initial={{ width: 0 }}
-          animate={{ width: `${transfer.progress}%` }}
+          animate={{ width: `${clampedProgress}%` }}
           transition={{ type: 'spring', bounce: 0, duration: 0.8 }}
         >
           {/* Surface Flow Pattern */}
@@ -219,7 +223,7 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
         </div>
         <div className="flex flex-col items-end">
           <span className="text-[9px] text-[#a1a1aa] uppercase tracking-[0.1em] mb-0.5">Progress</span>
-          <span className="text-[#ededed] font-bold text-xs">{transfer.progress.toFixed(1)}%</span>
+          <span className="text-[#ededed] font-bold text-xs">{clampedProgress.toFixed(1)}%</span>
         </div>
       </div>
 

@@ -140,7 +140,6 @@ const ChatMessageItem = memo(function ChatMessageItem({ msg, showTimestamp, isSa
 const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, connectedPeers = [] }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [isExpanded, setIsExpanded] = useState(true);
-  const [isTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -312,39 +311,6 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
               )}
               <div ref={messagesEndRef} />
             </div>
-
-            {/* Typing indicator */}
-            <AnimatePresence>
-              {isTyping && (
-                <motion.div
-                  className="px-4 py-1"
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                >
-                  <div className="flex items-center gap-2 text-xs text-[#a1a1aa]">
-                    <span className="flex gap-1">
-                      <motion.span
-                        className="w-1.5 h-1.5 bg-[#a1a1aa] rounded-full"
-                        animate={{ opacity: [0.3, 1, 0.3] }}
-                        transition={{ repeat: Infinity, duration: 1, delay: 0 }}
-                      />
-                      <motion.span
-                        className="w-1.5 h-1.5 bg-[#a1a1aa] rounded-full"
-                        animate={{ opacity: [0.3, 1, 0.3] }}
-                        transition={{ repeat: Infinity, duration: 1, delay: 0.2 }}
-                      />
-                      <motion.span
-                        className="w-1.5 h-1.5 bg-[#a1a1aa] rounded-full"
-                        animate={{ opacity: [0.3, 1, 0.3] }}
-                        transition={{ repeat: Infinity, duration: 1, delay: 0.4 }}
-                      />
-                    </span>
-                    <span>Someone is typing...</span>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
 
             {/* Input */}
             <form 

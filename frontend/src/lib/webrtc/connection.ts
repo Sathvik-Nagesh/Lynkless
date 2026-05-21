@@ -328,8 +328,17 @@ class WebRTCManager {
       // EDGE CASE #1: ICE Restarts (Network Hopping)
       // When a user walks out the door and switches from WiFi to 5G, ICE disconnects.
       // We trigger a restart immediately to gracefully recover the data channel without destroying logic.
-      if (connection.iceConnectionState === 'disconnected' || connection.iceConnectionState === 'failed') {
-        console.log(`[WebRTC] ICE ${connection.iceConnectionState} for`, peerId, '- attempting Seamless ICE Restart');
+      if (connection.iceConnectionState === 'disconnected') {
+        console.log('[WebRTC] ICE disconnected for', peerId, '- scheduling restart');
+        // Wait briefly for transient disconnects before restarting
+        setTimeout(() => {
+          if (connection.iceConnectionState === 'disconnected' || connection.iceConnectionState === 'failed') {
+            console.log('[WebRTC] ICE still disconnected, performing restart for', peerId);
+            connection.restartIce();
+          }
+        }, 2000);
+      } else if (connection.iceConnectionState === 'failed') {
+        console.log('[WebRTC] ICE failed for', peerId, '- immediate restart');
         connection.restartIce();
       }
     };
@@ -426,7 +435,7 @@ class WebRTCManager {
   /**
    * Send data to a specific peer (with backpressure support)
    */
-  async sendToPeer(peerId: string, data: string | ArrayBuffer | ArrayBufferView): Promise<boolean> {
+  async sendToPeer(peerId: string, data: string | ArrayBuffer | ArrayBufferView, _retryCount = 0): Promise<boolean> {
     const peer = this.peers.get(peerId);
     if (!peer) return false;
 
@@ -467,9 +476,12 @@ class WebRTCManager {
       }
     } catch (e: any) {
       if (e.name === 'OperationError' || (e.message && e.message.includes('queue is full'))) {
-        // Queue is completely full despite backpressure checks. Wait and retry instead of dropping data.
-        await new Promise(r => setTimeout(r, 50));
-        return this.sendToPeer(peerId, data);
+        if (_retryCount < 5) {
+          await new Promise(r => setTimeout(r, 50 * (_retryCount + 1)));
+          return this.sendToPeer(peerId, data, _retryCount + 1);
+        }
+        console.error('[WebRTC] Send queue permanently full after 5 retries, dropping chunk');
+        return false;
       }
       console.error('[WebRTC] Data channel send error:', e);
     }
@@ -680,16 +692,11 @@ class WebRTCManager {
   prewarmICECandidates(): void {
     console.log('[WebRTC] Pre-warming ICE candidates...');
     const pc = new RTCPeerConnection(ICE_SERVERS);
-    pc.onicecandidate = (e) => {
-       // Just gathering to cache in the OS stack
-    };
+    pc.onicecandidate = () => { /* gathering to cache in OS stack */ };
     pc.createDataChannel('prewarm');
     pc.createOffer().then(offer => pc.setLocalDescription(offer)).catch(() => {});
-    
-    // Close after 10s of gathering
-    setTimeout(() => {
-       pc.close();
-    }, 10000);
+    // Close after 3s of gathering (enough for most environments)
+    setTimeout(() => { try { pc.close(); } catch {} }, 3000);
   }
   /**
    * Get the current state of a peer connection

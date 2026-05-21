@@ -34,6 +34,7 @@ interface WorkerTransferState {
   lastReceivedIndex: number;
   opfsName: string; // Store the exact salted name
   lastReportedProgress: number;
+  receivedSet: Set<number>; // Dedup: track which chunks have been written
 }
 
 const fileHandles = new Map<string, FileSystemFileHandle>();
@@ -124,7 +125,8 @@ async function handleMessage(e: MessageEvent) {
         receivedChunks: 0,
         lastReceivedIndex: -1,
         opfsName: opfsName,
-        lastReportedProgress: 0
+        lastReportedProgress: 0,
+        receivedSet: new Set()
       });
 
       self.postMessage({ type: 'init-success', fileId: metadata.id });
@@ -148,6 +150,18 @@ async function handleMessage(e: MessageEvent) {
         const actualIdBuffer = new Uint8Array(data, 0, 16); // 16 = Compact FILE_ID_SIZE
         if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
 
+        // Dedup: Skip if this chunk was already written (Tail Redundancy sends last chunks twice)
+        if (meta.receivedSet.has(chunkIndex)) {
+          // Still return the buffer for recycling
+          self.postMessage({ 
+            type: 'buffer-return', 
+            fileId: msg.fileId, 
+            data: data 
+          }, [data]);
+          return;
+        }
+        meta.receivedSet.add(chunkIndex);
+
         // Direct Synchronous Write (Atomic and Safe for out-of-order)
         const writeOffset = chunkIndex * 65536;
         const chunkData = new Uint8Array(data, 20); // 20-byte header
@@ -162,7 +176,7 @@ async function handleMessage(e: MessageEvent) {
           data: data 
         }, [data]);
 
-        const progressInt = Math.floor((meta.receivedChunks / meta.totalChunks) * 100);
+        const progressInt = Math.min(Math.floor((meta.receivedChunks / meta.totalChunks) * 100), 100);
         if (progressInt > ((meta as any).lastReportedProgress || 0) || meta.receivedChunks === meta.totalChunks) {
           (meta as any).lastReportedProgress = progressInt;
           self.postMessage({

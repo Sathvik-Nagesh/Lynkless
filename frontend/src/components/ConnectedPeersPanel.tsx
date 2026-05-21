@@ -75,8 +75,9 @@ export default function ConnectedPeersPanel({
             </div>
             <div className="flex items-center gap-2">
               <ConnectionStatusBadge
-                quality="excellent"
+                quality={peer.state === 'connected' ? (peer.isRelay ? 'fair' : 'excellent') : 'disconnected'}
                 showDetails={true}
+                isRelay={peer.isRelay}
               />
               {selectedPeer === peer.id && (
                 <span className="text-[10px] text-[#ededed] font-medium">Active</span>
