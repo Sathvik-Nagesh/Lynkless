@@ -59,16 +59,30 @@ const Radar = memo(function Radar({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Set canvas size
-    const size = Math.min(canvas.parentElement?.clientWidth || 400, 400);
-    canvas.width = size;
-    canvas.height = size;
+    // Responsive canvas sizing
+    const resizeCanvas = () => {
+      const size = Math.min(canvas.parentElement?.clientWidth || 400, 400);
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = size * dpr;
+      canvas.height = size * dpr;
+      canvas.style.width = `${size}px`;
+      canvas.style.height = `${size}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    resizeCanvas();
 
-    const centerX = size / 2;
-    const centerY = size / 2;
-    const maxRadius = size / 2 - 20;
+    // Observe container for responsive resize
+    const observer = new ResizeObserver(resizeCanvas);
+    if (canvas.parentElement) observer.observe(canvas.parentElement);
+
+    const getSize = () => Math.min(canvas.parentElement?.clientWidth || 400, 400);
 
     const drawRadar = () => {
+      const size = getSize();
+      const centerX = size / 2;
+      const centerY = size / 2;
+      const maxRadius = size / 2 - 20;
+
       ctx.clearRect(0, 0, size, size);
 
       // Draw background circles - thin, subtle lines
@@ -189,6 +203,7 @@ const Radar = memo(function Radar({
 
     return () => {
       cancelAnimationFrame(animationRef.current);
+      observer.disconnect();
     };
   }, []);
 

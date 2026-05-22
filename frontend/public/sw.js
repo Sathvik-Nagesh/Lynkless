@@ -1,6 +1,10 @@
 // Service Worker for Lynkless PWA
-const CACHE_NAME = 'lynkless-v1';
-const urlsToCache = [
+// Production-grade: versioned cache, stale-while-revalidate, background sync
+const CACHE_VERSION = 2;
+const CACHE_NAME = `lynkless-v${CACHE_VERSION}`;
+const STATIC_CACHE = `lynkless-static-v${CACHE_VERSION}`;
+
+const PRECACHE_URLS = [
   '/',
   '/manifest.json',
 ];
@@ -10,22 +14,24 @@ const CACHEABLE_PATH_REGEX = /\.(?:js|css|ico|png|jpg|jpeg|svg|webp|woff2?)$/i;
 // Install event - cache essential resources
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(urlsToCache))
+    caches.open(STATIC_CACHE)
+      .then((cache) => cache.addAll(PRECACHE_URLS))
       .then(() => self.skipWaiting())
   );
 });
 
-// Activate event - clean up old caches
+// Activate event - clean up ALL old cache versions
 self.addEventListener('activate', (event) => {
+  const validCaches = new Set([CACHE_NAME, STATIC_CACHE]);
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            return caches.delete(cacheName);
-          }
-        })
+        cacheNames
+          .filter((name) => !validCaches.has(name))
+          .map((name) => {
+            console.log(`[SW] Deleting old cache: ${name}`);
+            return caches.delete(name);
+          })
       );
     }).then(() => self.clients.claim())
   );
@@ -81,7 +87,7 @@ self.addEventListener('fetch', (event) => {
         // Redirect back to the app with a query param
         return Response.redirect('/?shared=true', 303);
       } catch (err) {
-        console.error('Share Target Error:', err);
+        console.error('[SW] Share Target Error:', err);
         return Response.redirect('/', 303);
       }
     })());
@@ -91,30 +97,38 @@ self.addEventListener('fetch', (event) => {
   // Only cache GET requests
   if (event.request.method !== 'GET') return;
   
-  // Skip cross-origin and specific protocols
+  // Skip cross-origin, API routes, and WebSocket upgrades
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/api')) return;
 
-
   const shouldCache =
-    urlsToCache.includes(url.pathname) ||
+    PRECACHE_URLS.includes(url.pathname) ||
     CACHEABLE_PATH_REGEX.test(url.pathname);
 
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((response) => {
-        if (shouldCache && response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then(c => c.put(event.request, clone));
-        }
-        return response;
-      });
-    })
-  );
+  if (shouldCache) {
+    // Stale-while-revalidate: serve cached immediately, update in background
+    event.respondWith(
+      caches.open(CACHE_NAME).then(async (cache) => {
+        const cached = await cache.match(event.request);
+        const fetchPromise = fetch(event.request).then((response) => {
+          if (response.ok) {
+            cache.put(event.request, response.clone());
+          }
+          return response;
+        }).catch(() => cached); // Fall back to cache if network fails
+
+        return cached || fetchPromise;
+      })
+    );
+  } else {
+    // Network-first for HTML pages (always get fresh content)
+    event.respondWith(
+      fetch(event.request).catch(() => caches.match(event.request))
+    );
+  }
 });
 
-// Invulnerability Patch: Keep-Alive messaging
+// Keep-Alive messaging for active transfers
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'TRANSFER_START') {
     activeTransferIds.add(event.data.fileId);
