@@ -65,3 +65,11 @@
 ## 2026-04-27 - O(1) UUID Conversion via Lookup Tables
 **Learning:** Performing regex-based string replacements and `parseInt` inside high-frequency transfer loops (every 64KB chunk) creates significant CPU overhead and garbage collection pressure.
 **Action:** Use pre-computed `byteToHex` and `hexToByte` lookup tables for UUID-to-binary conversions. A manual loop that skips hyphens avoids regex and string allocations, making the hot path much leaner.
+
+## 2026-03-25 - Zero-Allocation intake via Header Signature Caching
+**Learning:** Even with an atomic binary protocol, performing `bytesToUuid` and `Map.get()` for every 64KB chunk (16,000 times per GB) adds measurable CPU overhead and GC pressure. Since chunks for the same file usually arrive consecutively, a simple 128-bit signature cache can bypass these lookups.
+**Action:** Use a `lastIncoming` cache in the receiver that compares the first 16 bytes of the header as four `uint32` values using `DataView` to identify the active transfer in (1)$ with zero allocations.
+
+## 2026-03-25 - Safe Buffer Recycling in WebRTC Senders
+**Learning:** There is often confusion about when it's safe to reuse a buffer passed to `RTCDataChannel.send()`. The spec and major implementations (Chromium/WebKit) perform a synchronous copy of the data into the SCTP stack's internal buffers.
+**Action:** Buffers can be safely returned to a recycling pool immediately after the `send()` call (or after `awaiting` backpressure), enabling zero-allocation chunking on the sender side without risking data corruption.
