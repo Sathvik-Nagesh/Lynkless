@@ -453,10 +453,17 @@ export default function Home() {
     [connectedPeers]);
 
   // Active transfer peers for Radar Particle Animation
-  const activeTransferPeerIds = useMemo(() => {
+  // Bolt: Stabilize identity by using a string-joined dependency to prevent
+  // Radar re-renders every 100ms during progress updates.
+  const activeTransferPeerIdString = useMemo(() => {
     const active = transfers.filter(t => t.status === 'transferring');
-    return Array.from(new Set(active.map(t => t.peerId)));
+    return Array.from(new Set(active.map(t => t.peerId))).sort().join(',');
   }, [transfers]);
+
+  const activeTransferPeerIds = useMemo(() => {
+    if (!activeTransferPeerIdString) return [];
+    return activeTransferPeerIdString.split(',');
+  }, [activeTransferPeerIdString]);
 
   return (
     <main

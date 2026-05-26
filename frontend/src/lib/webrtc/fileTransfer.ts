@@ -215,6 +215,16 @@ class FileTransferManager {
   private worker: Worker | null = null;
   private binaryIdCache: Map<string, Uint8Array> = new Map();
 
+  // Bolt: High-frequency intake cache for handleBinaryChunk
+  private lastIncoming: {
+    v0: number;
+    v1: number;
+    v2: number;
+    v3: number;
+    fileId: string;
+    state: IncomingTransferState;
+  } | null = null;
+
   private getBinaryId(fileId: string): Uint8Array {
     let cached = this.binaryIdCache.get(fileId);
     if (!cached) {
@@ -261,8 +271,8 @@ class FileTransferManager {
     // Bolt: Startup Garbage Collector for OPFS
     this.cleanupOrphanedFiles();
 
-    // Buffer Pool: Prime with 8 slabs (544KB pre-allocated, scales up on demand)
-    for (let i = 0; i < 8; i++) {
+    // Buffer Pool: Prime with 64 slabs (4.25MB pre-allocated, scales up on demand)
+    for (let i = 0; i < 64; i++) {
        this.bufferPool.push(new ArrayBuffer(HEADER_SIZE + CHUNK_SIZE));
     }
   }
@@ -295,6 +305,7 @@ class FileTransferManager {
       });
       this.worker?.postMessage({ type: 'abort', fileId: msg.fileId });
       this.incomingFiles.delete(msg.fileId);
+      if (this.lastIncoming?.fileId === msg.fileId) this.lastIncoming = null; // Bolt: Invalidate cache
     } else if (msg.type === 'buffer-return') {
       // Receiver-side: Worker finished writing this buffer to OPFS, safe to recycle
       this.bufferPool.push(msg.data);
@@ -523,6 +534,19 @@ class FileTransferManager {
       }
     } catch (e) {}
 
+    const binaryId = uuidToBytes(metadata.id);
+
+    // Bolt: Seed high-frequency intake cache
+    const idView = new DataView(binaryId.buffer);
+    this.lastIncoming = {
+      v0: idView.getUint32(0, true),
+      v1: idView.getUint32(4, true),
+      v2: idView.getUint32(8, true),
+      v3: idView.getUint32(12, true),
+      fileId: metadata.id,
+      state: incomingState
+    };
+
     if (this.worker && typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.getDirectory === 'function') {
       incomingState.useWorker = true;
       this.worker.postMessage({
@@ -534,7 +558,7 @@ class FileTransferManager {
             size: metadata.size,
             totalChunks: metadata.totalChunks,
             salt: salt, // Pass the salt to the worker
-            binaryId: uuidToBytes(metadata.id) // Pass compacted ID for validation
+            binaryId: binaryId // Use pre-calculated compacted ID
           }
         }
       });
@@ -575,14 +599,37 @@ class FileTransferManager {
     // Bolt: Extract metadata from the binary header without extra JSON messages.
     const view = new DataView(data);
 
-    // Compact Binary Decode: ID is the first 16 bytes
-    const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
-    const fileId = bytesToUuid(fileIdBytes);
+    // Bolt: Fast Intake Cache Check (Zero-allocation 128-bit comparison)
+    let fileId: string;
+    let incoming: IncomingTransferState | undefined;
+
+    const v0 = view.getUint32(0, true);
+    const v1 = view.getUint32(4, true);
+    const v2 = view.getUint32(8, true);
+    const v3 = view.getUint32(12, true);
+
+    if (this.lastIncoming &&
+        v0 === this.lastIncoming.v0 &&
+        v1 === this.lastIncoming.v1 &&
+        v2 === this.lastIncoming.v2 &&
+        v3 === this.lastIncoming.v3) {
+      fileId = this.lastIncoming.fileId;
+      incoming = this.lastIncoming.state;
+    } else {
+      // Fallback: Full UUID string conversion and Map lookup
+      const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
+      fileId = bytesToUuid(fileIdBytes);
+      incoming = this.incomingFiles.get(fileId);
+
+      // Update cache for subsequent chunks
+      if (incoming) {
+        this.lastIncoming = { v0, v1, v2, v3, fileId, state: incoming };
+      }
+    }
     
     // Chunk index is the next 4 bytes (Uint32 LE) at offset 16
     const chunkIndex = view.getUint32(FILE_ID_SIZE, true);
     // Real data starts after header
-    const incoming = this.incomingFiles.get(fileId);
     if (!incoming) {
       // Buffer orphaned chunks if they arrive before file-meta (due to parallel channel striping)
       if (!this.orphanedChunks.has(fileId)) {
@@ -599,9 +646,6 @@ class FileTransferManager {
       return;
     }
 
-    // Header Compaction: Use cached 16-byte binary ID
-    const binaryId = this.getBinaryId(fileId);
-    
     // Start Audio Anchor for Mobile Performance
     startAudioAnchor();
 
@@ -645,6 +689,7 @@ class FileTransferManager {
       this.downloadFile(blob, incoming.metadata.name);
       this.incomingFiles.delete(fileId);
       this.binaryIdCache.delete(fileId);
+      if (this.lastIncoming?.fileId === fileId) this.lastIncoming = null; // Bolt: Invalidate cache
       // Release audio anchor if no more active transfers
       if (this.incomingFiles.size === 0 && this.outgoingTransfers.size === 0) {
         stopAudioAnchor();
@@ -691,6 +736,7 @@ class FileTransferManager {
     
     this.incomingFiles.delete(fileId);
     this.binaryIdCache.delete(fileId);
+    if (this.lastIncoming?.fileId === fileId) this.lastIncoming = null; // Bolt: Invalidate cache
     // Release audio anchor if no more active transfers
     if (this.incomingFiles.size === 0 && this.outgoingTransfers.size === 0) {
       stopAudioAnchor();
@@ -705,6 +751,7 @@ class FileTransferManager {
       }
       this.notifyProgress(fileId, 'cancelled');
       this.incomingFiles.delete(fileId);
+      if (this.lastIncoming?.fileId === fileId) this.lastIncoming = null; // Bolt: Invalidate cache
     }
     
     // Bolt: Handle cancellation of outgoing transfers (Sender side)
@@ -976,10 +1023,8 @@ class FileTransferManager {
         const binaryId = this.getBinaryId(fileId);
         packedChunk.set(binaryId, 0);
         
-        packedChunk[16] = chunkIndex & 0xFF;
-        packedChunk[17] = (chunkIndex >> 8) & 0xFF;
-        packedChunk[18] = (chunkIndex >> 16) & 0xFF;
-        packedChunk[19] = (chunkIndex >> 24) & 0xFF;
+        const packedView = new DataView(packedChunk.buffer);
+        packedView.setUint32(FILE_ID_SIZE, chunkIndex, true);
         
         packedChunk.set(rawChunk, HEADER_SIZE);
 
