@@ -207,6 +207,14 @@ class FileTransferManager {
   private incomingFiles: Map<string, IncomingTransferState> = new Map();
   private outgoingTransfers: Map<string, OutgoingTransferState> = new Map();
   private lastUpdateTimes: Map<string, number> = new Map();
+  private lastIncoming: {
+    v0: number;
+    v1: number;
+    v2: number;
+    v3: number;
+    fileId: string;
+    state: IncomingTransferState;
+  } | null = null;
   private meshTransfers: Map<string, { file: File; peerIds: string[]; transfers: Map<string, string> }> = new Map();
   private orphanedChunks: Map<string, ArrayBuffer[]> = new Map();
   private readonly EMA_ALPHA = 0.2; // Smoothing factor for transfer speed
@@ -293,6 +301,8 @@ class FileTransferManager {
         status: 'failed',
         resumable: false,
       });
+      // Invalidate intake cache
+      if (this.lastIncoming?.fileId === msg.fileId) this.lastIncoming = null;
       this.worker?.postMessage({ type: 'abort', fileId: msg.fileId });
       this.incomingFiles.delete(msg.fileId);
     } else if (msg.type === 'buffer-return') {
@@ -546,6 +556,18 @@ class FileTransferManager {
 
     this.incomingFiles.set(metadata.id, incomingState);
 
+    // Bolt: Seed intake cache for high-frequency chunks
+    const binaryId = uuidToBytes(metadata.id);
+    const idView = new DataView(binaryId.buffer, binaryId.byteOffset, binaryId.byteLength);
+    this.lastIncoming = {
+      v0: idView.getUint32(0, true),
+      v1: idView.getUint32(4, true),
+      v2: idView.getUint32(8, true),
+      v3: idView.getUint32(12, true),
+      fileId: metadata.id,
+      state: incomingState
+    };
+
     // Process any out-of-order chunks that arrived before metadata
     const orphaned = this.orphanedChunks.get(metadata.id);
     if (orphaned) {
@@ -575,14 +597,37 @@ class FileTransferManager {
     // Bolt: Extract metadata from the binary header without extra JSON messages.
     const view = new DataView(data);
 
-    // Compact Binary Decode: ID is the first 16 bytes
-    const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
-    const fileId = bytesToUuid(fileIdBytes);
-    
+    // Bolt: Fast 128-bit header cache check to bypass bytesToUuid and Map lookups
+    // during high-frequency chunked transfers.
+    const v0 = view.getUint32(0, true);
+    const v1 = view.getUint32(4, true);
+    const v2 = view.getUint32(8, true);
+    const v3 = view.getUint32(12, true);
+
+    let fileId: string;
+    let incoming: IncomingTransferState | undefined;
+
+    if (this.lastIncoming &&
+        v0 === this.lastIncoming.v0 &&
+        v1 === this.lastIncoming.v1 &&
+        v2 === this.lastIncoming.v2 &&
+        v3 === this.lastIncoming.v3) {
+      fileId = this.lastIncoming.fileId;
+      incoming = this.lastIncoming.state;
+    } else {
+      // Compact Binary Decode: ID is the first 16 bytes
+      const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
+      fileId = bytesToUuid(fileIdBytes);
+      incoming = this.incomingFiles.get(fileId);
+
+      if (incoming) {
+        this.lastIncoming = { v0, v1, v2, v3, fileId, state: incoming };
+      }
+    }
+
     // Chunk index is the next 4 bytes (Uint32 LE) at offset 16
     const chunkIndex = view.getUint32(FILE_ID_SIZE, true);
     // Real data starts after header
-    const incoming = this.incomingFiles.get(fileId);
     if (!incoming) {
       // Buffer orphaned chunks if they arrive before file-meta (due to parallel channel striping)
       if (!this.orphanedChunks.has(fileId)) {
@@ -599,8 +644,6 @@ class FileTransferManager {
       return;
     }
 
-    // Header Compaction: Use cached 16-byte binary ID
-    const binaryId = this.getBinaryId(fileId);
     
     // Start Audio Anchor for Mobile Performance
     startAudioAnchor();
@@ -633,6 +676,9 @@ class FileTransferManager {
     const incoming = this.incomingFiles.get(fileId);
     if (!incoming) return;
 
+    // Invalidate intake cache
+    if (this.lastIncoming?.fileId === fileId) this.lastIncoming = null;
+
     if (incoming.useWorker && this.worker) {
       this.worker.postMessage({ type: 'complete', fileId });
       // The finalization blob grab happens async in finalizeDownload 
@@ -655,6 +701,9 @@ class FileTransferManager {
   private async finalizeDownload(fileId: string): Promise<void> {
     const incoming = this.incomingFiles.get(fileId);
     if (!incoming) return;
+
+    // Invalidate intake cache
+    if (this.lastIncoming?.fileId === fileId) this.lastIncoming = null;
 
     try {
       const root = await navigator.storage.getDirectory();
@@ -700,6 +749,9 @@ class FileTransferManager {
   private async handleFileCancel(fileId: string): Promise<void> {
     const incoming = this.incomingFiles.get(fileId);
     if (incoming) {
+      // Invalidate intake cache
+      if (this.lastIncoming?.fileId === fileId) this.lastIncoming = null;
+
       if (incoming.useWorker && this.worker) {
         this.worker.postMessage({ type: 'abort', fileId });
       }
