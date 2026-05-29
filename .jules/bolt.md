@@ -65,3 +65,11 @@
 ## 2026-04-27 - O(1) UUID Conversion via Lookup Tables
 **Learning:** Performing regex-based string replacements and `parseInt` inside high-frequency transfer loops (every 64KB chunk) creates significant CPU overhead and garbage collection pressure.
 **Action:** Use pre-computed `byteToHex` and `hexToByte` lookup tables for UUID-to-binary conversions. A manual loop that skips hyphens avoids regex and string allocations, making the hot path much leaner.
+
+## 2026-05-22 - Fast intake cache for High-Frequency Binary Headers
+**Learning:** Even with optimized UUID conversion, performing a `Map.get` and string reconstruction for every 64KB chunk (especially with parallel channels) consumes measurable CPU on the main thread.
+**Action:** Implement a `lastIncoming` cache that stores the 128-bit binary header and state of the last active transfer. Use `DataView.getUint32` for a zero-allocation 4-way check to bypass the slow path for consecutive chunks.
+
+## 2026-05-22 - Buffer Pooling for Zero-Allocation Transmitting
+**Learning:** Allocating thousands of `Uint8Array` views for chunking creates significant GC pressure. Since `RTCDataChannel.send()` performs a synchronous copy of the data into the SCTP stack, the source buffer can be safely recycled immediately after the call is awaited.
+**Action:** Use a capped `bufferPool` to recycle `ArrayBuffer` slabs across all transfer paths. Ensure all `sendToPeer` calls are `await`ed before returning the buffer to the pool to prevent data corruption.
