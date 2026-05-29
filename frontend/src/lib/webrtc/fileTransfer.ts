@@ -214,6 +214,11 @@ class FileTransferManager {
   private stateCleanupHandler: (() => void) | null = null;
   private worker: Worker | null = null;
   private binaryIdCache: Map<string, Uint8Array> = new Map();
+  // Bolt: High-frequency intake cache (bypasses UUID conversion and Map lookup)
+  private lastIncoming: {
+    v0: number, v1: number, v2: number, v3: number,
+    fileId: string, state: IncomingTransferState
+  } | null = null;
 
   private getBinaryId(fileId: string): Uint8Array {
     let cached = this.binaryIdCache.get(fileId);
@@ -295,9 +300,10 @@ class FileTransferManager {
       });
       this.worker?.postMessage({ type: 'abort', fileId: msg.fileId });
       this.incomingFiles.delete(msg.fileId);
+      if (this.lastIncoming?.fileId === msg.fileId) this.lastIncoming = null;
     } else if (msg.type === 'buffer-return') {
       // Receiver-side: Worker finished writing this buffer to OPFS, safe to recycle
-      this.bufferPool.push(msg.data);
+      this.returnBufferToPool(msg.data);
     }
   }
 
@@ -305,6 +311,12 @@ class FileTransferManager {
   private bufferPool: ArrayBuffer[] = [];
   private getBufferFromPool(): ArrayBuffer {
     return this.bufferPool.pop() || new ArrayBuffer(HEADER_SIZE + CHUNK_SIZE);
+  }
+
+  private returnBufferToPool(buffer: ArrayBuffer): void {
+    if (this.bufferPool.length < 64) {
+      this.bufferPool.push(buffer);
+    }
   }
 
   private setupDataHandler(): void {
@@ -546,6 +558,18 @@ class FileTransferManager {
 
     this.incomingFiles.set(metadata.id, incomingState);
 
+    // Bolt: Seed intake cache
+    const bid = this.getBinaryId(metadata.id);
+    const bview = new DataView(bid.buffer, bid.byteOffset, bid.byteLength);
+    this.lastIncoming = {
+      v0: bview.getUint32(0, true),
+      v1: bview.getUint32(4, true),
+      v2: bview.getUint32(8, true),
+      v3: bview.getUint32(12, true),
+      fileId: metadata.id,
+      state: incomingState
+    };
+
     // Process any out-of-order chunks that arrived before metadata
     const orphaned = this.orphanedChunks.get(metadata.id);
     if (orphaned) {
@@ -574,15 +598,35 @@ class FileTransferManager {
 
     // Bolt: Extract metadata from the binary header without extra JSON messages.
     const view = new DataView(data);
+    let fileId: string;
+    let incoming: IncomingTransferState | undefined;
 
-    // Compact Binary Decode: ID is the first 16 bytes
-    const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
-    const fileId = bytesToUuid(fileIdBytes);
+    // Bolt: Fast Intake Path (99% of chunks)
+    const v0 = view.getUint32(0, true);
+    const v1 = view.getUint32(4, true);
+    const v2 = view.getUint32(8, true);
+    const v3 = view.getUint32(12, true);
+
+    if (this.lastIncoming &&
+        v0 === this.lastIncoming.v0 && v1 === this.lastIncoming.v1 &&
+        v2 === this.lastIncoming.v2 && v3 === this.lastIncoming.v3) {
+      fileId = this.lastIncoming.fileId;
+      incoming = this.lastIncoming.state;
+    } else {
+      // Slow Path: UUID conversion and Map lookup
+      const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
+      fileId = bytesToUuid(fileIdBytes);
+      incoming = this.incomingFiles.get(fileId);
+
+      if (incoming) {
+        // Update cache for next chunk
+        this.lastIncoming = { v0, v1, v2, v3, fileId, state: incoming };
+      }
+    }
     
     // Chunk index is the next 4 bytes (Uint32 LE) at offset 16
     const chunkIndex = view.getUint32(FILE_ID_SIZE, true);
-    // Real data starts after header
-    const incoming = this.incomingFiles.get(fileId);
+
     if (!incoming) {
       // Buffer orphaned chunks if they arrive before file-meta (due to parallel channel striping)
       if (!this.orphanedChunks.has(fileId)) {
@@ -599,9 +643,6 @@ class FileTransferManager {
       return;
     }
 
-    // Header Compaction: Use cached 16-byte binary ID
-    const binaryId = this.getBinaryId(fileId);
-    
     // Start Audio Anchor for Mobile Performance
     startAudioAnchor();
 
@@ -645,6 +686,7 @@ class FileTransferManager {
       this.downloadFile(blob, incoming.metadata.name);
       this.incomingFiles.delete(fileId);
       this.binaryIdCache.delete(fileId);
+      if (this.lastIncoming?.fileId === fileId) this.lastIncoming = null;
       // Release audio anchor if no more active transfers
       if (this.incomingFiles.size === 0 && this.outgoingTransfers.size === 0) {
         stopAudioAnchor();
@@ -691,6 +733,7 @@ class FileTransferManager {
     
     this.incomingFiles.delete(fileId);
     this.binaryIdCache.delete(fileId);
+    if (this.lastIncoming?.fileId === fileId) this.lastIncoming = null;
     // Release audio anchor if no more active transfers
     if (this.incomingFiles.size === 0 && this.outgoingTransfers.size === 0) {
       stopAudioAnchor();
@@ -705,6 +748,7 @@ class FileTransferManager {
       }
       this.notifyProgress(fileId, 'cancelled');
       this.incomingFiles.delete(fileId);
+      if (this.lastIncoming?.fileId === fileId) this.lastIncoming = null;
     }
     
     // Bolt: Handle cancellation of outgoing transfers (Sender side)
@@ -828,18 +872,22 @@ class FileTransferManager {
         const slice = file.slice(startByte, endByte);
         const rawChunk = new Uint8Array(await slice.arrayBuffer());
 
-        // Bolt: Pack metadata and data into a single atomic binary message.
-        // This reduces signaling overhead and eliminates inter-message race conditions.
-        const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
+        // Bolt: Recycling Buffer Slab
+        const transferBuffer = this.getBufferFromPool();
+        const packedChunk = new Uint8Array(transferBuffer);
+
         // Header Compaction (20-byte footprint)
         const binaryId = this.getBinaryId(fileId);
         packedChunk.set(binaryId, 0);
-        const chunkView = new DataView(packedChunk.buffer);
+        const chunkView = new DataView(transferBuffer);
         chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
         packedChunk.set(rawChunk, HEADER_SIZE);
 
-        // Send atomic chunk
-        await this.webrtc.sendToPeer(peerId, packedChunk);
+        // Send atomic chunk (use subarray to transmit only valid data)
+        const validChunkView = packedChunk.subarray(0, HEADER_SIZE + rawChunk.length);
+        await this.webrtc.sendToPeer(peerId, validChunkView);
+
+        this.returnBufferToPool(transferBuffer);
 
         transfer.lastChunkIndex = chunkIndex;
         chunkIndex++;
@@ -976,10 +1024,8 @@ class FileTransferManager {
         const binaryId = this.getBinaryId(fileId);
         packedChunk.set(binaryId, 0);
         
-        packedChunk[16] = chunkIndex & 0xFF;
-        packedChunk[17] = (chunkIndex >> 8) & 0xFF;
-        packedChunk[18] = (chunkIndex >> 16) & 0xFF;
-        packedChunk[19] = (chunkIndex >> 24) & 0xFF;
+        const chunkView = new DataView(transferBuffer);
+        chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
         
         packedChunk.set(rawChunk, HEADER_SIZE);
 
@@ -997,11 +1043,11 @@ class FileTransferManager {
           // to kill tail latency from a single slow SCTP stream.
           const isFinalLap = (chunkIndex >= metadata.totalChunks - 2);
           if (isFinalLap) {
-             this.webrtc.sendToPeer(peerId, validChunkView); 
+             await this.webrtc.sendToPeer(peerId, validChunkView);
           }
 
-          // Buffer is not returned to pool here — the data channel may still be reading from it.
-          // Buffers are recycled via the worker's buffer-return message instead.
+          // Buffer is safely returned to pool after all sendToPeer calls for this chunk are awaited.
+          this.returnBufferToPool(transferBuffer);
 
           if (transfer) transfer.lastChunkIndex = chunkIndex;
           chunkIndex++;
@@ -1191,24 +1237,30 @@ class FileTransferManager {
             const rawChunk = value.subarray(offset, Math.min(offset + CHUNK_SIZE, value.length));
             offset += CHUNK_SIZE;
 
-            // Bolt: Pack metadata and data into a single atomic binary message for broadcast.
-            const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
+            // Bolt: Recycling Buffer Slab for Broadcast
+            const transferBuffer = this.getBufferFromPool();
+            const packedChunk = new Uint8Array(transferBuffer);
+
             // Header Compaction (20-byte footprint)
             const binaryId = this.getBinaryId(fileId);
             packedChunk.set(binaryId, 0);
-            const chunkView = new DataView(packedChunk.buffer);
+            const chunkView = new DataView(transferBuffer);
             chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
             packedChunk.set(rawChunk, HEADER_SIZE);
+
+            const validChunkView = packedChunk.subarray(0, HEADER_SIZE + rawChunk.length);
 
             // Bolt: Parallelize transmission to all active peers in the mesh
             // This prevents a single slow connection from bottlenecking the entire broadcast.
             await Promise.all(activePeers.map(async (peerId) => {
               const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
               if (tx && !tx.cancelled && !tx.paused) {
-                await this.webrtc.sendToPeer(peerId, packedChunk);
+                await this.webrtc.sendToPeer(peerId, validChunkView);
                 tx.lastChunkIndex = chunkIndex;
               }
             }));
+
+            this.returnBufferToPool(transferBuffer);
 
             chunkIndex++;
             transferredSize += rawChunk.length;
@@ -1471,6 +1523,7 @@ class FileTransferManager {
     this.meshTransfers.clear();
     this.orphanedChunks.clear();
     this.binaryIdCache.clear();
+    this.lastIncoming = null;
     this.bufferPool.length = 0;
     // Release system resources
     stopAudioAnchor();
