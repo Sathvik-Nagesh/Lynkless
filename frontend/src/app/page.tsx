@@ -453,10 +453,19 @@ export default function Home() {
     [connectedPeers]);
 
   // Active transfer peers for Radar Particle Animation
-  const activeTransferPeerIds = useMemo(() => {
+  // Bolt: Identity Stabilization. We use a sorted joined string as the dependency
+  // to ensure activeTransferPeerIds only changes when the set of peer IDs actually changes.
+  // This prevents the heavy Radar component from re-rendering during every progress update.
+  const activeTransferPeerIdString = useMemo(() => {
     const active = transfers.filter(t => t.status === 'transferring');
-    return Array.from(new Set(active.map(t => t.peerId)));
+    const ids = Array.from(new Set(active.map(t => t.peerId))).sort();
+    return ids.join(',');
   }, [transfers]);
+
+  const activeTransferPeerIds = useMemo(() => {
+    if (!activeTransferPeerIdString) return [];
+    return activeTransferPeerIdString.split(',');
+  }, [activeTransferPeerIdString]);
 
   return (
     <main
