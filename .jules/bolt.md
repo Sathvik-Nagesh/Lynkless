@@ -58,6 +58,10 @@
 **Learning:** Sending separate JSON metadata and raw binary messages for every 256KB chunk (4 messages per MB) creates significant overhead in the WebRTC DataChannel and browser event loop. Furthermore, it introduces a fragile dependency on message ordering across different internal WebRTC buffers.
 **Action:** Use an atomic binary protocol where a small fixed-size header (e.g., 40 bytes) containing metadata is prepended to each binary chunk. This halves the number of messages and ensures metadata is always perfectly synchronized with its data.
 
+## 2026-05-20 - Zero-Allocation Chunking via Buffer Pooling
+**Learning:** Even with an atomic binary protocol, allocating a new `ArrayBuffer` for every 64KB chunk during a multi-gigabyte transfer creates massive heap churn (~16,000 allocations per GB). While `RTCDataChannel.send()` is synchronous, recycling the buffer too early can lead to data corruption if the transport layer hasn't finished reading from the view.
+**Action:** Implement a capped `bufferPool` (64 slabs). Always `await` the `sendToPeer` call—which handles the underlying DataChannel backpressure—before calling `returnBufferToPool()` to ensure the buffer is safely available for reuse.
+
 ## 2026-05-20 - OPFS Write Performance via Pre-allocation
 **Learning:** Origin Private File System (OPFS) `FileSystemSyncAccessHandle` writes can be slightly slower if the OS has to repeatedly allocate new disk blocks as the file grows.
 **Action:** Use `accessHandle.truncate(totalSize)` during transfer initialization to pre-allocate the entire file size on disk. This results in more contiguous disk writes and improved overall throughput.
