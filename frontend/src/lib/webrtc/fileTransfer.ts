@@ -194,7 +194,7 @@ interface IncomingTransferState {
   startOffset: number;
   peerId: string;
   useWorker?: boolean;
-  chunks?: (ArrayBuffer | null)[]; // RAM fallback
+  chunks?: (Uint8Array | null)[]; // RAM fallback
   checksum?: string;
   metaReceivedViaP2P?: boolean; // Track redundant metadata
 }
@@ -214,6 +214,7 @@ class FileTransferManager {
   private stateCleanupHandler: (() => void) | null = null;
   private worker: Worker | null = null;
   private binaryIdCache: Map<string, Uint8Array> = new Map();
+  private lastIncoming: { v0: number, v1: number, v2: number, v3: number, fileId: string, state: IncomingTransferState | null } = { v0: 0, v1: 0, v2: 0, v3: 0, fileId: '', state: null };
 
   private getBinaryId(fileId: string): Uint8Array {
     let cached = this.binaryIdCache.get(fileId);
@@ -546,6 +547,18 @@ class FileTransferManager {
 
     this.incomingFiles.set(metadata.id, incomingState);
 
+    // Bolt: Seed lastIncoming cache for high-frequency intake
+    const binaryId = this.getBinaryId(metadata.id);
+    const view = new DataView(binaryId.buffer, binaryId.byteOffset, binaryId.byteLength);
+    this.lastIncoming = {
+      v0: view.getUint32(0, true),
+      v1: view.getUint32(4, true),
+      v2: view.getUint32(8, true),
+      v3: view.getUint32(12, true),
+      fileId: metadata.id,
+      state: incomingState
+    };
+
     // Process any out-of-order chunks that arrived before metadata
     const orphaned = this.orphanedChunks.get(metadata.id);
     if (orphaned) {
@@ -568,6 +581,7 @@ class FileTransferManager {
   /**
    * Process an atomic binary chunk from a peer.
    * Bolt: Decodes the packed header (fileId + chunkIndex) and routes data to worker/buffer.
+   * Optimized for high-frequency intake using a private lastIncoming cache.
    */
   private handleBinaryChunk(peerId: string, data: ArrayBuffer): void {
     if (data.byteLength < HEADER_SIZE) return;
@@ -575,14 +589,34 @@ class FileTransferManager {
     // Bolt: Extract metadata from the binary header without extra JSON messages.
     const view = new DataView(data);
 
-    // Compact Binary Decode: ID is the first 16 bytes
-    const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
-    const fileId = bytesToUuid(fileIdBytes);
-    
+    // High-Frequency Cache Check: Perform 128-bit comparison using four uint32 checks
+    // to bypass bytesToUuid and Map lookups for consecutive chunks of the same file.
+    const v0 = view.getUint32(0, true);
+    const v1 = view.getUint32(4, true);
+    const v2 = view.getUint32(8, true);
+    const v3 = view.getUint32(12, true);
+
+    let fileId: string;
+    let incoming: IncomingTransferState | undefined;
+
+    if (v0 === this.lastIncoming.v0 && v1 === this.lastIncoming.v1 &&
+        v2 === this.lastIncoming.v2 && v3 === this.lastIncoming.v3) {
+      fileId = this.lastIncoming.fileId;
+      incoming = this.lastIncoming.state || undefined;
+    } else {
+      // Cache Miss: Perform standard decode and lookup
+      const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
+      fileId = bytesToUuid(fileIdBytes);
+      incoming = this.incomingFiles.get(fileId);
+
+      // Update cache
+      this.lastIncoming = { v0, v1, v2, v3, fileId, state: incoming || null };
+    }
+
     // Chunk index is the next 4 bytes (Uint32 LE) at offset 16
     const chunkIndex = view.getUint32(FILE_ID_SIZE, true);
+
     // Real data starts after header
-    const incoming = this.incomingFiles.get(fileId);
     if (!incoming) {
       // Buffer orphaned chunks if they arrive before file-meta (due to parallel channel striping)
       if (!this.orphanedChunks.has(fileId)) {
@@ -593,15 +627,16 @@ class FileTransferManager {
             console.warn(`[FileTransfer] Dropping orphaned chunks for ${fileId} - file-meta never arrived`);
             this.orphanedChunks.delete(fileId);
           }
+          // Invalidate cache if it matches this fileId
+          if (this.lastIncoming.fileId === fileId) {
+            this.lastIncoming = { v0: 0, v1: 0, v2: 0, v3: 0, fileId: '', state: null };
+          }
         }, 15000); // 15 seconds wait time
       }
       this.orphanedChunks.get(fileId)!.push(data);
       return;
     }
 
-    // Header Compaction: Use cached 16-byte binary ID
-    const binaryId = this.getBinaryId(fileId);
-    
     // Start Audio Anchor for Mobile Performance
     startAudioAnchor();
 
@@ -615,8 +650,9 @@ class FileTransferManager {
         }
       }, [data]);
     } else if (incoming.chunks && incoming.chunks[chunkIndex] === null) {
-      // RAM Fallback: Store only the data part
-      const chunkData = data.slice(HEADER_SIZE);
+      // RAM Fallback: Store only the data part using a zero-copy view
+      // Bolt: new Uint8Array(buffer, offset) is O(1) compared to slice() which is O(N)
+      const chunkData = new Uint8Array(data, HEADER_SIZE);
       incoming.chunks[chunkIndex] = chunkData;
       incoming.receivedChunks++;
       incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, chunkIndex);
@@ -637,14 +673,20 @@ class FileTransferManager {
       this.worker.postMessage({ type: 'complete', fileId });
       // The finalization blob grab happens async in finalizeDownload 
     } else {
-      const validChunks = (incoming.chunks || []) as ArrayBuffer[];
-      const blob = new Blob(validChunks, { type: incoming.metadata.type });
+      const validChunks = (incoming.chunks || []) as Uint8Array[];
+      // Bolt: Cast to unknown then to BlobPart[] to satisfy strict TypeScript/Next.js environment
+      // which sometimes has trouble with Uint8Array view arrays in Blob constructor.
+      const blob = new Blob(validChunks as unknown as BlobPart[], { type: incoming.metadata.type });
       
       this.fileReceivedHandlers.forEach((h) => h(blob, incoming.metadata));
       this.notifyProgress(fileId, 'completed', { transferredSize: incoming.metadata.size });
       this.downloadFile(blob, incoming.metadata.name);
       this.incomingFiles.delete(fileId);
       this.binaryIdCache.delete(fileId);
+      // Invalidate cache
+      if (this.lastIncoming.fileId === fileId) {
+        this.lastIncoming = { v0: 0, v1: 0, v2: 0, v3: 0, fileId: '', state: null };
+      }
       // Release audio anchor if no more active transfers
       if (this.incomingFiles.size === 0 && this.outgoingTransfers.size === 0) {
         stopAudioAnchor();
@@ -691,6 +733,10 @@ class FileTransferManager {
     
     this.incomingFiles.delete(fileId);
     this.binaryIdCache.delete(fileId);
+    // Invalidate cache
+    if (this.lastIncoming.fileId === fileId) {
+      this.lastIncoming = { v0: 0, v1: 0, v2: 0, v3: 0, fileId: '', state: null };
+    }
     // Release audio anchor if no more active transfers
     if (this.incomingFiles.size === 0 && this.outgoingTransfers.size === 0) {
       stopAudioAnchor();
@@ -705,6 +751,10 @@ class FileTransferManager {
       }
       this.notifyProgress(fileId, 'cancelled');
       this.incomingFiles.delete(fileId);
+      // Invalidate cache
+      if (this.lastIncoming.fileId === fileId) {
+        this.lastIncoming = { v0: 0, v1: 0, v2: 0, v3: 0, fileId: '', state: null };
+      }
     }
     
     // Bolt: Handle cancellation of outgoing transfers (Sender side)

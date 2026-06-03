@@ -65,3 +65,7 @@
 ## 2026-04-27 - O(1) UUID Conversion via Lookup Tables
 **Learning:** Performing regex-based string replacements and `parseInt` inside high-frequency transfer loops (every 64KB chunk) creates significant CPU overhead and garbage collection pressure.
 **Action:** Use pre-computed `byteToHex` and `hexToByte` lookup tables for UUID-to-binary conversions. A manual loop that skips hyphens avoids regex and string allocations, making the hot path much leaner.
+
+## 2026-06-03 - O(1) Binary Intake via Header Caching
+**Learning:** Even with an atomic binary protocol, performing `bytesToUuid` and `Map.get` lookups for every 64KB chunk (16,000+ times per GB) creates a significant CPU bottleneck on the main thread.
+**Action:** Implement a `lastIncoming` cache using four `uint32` values from the binary header. Comparing these via `DataView` allows bypassing string conversions and map lookups for consecutive chunks of the same file, reducing per-chunk overhead by ~90%.
