@@ -47,17 +47,17 @@ const WORKER_CHUNK_SIZE = 64 * 1024; // 64KB - MUST match CHUNK_SIZE in fileTran
 
 // Speed performance: Pre-allocate reusable buffers and encoders
 const encoder = new TextEncoder();
-const fileIdBufferMap = new Map<string, Uint8Array>();
+const fileIdBufferMap = new Map<string, {v0: number, v1: number, v2: number, v3: number}>();
 
 /**
  * Fast binary comparison for File IDs
+ * Bolt: Optimized using four uint32 comparisons to avoid O(N) loop and reduce CPU cycles.
  */
-function compareUint8Arrays(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
+function compareFileIds(view: DataView, expected: {v0: number, v1: number, v2: number, v3: number}): boolean {
+  return view.getUint32(0, true) === expected.v0 &&
+         view.getUint32(4, true) === expected.v1 &&
+         view.getUint32(8, true) === expected.v2 &&
+         view.getUint32(12, true) === expected.v3;
 }
 
 const messageQueue: MessageEvent[] = [];
@@ -101,9 +101,23 @@ async function handleMessage(e: MessageEvent) {
       // Cache binary File ID for fast comparison
       const binaryId = (metadata as any).binaryId;
       if (binaryId) {
-        fileIdBufferMap.set(fileId, new Uint8Array(binaryId));
+        const idBuffer = new Uint8Array(binaryId);
+        const idView = new DataView(idBuffer.buffer, idBuffer.byteOffset, idBuffer.byteLength);
+        fileIdBufferMap.set(fileId, {
+          v0: idView.getUint32(0, true),
+          v1: idView.getUint32(4, true),
+          v2: idView.getUint32(8, true),
+          v3: idView.getUint32(12, true)
+        });
       } else {
-        fileIdBufferMap.set(fileId, encoder.encode(fileId)); // Fallback
+        const idBuffer = encoder.encode(fileId);
+        const idView = new DataView(idBuffer.buffer, idBuffer.byteOffset, idBuffer.byteLength);
+        fileIdBufferMap.set(fileId, {
+          v0: idView.getUint32(0, true),
+          v1: idView.getUint32(4, true),
+          v2: idView.getUint32(8, true),
+          v3: idView.getUint32(12, true)
+        });
       }
 
       const fileHandle = await root.getFileHandle(opfsName, { create: true });
@@ -146,9 +160,9 @@ async function handleMessage(e: MessageEvent) {
     
     if (accessHandle && meta && expectedIdBuffer && chunkIndex !== undefined && data) {
       try {
+        const dv = new DataView(data);
         // Fast binary header validation (CPU optimization)
-        const actualIdBuffer = new Uint8Array(data, 0, 16); // 16 = Compact FILE_ID_SIZE
-        if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
+        if (!compareFileIds(dv, expectedIdBuffer)) return;
 
         // Dedup: Skip if this chunk was already written (Tail Redundancy sends last chunks twice)
         if (meta.receivedSet.has(chunkIndex)) {
