@@ -214,6 +214,14 @@ class FileTransferManager {
   private stateCleanupHandler: (() => void) | null = null;
   private worker: Worker | null = null;
   private binaryIdCache: Map<string, Uint8Array> = new Map();
+  private lastIncomingCache: {
+    v0: number;
+    v1: number;
+    v2: number;
+    v3: number;
+    state: IncomingTransferState;
+    fileId: string;
+  } | null = null;
 
   private getBinaryId(fileId: string): Uint8Array {
     let cached = this.binaryIdCache.get(fileId);
@@ -295,6 +303,9 @@ class FileTransferManager {
       });
       this.worker?.postMessage({ type: 'abort', fileId: msg.fileId });
       this.incomingFiles.delete(msg.fileId);
+      if (this.lastIncomingCache?.fileId === msg.fileId) {
+        this.lastIncomingCache = null;
+      }
     } else if (msg.type === 'buffer-return') {
       // Receiver-side: Worker finished writing this buffer to OPFS, safe to recycle
       this.bufferPool.push(msg.data);
@@ -575,14 +586,38 @@ class FileTransferManager {
     // Bolt: Extract metadata from the binary header without extra JSON messages.
     const view = new DataView(data);
 
-    // Compact Binary Decode: ID is the first 16 bytes
-    const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
-    const fileId = bytesToUuid(fileIdBytes);
-    
+    // Bolt: Fast Binary Header Comparison
+    // Check if this chunk belongs to the same file as the last one to bypass bytesToUuid and Map lookup.
+    const v0 = view.getUint32(0, true);
+    const v1 = view.getUint32(4, true);
+    const v2 = view.getUint32(8, true);
+    const v3 = view.getUint32(12, true);
+
+    let incoming: IncomingTransferState | undefined;
+    let fileId: string;
+
+    if (this.lastIncomingCache &&
+        v0 === this.lastIncomingCache.v0 &&
+        v1 === this.lastIncomingCache.v1 &&
+        v2 === this.lastIncomingCache.v2 &&
+        v3 === this.lastIncomingCache.v3) {
+      incoming = this.lastIncomingCache.state;
+      fileId = this.lastIncomingCache.fileId;
+    } else {
+      // Fallback to slower path
+      const fileIdBytes = new Uint8Array(data, 0, FILE_ID_SIZE);
+      fileId = bytesToUuid(fileIdBytes);
+      incoming = this.incomingFiles.get(fileId);
+
+      if (incoming) {
+        // Seed the cache for consecutive chunks
+        this.lastIncomingCache = { v0, v1, v2, v3, state: incoming, fileId };
+      }
+    }
+
     // Chunk index is the next 4 bytes (Uint32 LE) at offset 16
     const chunkIndex = view.getUint32(FILE_ID_SIZE, true);
     // Real data starts after header
-    const incoming = this.incomingFiles.get(fileId);
     if (!incoming) {
       // Buffer orphaned chunks if they arrive before file-meta (due to parallel channel striping)
       if (!this.orphanedChunks.has(fileId)) {
@@ -645,6 +680,9 @@ class FileTransferManager {
       this.downloadFile(blob, incoming.metadata.name);
       this.incomingFiles.delete(fileId);
       this.binaryIdCache.delete(fileId);
+      if (this.lastIncomingCache?.fileId === fileId) {
+        this.lastIncomingCache = null;
+      }
       // Release audio anchor if no more active transfers
       if (this.incomingFiles.size === 0 && this.outgoingTransfers.size === 0) {
         stopAudioAnchor();
@@ -691,6 +729,9 @@ class FileTransferManager {
     
     this.incomingFiles.delete(fileId);
     this.binaryIdCache.delete(fileId);
+    if (this.lastIncomingCache?.fileId === fileId) {
+      this.lastIncomingCache = null;
+    }
     // Release audio anchor if no more active transfers
     if (this.incomingFiles.size === 0 && this.outgoingTransfers.size === 0) {
       stopAudioAnchor();
@@ -705,6 +746,9 @@ class FileTransferManager {
       }
       this.notifyProgress(fileId, 'cancelled');
       this.incomingFiles.delete(fileId);
+      if (this.lastIncomingCache?.fileId === fileId) {
+        this.lastIncomingCache = null;
+      }
     }
     
     // Bolt: Handle cancellation of outgoing transfers (Sender side)
@@ -1471,6 +1515,7 @@ class FileTransferManager {
     this.meshTransfers.clear();
     this.orphanedChunks.clear();
     this.binaryIdCache.clear();
+    this.lastIncomingCache = null;
     this.bufferPool.length = 0;
     // Release system resources
     stopAudioAnchor();

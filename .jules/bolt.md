@@ -65,3 +65,7 @@
 ## 2026-04-27 - O(1) UUID Conversion via Lookup Tables
 **Learning:** Performing regex-based string replacements and `parseInt` inside high-frequency transfer loops (every 64KB chunk) creates significant CPU overhead and garbage collection pressure.
 **Action:** Use pre-computed `byteToHex` and `hexToByte` lookup tables for UUID-to-binary conversions. A manual loop that skips hyphens avoids regex and string allocations, making the hot path much leaner.
+
+## 2026-06-15 - O(1) Cache for High-Frequency Binary Intake
+**Learning:** Even with optimized UUID conversion, performing `bytesToUuid` and `Map.get()` for every 64KB chunk in a high-speed transfer (e.g. 1Gbps+) consumes non-trivial CPU cycles and creates contention in the JS engine. Since chunks for a file typically arrive in long, consecutive sequences, a single-slot cache for the last active file state can bypass these operations entirely.
+**Action:** Implement a `lastIncomingCache` that stores the raw header bytes (as `uint32`) and the resolved `IncomingTransferState`. Compare the header of incoming chunks against this cache using four `uint32` checks via `DataView` to achieve a "fast-path" for consecutive chunks.
