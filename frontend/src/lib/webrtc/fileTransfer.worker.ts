@@ -46,18 +46,23 @@ const PROGRESS_THROTTLE_MS = 100;
 const WORKER_CHUNK_SIZE = 64 * 1024; // 64KB - MUST match CHUNK_SIZE in fileTransfer.ts
 
 // Speed performance: Pre-allocate reusable buffers and encoders
-const encoder = new TextEncoder();
-const fileIdBufferMap = new Map<string, Uint8Array>();
+const fileIdBufferMap = new Map<string, { v0: number; v1: number; v2: number; v3: number }>();
 
 /**
- * Fast binary comparison for File IDs
+ * Fast binary comparison for File IDs using four uint32 checks.
+ * Bolt: This provides O(1) validation performance in the hot path.
  */
-function compareUint8Arrays(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
+function compareFileIds(
+  actual: DataView,
+  expected: { v0: number; v1: number; v2: number; v3: number }
+): boolean {
+  if (actual.byteLength < 16) return false;
+  return (
+    actual.getUint32(0, true) === expected.v0 &&
+    actual.getUint32(4, true) === expected.v1 &&
+    actual.getUint32(8, true) === expected.v2 &&
+    actual.getUint32(12, true) === expected.v3
+  );
 }
 
 const messageQueue: MessageEvent[] = [];
@@ -98,12 +103,30 @@ async function handleMessage(e: MessageEvent) {
       const salt = (metadata as any).salt || '';
       const opfsName = salt ? `lynkless-${fileId}-${salt}` : `lynkless-${fileId}`;
       
-      // Cache binary File ID for fast comparison
-      const binaryId = (metadata as any).binaryId;
-      if (binaryId) {
-        fileIdBufferMap.set(fileId, new Uint8Array(binaryId));
-      } else {
-        fileIdBufferMap.set(fileId, encoder.encode(fileId)); // Fallback
+      // Cache binary File ID components for O(1) comparison in hot path
+      let binaryId = (metadata as any).binaryId as Uint8Array | undefined;
+
+      // Fallback: If binaryId is missing (legacy signaling), compute it from the string ID
+      if (!binaryId && fileId) {
+        const bytes = new Uint8Array(16);
+        let j = 0;
+        for (let i = 0; i < fileId.length; i++) {
+          if (fileId[i] === '-') continue;
+          const hexPair = fileId.substring(i, i + 2).toLowerCase();
+          bytes[j++] = parseInt(hexPair, 16);
+          i++;
+        }
+        binaryId = bytes;
+      }
+
+      if (binaryId && binaryId.length === 16) {
+        const view = new DataView(binaryId.buffer, binaryId.byteOffset, binaryId.byteLength);
+        fileIdBufferMap.set(fileId, {
+          v0: view.getUint32(0, true),
+          v1: view.getUint32(4, true),
+          v2: view.getUint32(8, true),
+          v3: view.getUint32(12, true),
+        });
       }
 
       const fileHandle = await root.getFileHandle(opfsName, { create: true });
@@ -143,13 +166,13 @@ async function handleMessage(e: MessageEvent) {
 
     const accessHandle = accessHandles.get(msg.fileId);
     const meta = metadataMap.get(msg.fileId);
-    const expectedIdBuffer = fileIdBufferMap.get(msg.fileId);
-    
-    if (accessHandle && meta && expectedIdBuffer && chunkIndex !== undefined && data) {
+    const expectedId = fileIdBufferMap.get(msg.fileId);
+
+    if (accessHandle && meta && expectedId && chunkIndex !== undefined && data) {
       try {
         // Fast binary header validation (CPU optimization)
-        const actualIdBuffer = new Uint8Array(data, 0, 16); // 16 = Compact FILE_ID_SIZE
-        if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
+        const dataView = new DataView(data);
+        if (!compareFileIds(dataView, expectedId)) return;
 
         // Dedup: Skip if this chunk was already written (Tail Redundancy sends last chunks twice)
         const byteIndex = Math.floor(chunkIndex / 8);
