@@ -30,7 +30,7 @@ export class E2EEHelper {
   static async encryptFile(file: File, password?: string): Promise<File> {
     if (!password) return file;
     if (file.size > this.MAX_E2EE_SIZE) {
-      throw new Error('E2EE is currently limited to files under 250MB for browser memory safety.');
+      throw new Error('E2EE is currently limited to files under 512MB for browser memory safety.');
     }
 
     const salt = crypto.getRandomValues(new Uint8Array(16));

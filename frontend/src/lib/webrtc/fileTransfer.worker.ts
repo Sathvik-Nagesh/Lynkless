@@ -34,7 +34,7 @@ interface WorkerTransferState {
   lastReceivedIndex: number;
   opfsName: string; // Store the exact salted name
   lastReportedProgress: number;
-  receivedSet: Set<number>; // Dedup: track which chunks have been written
+  receivedBitfield: Uint8Array; // Dedup: track which chunks have been written using bits
 }
 
 const fileHandles = new Map<string, FileSystemFileHandle>();
@@ -126,7 +126,8 @@ async function handleMessage(e: MessageEvent) {
         lastReceivedIndex: -1,
         opfsName: opfsName,
         lastReportedProgress: 0,
-        receivedSet: new Set()
+        // Bitfield takes 1 bit per chunk (1MB RAM handles > 8 Million chunks)
+        receivedBitfield: new Uint8Array(Math.ceil(metadata.totalChunks / 8))
       });
 
       self.postMessage({ type: 'init-success', fileId: metadata.id });
@@ -151,7 +152,9 @@ async function handleMessage(e: MessageEvent) {
         if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
 
         // Dedup: Skip if this chunk was already written (Tail Redundancy sends last chunks twice)
-        if (meta.receivedSet.has(chunkIndex)) {
+        const byteIndex = Math.floor(chunkIndex / 8);
+        const bitMask = 1 << (chunkIndex % 8);
+        if ((meta.receivedBitfield[byteIndex] & bitMask) !== 0) {
           // Still return the buffer for recycling
           self.postMessage({ 
             type: 'buffer-return', 
@@ -160,7 +163,7 @@ async function handleMessage(e: MessageEvent) {
           }, [data]);
           return;
         }
-        meta.receivedSet.add(chunkIndex);
+        meta.receivedBitfield[byteIndex] |= bitMask;
 
         // Direct Synchronous Write (Atomic and Safe for out-of-order)
         const writeOffset = chunkIndex * 65536;

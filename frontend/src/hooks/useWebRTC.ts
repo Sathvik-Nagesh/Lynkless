@@ -59,6 +59,11 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [callStream, setCallStream] = useState<MediaStream | null>(null);
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
+
+  // LEAK-7 FIX: Refs to throttle and manage transfer state updates without spamming React state
+  const transfersRef = useRef<TransferProgress[]>([]);
+  const lastUpdateRef = useRef<number>(0);
+  const handledTerminalRef = useRef<Set<string>>(new Set());
   const localSendersRef = useRef<Map<string, RTCRtpSender[]>>(new Map());
   const callSendersRef = useRef<Map<string, RTCRtpSender[]>>(new Map());
 
@@ -125,18 +130,33 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
 
     // Handle transfer progress
     const unsubProgress = fileTransfer.onProgress((progress) => {
-      setTransfers((prev) => {
-        const existing = prev.find((t) => t.fileId === progress.fileId);
-        if (existing) {
-          return prev.map((t) =>
-            t.fileId === progress.fileId ? progress : t
-          );
-        }
-        return [...prev, progress];
-      });
+      const now = Date.now();
+      const prev = transfersRef.current;
+      const existingIndex = prev.findIndex(t => t.fileId === progress.fileId);
+      
+      const isTerminal = progress.status === 'completed' || progress.status === 'failed' || progress.status === 'cancelled';
+      const isNew = existingIndex === -1;
+      
+      let next: TransferProgress[];
+      if (isNew) {
+        next = [...prev, progress];
+      } else {
+        next = [...prev];
+        next[existingIndex] = progress;
+      }
+      transfersRef.current = next;
+
+      // LEAK-7 FIX: Throttle React state updates to 500ms to prevent cascading re-renders,
+      // but always update immediately on new or terminal states.
+      if (isNew || isTerminal || now - lastUpdateRef.current > 500) {
+        lastUpdateRef.current = now;
+        setTransfers(next);
+      }
 
       // Remove completed transfers after delay and save history
-      if (progress.status === 'completed' || progress.status === 'failed' || progress.status === 'cancelled') {
+      if (isTerminal && !handledTerminalRef.current.has(progress.fileId)) {
+        handledTerminalRef.current.add(progress.fileId);
+        
         saveTransferHistory({
           id: progress.fileId + '-' + Date.now(),
           fileName: progress.fileName,
@@ -144,13 +164,13 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
           transferType: progress.type,
           peerId: progress.peerId,
           timestamp: Date.now(),
-          status: progress.status,
+          status: progress.status as 'completed' | 'failed' | 'cancelled',
         });
 
         setTimeout(() => {
-          setTransfers((prev) =>
-            prev.filter((t) => t.fileId !== progress.fileId)
-          );
+          transfersRef.current = transfersRef.current.filter(t => t.fileId !== progress.fileId);
+          setTransfers(transfersRef.current);
+          handledTerminalRef.current.delete(progress.fileId);
         }, 5000);
       }
     });

@@ -78,8 +78,17 @@ class WebRTCManager {
   // Track whether remote description has been set for each peer
   private remoteDescriptionSet: Map<string, boolean> = new Map();
 
+  private prewarmPCs: Set<RTCPeerConnection> = new Set();
+  private boundBeforeUnload: (() => void) | null = null;
+
   constructor() {
     this.setupSignalingHandlers();
+    
+    // LEAK-11: Clean up WebRTC resources when page is unloaded
+    if (typeof window !== 'undefined') {
+      this.boundBeforeUnload = () => this.destroy();
+      window.addEventListener('beforeunload', this.boundBeforeUnload);
+    }
   }
 
   private setupSignalingHandlers(): void {
@@ -680,9 +689,21 @@ class WebRTCManager {
     if (this.cleanupHandler) {
       this.cleanupHandler();
     }
+    this.prewarmPCs.forEach(pc => {
+      try { pc.close(); } catch {}
+    });
+    this.prewarmPCs.clear();
+    
     this.dataHandlers.clear();
     this.stateHandlers.clear();
     this.fingerprintHandlers.clear();
+    this.trackHandlers.clear();
+    this.relayHandlers.clear();
+    
+    if (typeof window !== 'undefined' && this.boundBeforeUnload) {
+      window.removeEventListener('beforeunload', this.boundBeforeUnload);
+      this.boundBeforeUnload = null;
+    }
   }
 
   /**
@@ -692,11 +713,15 @@ class WebRTCManager {
   prewarmICECandidates(): void {
     console.log('[WebRTC] Pre-warming ICE candidates...');
     const pc = new RTCPeerConnection(ICE_SERVERS);
+    this.prewarmPCs.add(pc);
     pc.onicecandidate = () => { /* gathering to cache in OS stack */ };
     pc.createDataChannel('prewarm');
     pc.createOffer().then(offer => pc.setLocalDescription(offer)).catch(() => {});
     // Close after 3s of gathering (enough for most environments)
-    setTimeout(() => { try { pc.close(); } catch {} }, 3000);
+    setTimeout(() => { 
+      try { pc.close(); } catch {} 
+      this.prewarmPCs.delete(pc);
+    }, 3000);
   }
   /**
    * Get the current state of a peer connection

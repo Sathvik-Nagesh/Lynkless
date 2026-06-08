@@ -25,6 +25,11 @@ const CHUNK_SIZE = 64 * 1024; // 64KB chunks - maximum safe SCTP packet size acr
 const MAX_FILE_SIZE = 20 * 1024 * 1024 * 1024; // 20GB limit
 const PROGRESS_UPDATE_INTERVAL = 100; // 100ms throttle interval
 
+// Memory safety constants
+const MAX_ORPHAN_FILEIDS = 5; // Max distinct fileIds to buffer orphaned chunks for
+const MAX_ORPHAN_CHUNKS_PER_FILE = 50; // Max orphaned chunks per fileId before dropping
+const RAM_FALLBACK_FLUSH_THRESHOLD = 128; // Flush accumulated RAM chunks to Blob every N chunks
+
 // Bolt: Atomic Chunk Protocol Constants
 // Using a ultra-compact 20-byte binary header to pack metadata with data.
 const FILE_ID_SIZE = 16; // UUID v4 as raw bytes
@@ -194,7 +199,11 @@ interface IncomingTransferState {
   startOffset: number;
   peerId: string;
   useWorker?: boolean;
-  chunks?: (ArrayBuffer | null)[]; // RAM fallback
+  // RAM fallback: streaming Blob accumulation instead of full chunk array
+  blobParts?: Blob[]; // Flushed blob segments
+  pendingChunks?: (ArrayBuffer | null)[]; // Small bounded buffer before flush
+  pendingChunksCount?: number; // Track how many pending slots are filled
+  totalReceivedBytes?: number; // Track total bytes for validation (SEC-3)
   checksum?: string;
   metaReceivedViaP2P?: boolean; // Track redundant metadata
 }
@@ -228,11 +237,26 @@ class FileTransferManager {
     if (!cached) {
       cached = uuidToBytes(fileId);
       this.binaryIdCache.set(fileId, cached);
-      
-      // Auto-cleanup cache after 1 hour to prevent memory leaks
-      setTimeout(() => this.binaryIdCache.delete(fileId), 3600000);
+      // Cache is cleaned up in cleanupTransferState() on completion — no timeout needed
     }
     return cached;
+  }
+
+  /**
+   * Clean up all state associated with a completed/failed/cancelled transfer.
+   * Centralizes cleanup to prevent leaks (LEAK-6, LEAK-10, SEC-4).
+   */
+  private cleanupTransferState(fileId: string): void {
+    this.binaryIdCache.delete(fileId);
+    this.lastUpdateTimes.delete(fileId);
+    this.lastUpdateTimes.delete(`${fileId}-speed`);
+    if (this.lastIncomingCache?.fileId === fileId) {
+      this.lastIncomingCache = null;
+    }
+    // Clean localStorage salt (SEC-4)
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.removeItem(`lynkless-salt-${fileId}`);
+    }
   }
 
   constructor() {
@@ -269,11 +293,19 @@ class FileTransferManager {
     // Bolt: Startup Garbage Collector for OPFS
     this.cleanupOrphanedFiles();
 
-    // Buffer Pool: Prime with 8 slabs (544KB pre-allocated, scales up on demand)
-    for (let i = 0; i < 8; i++) {
+    // Buffer Pool: Prime with 4 slabs (reduced from 8 to lower baseline memory)
+    for (let i = 0; i < 4; i++) {
        this.bufferPool.push(new ArrayBuffer(HEADER_SIZE + CHUNK_SIZE));
     }
+
+    // LEAK-11: Clean up resources when page is unloaded
+    if (typeof window !== 'undefined') {
+      this.boundBeforeUnload = () => this.destroy();
+      window.addEventListener('beforeunload', this.boundBeforeUnload);
+    }
   }
+
+  private boundBeforeUnload: (() => void) | null = null;
 
   private handleWorkerMessage(e: MessageEvent): void {
     const msg = e.data;
@@ -551,8 +583,13 @@ class FileTransferManager {
       });
       console.log('[FileTransfer] Initialized Web Worker for OPFS stream operations.');
     } else {
-      console.warn('[FileTransfer] Web Workers or OPFS not supported, falling back to RAM buffer mapping...');
-      incomingState.chunks = new Array(metadata.totalChunks).fill(null);
+      console.warn('[FileTransfer] Web Workers or OPFS not supported, falling back to streaming RAM buffer...');
+      // LEAK-1 FIX: Use bounded pending buffer + Blob accumulation instead of full chunk array.
+      // Only keep RAM_FALLBACK_FLUSH_THRESHOLD chunks in memory at a time, then flush to a Blob part.
+      incomingState.blobParts = [];
+      incomingState.pendingChunks = new Array(RAM_FALLBACK_FLUSH_THRESHOLD).fill(null);
+      incomingState.pendingChunksCount = 0;
+      incomingState.totalReceivedBytes = 0;
     }
 
     this.incomingFiles.set(metadata.id, incomingState);
@@ -619,8 +656,13 @@ class FileTransferManager {
     const chunkIndex = view.getUint32(FILE_ID_SIZE, true);
     // Real data starts after header
     if (!incoming) {
-      // Buffer orphaned chunks if they arrive before file-meta (due to parallel channel striping)
+      // LEAK-5 FIX: Bound orphaned chunks to prevent memory exhaustion attacks
       if (!this.orphanedChunks.has(fileId)) {
+        // Enforce max distinct fileIds
+        if (this.orphanedChunks.size >= MAX_ORPHAN_FILEIDS) {
+          console.warn(`[FileTransfer] Too many orphaned fileIds (${this.orphanedChunks.size}), dropping chunk for ${fileId}`);
+          return;
+        }
         this.orphanedChunks.set(fileId, []);
         // Setup timeout to clear memory if file-meta never arrives
         setTimeout(() => {
@@ -628,9 +670,15 @@ class FileTransferManager {
             console.warn(`[FileTransfer] Dropping orphaned chunks for ${fileId} - file-meta never arrived`);
             this.orphanedChunks.delete(fileId);
           }
-        }, 15000); // 15 seconds wait time
+        }, 15000);
       }
-      this.orphanedChunks.get(fileId)!.push(data);
+      const orphanBuffer = this.orphanedChunks.get(fileId)!;
+      // Enforce max chunks per fileId
+      if (orphanBuffer.length >= MAX_ORPHAN_CHUNKS_PER_FILE) {
+        console.warn(`[FileTransfer] Orphan buffer full for ${fileId}, dropping oldest chunk`);
+        orphanBuffer.shift(); // Drop oldest to make room
+      }
+      orphanBuffer.push(data);
       return;
     }
 
@@ -649,12 +697,31 @@ class FileTransferManager {
           data: data
         }
       }, [data]);
-    } else if (incoming.chunks && incoming.chunks[chunkIndex] === null) {
-      // RAM Fallback: Store only the data part
+    } else if (incoming.pendingChunks) {
+      // LEAK-1 FIX: Streaming RAM fallback — bounded buffer with periodic Blob flush
       const chunkData = data.slice(HEADER_SIZE);
-      incoming.chunks[chunkIndex] = chunkData;
-      incoming.receivedChunks++;
-      incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, chunkIndex);
+      const bufferIndex = chunkIndex % RAM_FALLBACK_FLUSH_THRESHOLD;
+      
+      // Only store if slot is empty (dedup for tail redundancy)
+      if (incoming.pendingChunks[bufferIndex] === null) {
+        incoming.pendingChunks[bufferIndex] = chunkData;
+        incoming.pendingChunksCount = (incoming.pendingChunksCount || 0) + 1;
+        incoming.receivedChunks++;
+        incoming.lastReceivedIndex = Math.max(incoming.lastReceivedIndex, chunkIndex);
+        incoming.totalReceivedBytes = (incoming.totalReceivedBytes || 0) + chunkData.byteLength;
+
+        // SEC-3: Validate received bytes don't exceed declared file size (with tolerance)
+        if (incoming.totalReceivedBytes > incoming.metadata.size + CHUNK_SIZE) {
+          console.error(`[FileTransfer] Received bytes (${incoming.totalReceivedBytes}) exceed declared size (${incoming.metadata.size}). Aborting.`);
+          this.handleFileCancel(fileId);
+          return;
+        }
+
+        // Flush to Blob part when buffer is full
+        if (incoming.pendingChunksCount >= RAM_FALLBACK_FLUSH_THRESHOLD) {
+          this.flushPendingChunksToBlob(incoming);
+        }
+      }
       
       const transferredSize = incoming.receivedChunks * CHUNK_SIZE;
       this.notifyProgress(fileId, 'transferring', {
@@ -662,6 +729,26 @@ class FileTransferManager {
         resumable: true,
       });
     }
+  }
+
+  /**
+   * Flush pending RAM fallback chunks into a Blob part to release memory.
+   * LEAK-1 FIX: This keeps peak memory bounded to RAM_FALLBACK_FLUSH_THRESHOLD * CHUNK_SIZE.
+   */
+  private flushPendingChunksToBlob(incoming: IncomingTransferState): void {
+    if (!incoming.pendingChunks) return;
+    // Collect non-null chunks in order
+    const parts: ArrayBuffer[] = [];
+    for (let i = 0; i < incoming.pendingChunks.length; i++) {
+      if (incoming.pendingChunks[i] !== null) {
+        parts.push(incoming.pendingChunks[i]!);
+        incoming.pendingChunks[i] = null; // Release reference immediately
+      }
+    }
+    if (parts.length > 0) {
+      incoming.blobParts!.push(new Blob(parts));
+    }
+    incoming.pendingChunksCount = 0;
   }
 
   private async handleFileComplete(fileId: string): Promise<void> {
@@ -672,17 +759,21 @@ class FileTransferManager {
       this.worker.postMessage({ type: 'complete', fileId });
       // The finalization blob grab happens async in finalizeDownload 
     } else {
-      const validChunks = (incoming.chunks || []) as ArrayBuffer[];
-      const blob = new Blob(validChunks, { type: incoming.metadata.type });
+      // LEAK-1 FIX: Build final blob from flushed parts + remaining pending chunks
+      if (incoming.pendingChunks) {
+        this.flushPendingChunksToBlob(incoming); // Flush any remaining
+      }
+      const blobParts = incoming.blobParts || [];
+      const blob = new Blob(blobParts, { type: incoming.metadata.type });
+      // Release blob parts references
+      incoming.blobParts = undefined;
+      incoming.pendingChunks = undefined;
       
       this.fileReceivedHandlers.forEach((h) => h(blob, incoming.metadata));
       this.notifyProgress(fileId, 'completed', { transferredSize: incoming.metadata.size });
       this.downloadFile(blob, incoming.metadata.name);
       this.incomingFiles.delete(fileId);
-      this.binaryIdCache.delete(fileId);
-      if (this.lastIncomingCache?.fileId === fileId) {
-        this.lastIncomingCache = null;
-      }
+      this.cleanupTransferState(fileId);
       // Release audio anchor if no more active transfers
       if (this.incomingFiles.size === 0 && this.outgoingTransfers.size === 0) {
         stopAudioAnchor();
@@ -776,13 +867,7 @@ class FileTransferManager {
     if (incoming) {
       // Find the first missing chunk after the sender's last known chunk
       let resumeFrom = message.lastChunkIndex;
-      if (incoming.chunks) {
-        while (resumeFrom < incoming.chunks.length && incoming.chunks[resumeFrom] !== null) {
-          resumeFrom++;
-        }
-      } else {
-        resumeFrom = Math.max(resumeFrom, incoming.lastReceivedIndex + 1);
-      }
+      resumeFrom = Math.max(resumeFrom, incoming.lastReceivedIndex + 1);
       
       this.webrtc.sendToPeer(peerId, JSON.stringify({
         type: 'file-resume-response',
@@ -1034,18 +1119,21 @@ class FileTransferManager {
         const validChunkView = new Uint8Array(transferBuffer, 0, HEADER_SIZE + rawChunk.length);
 
         // Dynamic High-Speed Backpressure
-        await this.webrtc.sendToPeer(peerId, validChunkView);
+        const sendPromises = [this.webrtc.sendToPeer(peerId, validChunkView)];
 
-          // 100% Polish: Tail Redundancy Strategy
-          // If we are in the final lap (last 2 chunks), broadcast them down all channels 
-          // to kill tail latency from a single slow SCTP stream.
-          const isFinalLap = (chunkIndex >= metadata.totalChunks - 2);
-          if (isFinalLap) {
-             this.webrtc.sendToPeer(peerId, validChunkView); 
-          }
+        // 100% Polish: Tail Redundancy Strategy
+        // If we are in the final lap (last 2 chunks), broadcast them down all channels 
+        // to kill tail latency from a single slow SCTP stream.
+        const isFinalLap = (chunkIndex >= metadata.totalChunks - 2);
+        if (isFinalLap) {
+           sendPromises.push(this.webrtc.sendToPeer(peerId, validChunkView)); 
+        }
 
-          // Buffer is not returned to pool here — the data channel may still be reading from it.
-          // Buffers are recycled via the worker's buffer-return message instead.
+        await Promise.all(sendPromises);
+
+        // LEAK-2 FIX: Return buffer to pool. WebRTC send() synchronously copies the ArrayBuffer 
+        // into its internal queue before returning, so it's safe to reuse it now.
+        this.bufferPool.push(transferBuffer);
 
           if (transfer) transfer.lastChunkIndex = chunkIndex;
           chunkIndex++;
@@ -1086,7 +1174,7 @@ class FileTransferManager {
         });
 
         this.outgoingTransfers.delete(fileId);
-        this.binaryIdCache.delete(fileId);
+        this.cleanupTransferState(fileId);
 
         // Release audio anchor if no more active transfers
         if (this.outgoingTransfers.size === 0) {
@@ -1368,14 +1456,37 @@ class FileTransferManager {
    * Download a file to the user's device
    */
   private downloadFile(blob: Blob, fileName: string): void {
+    // SEC-2: Sanitize filename to prevent path traversal and injection
+    const sanitized = this.sanitizeFilename(fileName);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = fileName;
+    a.download = sanitized;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  /**
+   * SEC-2: Sanitize filenames from remote peers to prevent injection attacks.
+   * Strips path separators, null bytes, and limits length.
+   */
+  private sanitizeFilename(name: string): string {
+    // Remove path separators and null bytes
+    let safe = name.replace(/[\\/:\*?"<>|\x00]/g, '_');
+    // Remove leading dots (hidden files on Unix)
+    safe = safe.replace(/^\.+/, '');
+    // Limit length (255 is typical FS limit)
+    if (safe.length > 200) {
+      const ext = safe.lastIndexOf('.');
+      if (ext > 0) {
+        safe = safe.substring(0, 196) + safe.substring(ext);
+      } else {
+        safe = safe.substring(0, 200);
+      }
+    }
+    return safe || 'download';
   }
 
   /**
@@ -1480,9 +1591,12 @@ class FileTransferManager {
         this.progressHandlers.forEach((handler) => handler(progress!));
       }
 
-      // Cleanup update time when finished
+      // LEAK-6 FIX: Cleanup update time AND speed entries when finished
       if (isFinalState) {
-        setTimeout(() => this.lastUpdateTimes.delete(fileId), 1000);
+        setTimeout(() => {
+          this.lastUpdateTimes.delete(fileId);
+          this.lastUpdateTimes.delete(`${fileId}-speed`);
+        }, 1000);
       }
     }
   }
@@ -1505,6 +1619,11 @@ class FileTransferManager {
     // Clear all diagnostic timeouts
     this.diagnosticTimeouts.forEach(timeout => clearTimeout(timeout));
     this.diagnosticTimeouts.clear();
+    // Release RAM fallback blob parts for any in-progress incoming transfers
+    this.incomingFiles.forEach((incoming) => {
+      incoming.blobParts = undefined;
+      incoming.pendingChunks = undefined;
+    });
     // Clear all state maps
     this.progressHandlers.clear();
     this.fileReceivedHandlers.clear();
@@ -1517,6 +1636,11 @@ class FileTransferManager {
     this.binaryIdCache.clear();
     this.lastIncomingCache = null;
     this.bufferPool.length = 0;
+    // LEAK-11: Remove beforeunload listener
+    if (typeof window !== 'undefined' && this.boundBeforeUnload) {
+      window.removeEventListener('beforeunload', this.boundBeforeUnload);
+      this.boundBeforeUnload = null;
+    }
     // Release system resources
     stopAudioAnchor();
     releaseWakeLock();

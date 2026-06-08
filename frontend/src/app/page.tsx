@@ -189,6 +189,14 @@ export default function Home() {
       autoAcceptedRef.current.clear();
       return;
     }
+    // LEAK-13 FIX: Clean up auto-accepted peers that are no longer in the room
+    const currentRoomUserIds = new Set(roomState.users.map(u => u.id));
+    for (const acceptedId of Array.from(autoAcceptedRef.current)) {
+      if (!currentRoomUserIds.has(acceptedId)) {
+        autoAcceptedRef.current.delete(acceptedId);
+      }
+    }
+
     incomingRequests.forEach(req => {
       if (autoAcceptedRef.current.has(req.fromId)) return;
       const isRoomMember = roomState.users.some(u => u.id === req.fromId);
@@ -403,6 +411,15 @@ export default function Home() {
 
   // Listen for incoming transfers to notify about encrypted files and trigger Haptics
   useEffect(() => {
+    // LEAK-12 FIX: Clean up notified transfers that are no longer in the active transfers list
+    const currentTransferIds = new Set(transfers.map(t => t.fileId));
+    for (const notifiedId of Array.from(notifiedTransfersRef.current)) {
+      const baseId = notifiedId.replace('-failed', '');
+      if (!currentTransferIds.has(baseId)) {
+        notifiedTransfersRef.current.delete(notifiedId);
+      }
+    }
+
     transfers.forEach(transfer => {
       if (transfer.status === 'completed' && transfer.type === 'incoming') {
         if (!notifiedTransfersRef.current.has(transfer.fileId)) {
