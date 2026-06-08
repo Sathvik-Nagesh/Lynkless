@@ -1,16 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useEngine } from '@/context/EngineContext';
 import {
-  getWebRTCManager,
   ConnectionState,
 } from '@/lib/webrtc/connection';
 import {
-  getFileTransferManager,
   TransferProgress
 } from '@/lib/webrtc/fileTransfer';
 import {
-  getChatManager,
   ChatMessage
 } from '@/lib/webrtc/chat';
 import { saveTransferHistory } from '@/lib/db/transferHistory';
@@ -67,9 +65,10 @@ export function useWebRTC(clientId: string | null): UseWebRTCReturn {
   const localSendersRef = useRef<Map<string, RTCRtpSender[]>>(new Map());
   const callSendersRef = useRef<Map<string, RTCRtpSender[]>>(new Map());
 
-  const webrtcRef = useRef(getWebRTCManager());
-  const fileTransferRef = useRef(getFileTransferManager());
-  const chatRef = useRef(getChatManager());
+  const engine = useEngine();
+  const webrtcRef = useRef(engine.webrtc);
+  const fileTransferRef = useRef(engine.fileTransfer);
+  const chatRef = useRef(engine.chat);
 
   useEffect(() => {
     if (clientId) {

@@ -3,7 +3,7 @@
  * Uses WebRTC getStats() API to measure connection quality
  */
 
-import { getWebRTCManager } from './connection';
+import { WebRTCManager } from './connection';
 
 export interface ConnectionStats {
   peerId: string;
@@ -21,11 +21,12 @@ export interface ConnectionStats {
 
 export type StatsHandler = (stats: ConnectionStats) => void;
 
-class ConnectionQualityManager {
-  private webrtc = getWebRTCManager();
+export class ConnectionQualityManager {
   private statsHandlers: Set<StatsHandler> = new Set();
   private pollingIntervals: Map<string, NodeJS.Timeout> = new Map();
   private previousStats: Map<string, { bytesReceived: number; bytesSent: number; timestamp: number }> = new Map();
+
+  constructor(private webrtc: WebRTCManager) {}
 
   /**
    * Start monitoring connection quality for a peer
@@ -247,12 +248,4 @@ class ConnectionQualityManager {
   }
 }
 
-// Singleton instance
-let connectionQualityManager: ConnectionQualityManager | null = null;
 
-export function getConnectionQualityManager(): ConnectionQualityManager {
-  if (!connectionQualityManager) {
-    connectionQualityManager = new ConnectionQualityManager();
-  }
-  return connectionQualityManager;
-}

@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, memo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getConnectionQualityManager, ConnectionStats } from '@/lib/webrtc/connectionQuality';
+import { ConnectionStats } from '@/lib/webrtc/connectionQuality';
+import { useEngine } from '@/context/EngineContext';
 
 interface ConnectionQualityDashboardProps {
   peerId: string;
@@ -28,8 +29,10 @@ export const ConnectionQualityDashboard = memo(function ConnectionQualityDashboa
   const [stats, setStats] = useState<ConnectionStats | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
 
+  const engine = useEngine();
+
   useEffect(() => {
-    const manager = getConnectionQualityManager();
+    const manager = engine.connectionQuality;
 
     const unsubscribe = manager.onStats((newStats) => {
       if (newStats.peerId === peerId) {
@@ -43,7 +46,7 @@ export const ConnectionQualityDashboard = memo(function ConnectionQualityDashboa
       unsubscribe();
       manager.stopMonitoring(peerId);
     };
-  }, [peerId]);
+  }, [peerId, engine]);
 
   const formatBandwidth = useCallback((bps: number): string => {
     if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`;

@@ -29,7 +29,7 @@ const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
     credential: 'openrelayproject'
   },
   { 
-    urls: 'turn:openrelay.metered.ca:443',
+    urls: 'turns:openrelay.metered.ca:443',
     username: 'openrelayproject',
     credential: 'openrelayproject'
   }
@@ -57,6 +57,9 @@ export interface PeerConnection {
   remoteSdp?: string;
   fingerprint?: string;
   initialNegotiationComplete: boolean;
+  makingOffer: boolean;
+  ignoreOffer: boolean;
+  isPolite: boolean;
 }
 
 export type DataHandler = (peerId: string, data: ArrayBuffer | string) => void;
@@ -64,7 +67,7 @@ export type StateChangeHandler = (peerId: string, state: ConnectionState) => voi
 export type FingerprintHandler = (peerId: string, fingerprint: string) => void;
 export type TrackHandler = (peerId: string, track: MediaStreamTrack, streams: readonly MediaStream[]) => void;
 
-class WebRTCManager {
+export class WebRTCManager {
   private peers: Map<string, PeerConnection> = new Map();
   private dataHandlers: Set<DataHandler> = new Set();
   private stateHandlers: Set<StateChangeHandler> = new Set();
@@ -102,6 +105,11 @@ class WebRTCManager {
           break;
         case 'ice-candidate':
           this.handleIceCandidate(message.fromId as string, message.candidate as RTCIceCandidateInit);
+          break;
+        case 'ice-candidates':
+          if (Array.isArray(message.candidates)) {
+            message.candidates.forEach(c => this.handleIceCandidate(message.fromId as string, c as RTCIceCandidateInit));
+          }
           break;
         case 'user-left':
           this.closePeerConnection(message.userId as string);
@@ -205,6 +213,17 @@ class WebRTCManager {
       // For renegotiation on an existing connection, reset tracking
       this.iceCandidateBuffer.set(fromId, []);
       this.remoteDescriptionSet.set(fromId, false);
+    }
+
+    const polite = peerConnection.isPolite;
+    
+    // Perfect Negotiation collision resolution
+    const offerCollision = offer.type === 'offer' && (peerConnection.makingOffer || peerConnection.connection.signalingState !== 'stable');
+    
+    peerConnection.ignoreOffer = !polite && offerCollision;
+    if (peerConnection.ignoreOffer) {
+      console.log('[WebRTC] Ignoring colliding offer from impolite peer', fromId);
+      return;
     }
 
     // Store remote SDP
@@ -312,16 +331,29 @@ class WebRTCManager {
       state: 'new',
       isNearby,
       initialNegotiationComplete: false,
+      makingOffer: false,
+      ignoreOffer: false,
+      isPolite: (this.signaling.getClientId() || '') > peerId,
     };
 
-    // ICE candidate handling
+    // ICE candidate handling with batching
+    let iceBatch: RTCIceCandidateInit[] = [];
+    let iceBatchTimer: ReturnType<typeof setTimeout> | null = null;
+    
     connection.onicecandidate = (event) => {
       if (event.candidate) {
-        this.signaling.send({
-          type: 'ice-candidate',
-          targetId: peerId,
-          candidate: event.candidate,
-        });
+        iceBatch.push(event.candidate);
+        if (!iceBatchTimer) {
+          iceBatchTimer = setTimeout(() => {
+            this.signaling.send({
+              type: 'ice-candidates',
+              targetId: peerId,
+              candidates: iceBatch,
+            });
+            iceBatch = [];
+            iceBatchTimer = null;
+          }, 50);
+        }
       }
     };
 
@@ -379,11 +411,13 @@ class WebRTCManager {
         return;
       }
       try {
-        // Debounce or catch stable state
-        if (connection.signalingState !== 'stable') return;
-
+        peerConnection.makingOffer = true;
         console.log('[WebRTC] Renegotiation needed for', peerId);
         const offer = await connection.createOffer();
+        
+        // Check signaling state again just in case it changed during createOffer
+        if (connection.signalingState !== 'stable') return;
+        
         await connection.setLocalDescription(offer);
         peerConnection.localSdp = offer.sdp;
         
@@ -395,6 +429,8 @@ class WebRTCManager {
         });
       } catch (err) {
         console.error('[WebRTC] onnegotiationneeded error:', err);
+      } finally {
+        peerConnection.makingOffer = false;
       }
     };
 
@@ -483,10 +519,22 @@ class WebRTCManager {
         channel.send(data as Parameters<RTCDataChannel['send']>[0]);
         return true;
       }
-    } catch (e: any) {
-      if (e.name === 'OperationError' || (e.message && e.message.includes('queue is full'))) {
+    } catch (e: unknown) {
+      const error = e as Error;
+      if (error.name === 'OperationError' || (error.message && error.message.includes('queue is full'))) {
         if (_retryCount < 5) {
-          await new Promise(r => setTimeout(r, 50 * (_retryCount + 1)));
+          // Dynamic backpressure wait if queue is unexpectedly full
+          await new Promise<void>((resolve) => {
+            const onLow = () => {
+              channel.removeEventListener('bufferedamountlow', onLow);
+              resolve();
+            };
+            channel.addEventListener('bufferedamountlow', onLow);
+            setTimeout(() => {
+              channel.removeEventListener('bufferedamountlow', onLow);
+              resolve();
+            }, 100);
+          });
           return this.sendToPeer(peerId, data, _retryCount + 1);
         }
         console.error('[WebRTC] Send queue permanently full after 5 retries, dropping chunk');
@@ -733,15 +781,7 @@ class WebRTCManager {
   }
 }
 
-// Singleton instance
-let webRTCManager: WebRTCManager | null = null;
 
-export function getWebRTCManager(): WebRTCManager {
-  if (!webRTCManager) {
-    webRTCManager = new WebRTCManager();
-  }
-  return webRTCManager;
-}
 
 export function createWebRTCManager(): WebRTCManager {
   return new WebRTCManager();

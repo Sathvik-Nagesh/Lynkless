@@ -4,7 +4,7 @@
  * Supports automatic resume on reconnection
  */
 
-import { getWebRTCManager } from './connection';
+import { WebRTCManager } from './connection';
 
 /**
  * Generate UUID - browser-safe implementation
@@ -208,8 +208,7 @@ interface IncomingTransferState {
   metaReceivedViaP2P?: boolean; // Track redundant metadata
 }
 
-class FileTransferManager {
-  private webrtc = getWebRTCManager();
+export class FileTransferManager {
   private progressHandlers: Set<ProgressHandler> = new Set();
   private fileReceivedHandlers: Set<FileReceivedHandler> = new Set();
   private meshProgressHandlers: Set<MeshProgressHandler> = new Set();
@@ -259,7 +258,7 @@ class FileTransferManager {
     }
   }
 
-  constructor() {
+  constructor(private webrtc: WebRTCManager) {
     this.setupDataHandler();
     this.setupConnectionMonitor();
 
@@ -1686,15 +1685,7 @@ class FileTransferManager {
   }
 }
 
-// Singleton instance
-let fileTransferManager: FileTransferManager | null = null;
 
-export function getFileTransferManager(): FileTransferManager {
-  if (!fileTransferManager) {
-    fileTransferManager = new FileTransferManager();
-  }
-  return fileTransferManager;
-}
 
 export { CHUNK_SIZE, MAX_FILE_SIZE };
 

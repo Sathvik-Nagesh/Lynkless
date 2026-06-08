@@ -100,7 +100,17 @@ const TransferProgress = memo(function TransferProgress({ transfer, onCancel, on
       if (pctEl) pctEl.textContent = `${clampedProgress.toFixed(1)}%`;
       if (timeEl) timeEl.textContent = formatTime(transfer.remainingTime);
     }
-  }, [transfer]);
+  }, [transfer, clampedProgress]);
+
+  // Cleanup PiP window to prevent detached DOM memory leaks
+  useEffect(() => {
+    return () => {
+      if (pipWindowRef.current) {
+        pipWindowRef.current.close();
+        pipWindowRef.current = null;
+      }
+    };
+  }, []);
 
   return (
     <motion.div

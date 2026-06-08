@@ -3,22 +3,8 @@
  * Handles real-time messaging over WebRTC DataChannel
  */
 
-import { getWebRTCManager } from './connection';
-
-/**
- * Generate UUID - browser-safe implementation
- */
-function generateUUID(): string {
-  if (typeof window !== 'undefined' && window.crypto && window.crypto.randomUUID) {
-    return window.crypto.randomUUID();
-  }
-  // Fallback UUID generation
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
+import { WebRTCManager } from './connection';
+import { generateUUID } from '@/lib/utils/crypto';
 
 export interface ChatMessage {
   id: string;
@@ -37,13 +23,12 @@ interface ChatPayload {
   timestamp: number;
 }
 
-class ChatManager {
-  private webrtc = getWebRTCManager();
+export class ChatManager {
   private messageHandlers: Set<ChatMessageHandler> = new Set();
   private cleanupHandler: (() => void) | null = null;
   private clientId: string | null = null;
 
-  constructor() {
+  constructor(private webrtc: WebRTCManager) {
     this.setupDataHandler();
   }
 
@@ -143,12 +128,4 @@ class ChatManager {
   }
 }
 
-// Singleton instance
-let chatManager: ChatManager | null = null;
 
-export function getChatManager(): ChatManager {
-  if (!chatManager) {
-    chatManager = new ChatManager();
-  }
-  return chatManager;
-}

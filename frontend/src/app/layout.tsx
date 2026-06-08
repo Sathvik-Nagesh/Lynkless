@@ -5,6 +5,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ToastProvider } from "@/components/ToastProvider";
 import { ThemeProvider } from "@/lib/utils/theme";
 import { Analytics } from "@vercel/analytics/next";
+import { EngineProvider } from "@/context/EngineContext";
 
 const inter = Inter({ 
   subsets: ["latin"],
@@ -49,7 +50,9 @@ export default function RootLayout({
         <ThemeProvider>
           <ErrorBoundary>
             <ToastProvider>
-              {children}
+              <EngineProvider>
+                {children}
+              </EngineProvider>
             </ToastProvider>
           </ErrorBoundary>
         </ThemeProvider>

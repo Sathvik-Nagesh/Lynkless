@@ -235,7 +235,7 @@ export function useSignaling(): UseSignalingReturn {
         setNearbyPeers([]);
         break;
     }
-  }, [updatePeerState, removePeerState]);
+  }, [updatePeerState, removePeerState, clientId]);
 
   const connect = useCallback(async () => {
     try {
