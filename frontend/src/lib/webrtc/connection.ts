@@ -165,20 +165,8 @@ export class WebRTCManager {
     // Keep legacy dataChannel ref pointing to channel 0 for compatibility
     peerConnection.dataChannel = peerConnection.dataChannels[0] ?? null;
 
-    // Create and send offer
-    const offer = await peerConnection.connection.createOffer();
-    await peerConnection.connection.setLocalDescription(offer);
-
-    // Store local SDP for fingerprint generation
-    peerConnection.localSdp = offer.sdp;
+    // Enable onnegotiationneeded to take over and create the offer
     peerConnection.initialNegotiationComplete = true;
-
-    this.signaling.send({
-      type: 'offer',
-      targetId: peerId,
-      offer: peerConnection.connection.localDescription,
-      isNearby: isNearby,
-    });
   }
 
   /**
