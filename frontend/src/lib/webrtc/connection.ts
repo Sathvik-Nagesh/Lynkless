@@ -7,7 +7,6 @@ import { getSignalingClient, SignalingMessage } from '../socket/client';
 import { generateSimpleFingerprint, storeFingerprint, clearFingerprint } from './fingerprint';
 
 // STUN/TURN servers for NAT traversal
-// Allow users to provide their own TURN/STUN servers via env variables if needed
 const customIceServersStr = process.env.NEXT_PUBLIC_ICE_SERVERS;
 let customIceServers: RTCIceServer[] = [];
 try {
@@ -18,21 +17,20 @@ try {
   console.warn('Failed to parse NEXT_PUBLIC_ICE_SERVERS, ignoring.');
 }
 
-// Default STUN servers (Google's are very reliable for most connections)
-// Added OpenRelay TURN servers as a fallback to guarantee demo success on strict University/Enterprise Wi-Fi (Symmetric NAT)
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  { 
+  { urls: 'stun:stun2.l.google.com:19302' },
+  {
     urls: 'turn:openrelay.metered.ca:80',
     username: 'openrelayproject',
-    credential: 'openrelayproject'
+    credential: 'openrelayproject',
   },
-  { 
+  {
     urls: 'turns:openrelay.metered.ca:443',
     username: 'openrelayproject',
-    credential: 'openrelayproject'
-  }
+    credential: 'openrelayproject',
+  },
 ];
 
 const ICE_SERVERS: RTCConfiguration = {
@@ -42,21 +40,21 @@ const ICE_SERVERS: RTCConfiguration = {
 
 export type ConnectionState = 'new' | 'connecting' | 'connected' | 'disconnected' | 'failed';
 
-// Number of parallel data channels to open for higher throughput (RAID-0 style striping)
+// 4 parallel data channels for high throughput
 const PARALLEL_CHANNELS = 4;
 
 export interface PeerConnection {
   peerId: string;
   connection: RTCPeerConnection;
   dataChannel: RTCDataChannel | null;
-  dataChannels: RTCDataChannel[];  // Parallel channels for high-throughput transfers
-  channelsSendIndex: number;       // Round-robin index for chunk striping
+  dataChannels: RTCDataChannel[];
+  channelsSendIndex: number;
   state: ConnectionState;
   isNearby: boolean;
   localSdp?: string;
   remoteSdp?: string;
   fingerprint?: string;
-  initialNegotiationComplete: boolean;
+  // Perfect Negotiation state
   makingOffer: boolean;
   ignoreOffer: boolean;
   isPolite: boolean;
@@ -78,7 +76,6 @@ export class WebRTCManager {
   private cleanupHandler: (() => void) | null = null;
   // Buffer ICE candidates that arrive before remote description is set
   private iceCandidateBuffer: Map<string, RTCIceCandidateInit[]> = new Map();
-  // Track whether remote description has been set for each peer
   private remoteDescriptionSet: Map<string, boolean> = new Map();
 
   private prewarmPCs: Set<RTCPeerConnection> = new Set();
@@ -86,8 +83,7 @@ export class WebRTCManager {
 
   constructor() {
     this.setupSignalingHandlers();
-    
-    // LEAK-11: Clean up WebRTC resources when page is unloaded
+
     if (typeof window !== 'undefined') {
       this.boundBeforeUnload = () => this.destroy();
       window.addEventListener('beforeunload', this.boundBeforeUnload);
@@ -98,17 +94,26 @@ export class WebRTCManager {
     this.cleanupHandler = this.signaling.on((message: SignalingMessage) => {
       switch (message.type) {
         case 'offer':
-          this.handleOffer(message.fromId as string, message.offer as RTCSessionDescriptionInit, message.isNearby as boolean ?? false);
+          this.handleOffer(
+            message.fromId as string,
+            message.offer as RTCSessionDescriptionInit,
+            (message.isNearby as boolean) ?? false,
+          );
           break;
         case 'answer':
           this.handleAnswer(message.fromId as string, message.answer as RTCSessionDescriptionInit);
           break;
         case 'ice-candidate':
-          this.handleIceCandidate(message.fromId as string, message.candidate as RTCIceCandidateInit);
+          this.handleIceCandidate(
+            message.fromId as string,
+            message.candidate as RTCIceCandidateInit,
+          );
           break;
         case 'ice-candidates':
           if (Array.isArray(message.candidates)) {
-            message.candidates.forEach(c => this.handleIceCandidate(message.fromId as string, c as RTCIceCandidateInit));
+            message.candidates.forEach((c) =>
+              this.handleIceCandidate(message.fromId as string, c as RTCIceCandidateInit),
+            );
           }
           break;
         case 'user-left':
@@ -122,25 +127,31 @@ export class WebRTCManager {
    * Flush buffered ICE candidates after remote description is set
    */
   private async flushIceCandidateBuffer(peerId: string): Promise<void> {
-    const buffered = this.iceCandidateBuffer.get(peerId);
-    if (buffered && buffered.length > 0) {
-      console.log(`[WebRTC] Flushing ${buffered.length} buffered ICE candidates for ${peerId}`);
-      for (const candidate of buffered) {
-        try {
-          const peer = this.peers.get(peerId);
-          if (peer) {
-            await peer.connection.addIceCandidate(candidate);
-          }
-        } catch (error) {
-          console.error('[WebRTC] Failed to add buffered ICE candidate:', error);
-        }
+    const buffered = this.iceCandidateBuffer.get(peerId) ?? [];
+    if (buffered.length === 0) return;
+
+    console.log(`[WebRTC] Flushing ${buffered.length} buffered ICE candidates for ${peerId}`);
+    this.iceCandidateBuffer.set(peerId, []); // Clear buffer before async loop to avoid double-adds
+
+    const peer = this.peers.get(peerId);
+    if (!peer) return;
+
+    for (const candidate of buffered) {
+      try {
+        await peer.connection.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (error) {
+        // Ignore errors for trickled candidates after connection is established
+        console.warn('[WebRTC] Skipped buffered ICE candidate:', error);
       }
-      this.iceCandidateBuffer.delete(peerId);
     }
   }
 
   /**
-   * Initiate connection to a peer
+   * Initiate connection to a peer (offerer side)
+   * 
+   * FIX: initialNegotiationComplete removed — we now always rely on onnegotiationneeded.
+   * The fix is to NOT gate onnegotiationneeded on any flag, and instead use
+   * makingOffer as the proper debounce per the Perfect Negotiation spec.
    */
   async connectToPeer(peerId: string, isNearby: boolean = false): Promise<void> {
     console.log('[WebRTC] Initiating connection to:', peerId);
@@ -151,83 +162,100 @@ export class WebRTCManager {
 
     const peerConnection = this.createPeerConnection(peerId, isNearby);
 
-    // Open PARALLEL_CHANNELS data channels for high-throughput striped transfer
+    // Open PARALLEL_CHANNELS data channels for high-throughput striped transfer.
+    // NOTE: createDataChannel triggers onnegotiationneeded — the handler will
+    //       create and send the offer automatically. We do NOT manually create
+    //       the offer here to avoid double-offers.
     console.log(`[WebRTC] Opening ${PARALLEL_CHANNELS} parallel data channels to ${peerId}`);
     for (let i = 0; i < PARALLEL_CHANNELS; i++) {
       const channelLabel = `lynkless-${i}`;
       const dataChannel = peerConnection.connection.createDataChannel(channelLabel, {
-        ordered: false, // Elimination of HOL Blocking (100% Performance)
-        maxRetransmits: undefined, // Still reliable, just unordered
+        ordered: false,      // Unordered for zero HOL-blocking
+        maxRetransmits: 30,  // Limited retransmits for reliability without ordering delay
       });
       this.setupDataChannel(peerId, dataChannel, i);
       peerConnection.dataChannels.push(dataChannel);
     }
-    // Keep legacy dataChannel ref pointing to channel 0 for compatibility
+    // Legacy compatibility ref
     peerConnection.dataChannel = peerConnection.dataChannels[0] ?? null;
-
-    // Enable onnegotiationneeded to take over and create the offer
-    peerConnection.initialNegotiationComplete = true;
   }
 
   /**
-   * Handle incoming offer from a peer
+   * Handle incoming offer from a peer (answerer side)
    */
-  private async handleOffer(fromId: string, offer: RTCSessionDescriptionInit, isNearby: boolean = false): Promise<void> {
+  private async handleOffer(
+    fromId: string,
+    offer: RTCSessionDescriptionInit,
+    isNearby: boolean = false,
+  ): Promise<void> {
     console.log('[WebRTC] Received offer from:', fromId, isNearby ? '(nearby)' : '(remote)');
 
     let peerConnection = this.peers.get(fromId);
-    
-    // If we don't have an existing connection, create one
+
     if (!peerConnection) {
-      // Initialize buffer and tracking for this peer
+      // First offer — create connection as answerer
       this.iceCandidateBuffer.set(fromId, []);
       this.remoteDescriptionSet.set(fromId, false);
       peerConnection = this.createPeerConnection(fromId, isNearby);
 
-      // Receiver: listen for incoming data channels and bucket them by label index
-      let channelCount = 0;
+      // Answerer side: receive data channels opened by offerer
       peerConnection.connection.ondatachannel = (event) => {
         const ch = event.channel;
-        // Extract channel index from label e.g. "lynkless-2" -> 2
         const labelIndex = parseInt(ch.label.split('-').pop() ?? '0', 10);
         const idx = isNaN(labelIndex) ? 0 : labelIndex;
         this.setupDataChannel(fromId, ch, idx);
         peerConnection!.dataChannels[idx] = ch;
         peerConnection!.dataChannel = peerConnection!.dataChannels[0] ?? ch;
-        channelCount++;
-        console.log(`[WebRTC] Received data channel ${ch.label} (${channelCount}/${PARALLEL_CHANNELS})`);
+        console.log(`[WebRTC] Received data channel: ${ch.label}`);
       };
-    } else {
-      // For renegotiation on an existing connection, reset tracking
-      this.iceCandidateBuffer.set(fromId, []);
-      this.remoteDescriptionSet.set(fromId, false);
     }
 
     const polite = peerConnection.isPolite;
-    
-    // Perfect Negotiation collision resolution
-    const offerCollision = offer.type === 'offer' && (peerConnection.makingOffer || peerConnection.connection.signalingState !== 'stable');
-    
+
+    // Perfect Negotiation: collision detection
+    const offerCollision =
+      offer.type === 'offer' &&
+      (peerConnection.makingOffer || peerConnection.connection.signalingState !== 'stable');
+
     peerConnection.ignoreOffer = !polite && offerCollision;
     if (peerConnection.ignoreOffer) {
-      console.log('[WebRTC] Ignoring colliding offer from impolite peer', fromId);
+      console.log('[WebRTC] Collision: impolite peer ignoring incoming offer from', fromId);
       return;
     }
 
-    // Store remote SDP
-    peerConnection.remoteSdp = offer.sdp;
+    // For polite peer during collision: rollback then accept
+    if (offerCollision && polite) {
+      console.log('[WebRTC] Collision: polite peer rolling back to accept offer from', fromId);
+      await peerConnection.connection.setLocalDescription({ type: 'rollback' });
+    }
 
-    await peerConnection.connection.setRemoteDescription(offer);
+    // Reset ICE buffer for this new negotiation round
+    this.iceCandidateBuffer.set(fromId, []);
+    this.remoteDescriptionSet.set(fromId, false);
+
+    try {
+      await peerConnection.connection.setRemoteDescription(new RTCSessionDescription(offer));
+    } catch (err) {
+      console.error('[WebRTC] setRemoteDescription(offer) failed:', err);
+      return;
+    }
+
     // Mark remote description as set and flush buffered candidates
     this.remoteDescriptionSet.set(fromId, true);
+    peerConnection.remoteSdp = offer.sdp;
     await this.flushIceCandidateBuffer(fromId);
 
-    const answer = await peerConnection.connection.createAnswer();
-    await peerConnection.connection.setLocalDescription(answer);
+    // Create and send answer
+    let answer: RTCSessionDescriptionInit;
+    try {
+      answer = await peerConnection.connection.createAnswer();
+      await peerConnection.connection.setLocalDescription(answer);
+    } catch (err) {
+      console.error('[WebRTC] createAnswer/setLocalDescription failed:', err);
+      return;
+    }
 
-    // Store local SDP and generate fingerprint
-    peerConnection.localSdp = answer.sdp;
-    peerConnection.initialNegotiationComplete = true;
+    peerConnection.localSdp = peerConnection.connection.localDescription?.sdp;
     await this.generateAndStoreFingerprint(fromId, peerConnection);
 
     this.signaling.send({
@@ -238,36 +266,47 @@ export class WebRTCManager {
   }
 
   /**
-   * Handle incoming answer from a peer
+   * Handle incoming answer from a peer (offerer side)
    */
   private async handleAnswer(fromId: string, answer: RTCSessionDescriptionInit): Promise<void> {
     console.log('[WebRTC] Received answer from:', fromId);
     const peer = this.peers.get(fromId);
-    if (peer) {
-      await peer.connection.setRemoteDescription(answer);
-      // Mark remote description as set and flush buffered candidates
-      this.remoteDescriptionSet.set(fromId, true);
-      peer.initialNegotiationComplete = true;
-      await this.flushIceCandidateBuffer(fromId);
-
-      // Store remote SDP and generate fingerprint
-      peer.remoteSdp = answer.sdp;
-      await this.generateAndStoreFingerprint(fromId, peer);
+    if (!peer) {
+      console.warn('[WebRTC] Received answer but no peer connection found for', fromId);
+      return;
     }
+
+    if (peer.connection.signalingState === 'stable') {
+      console.warn('[WebRTC] Received answer but already in stable state for', fromId, '— ignoring');
+      return;
+    }
+
+    try {
+      await peer.connection.setRemoteDescription(new RTCSessionDescription(answer));
+    } catch (err) {
+      console.error('[WebRTC] setRemoteDescription(answer) failed:', err);
+      return;
+    }
+
+    this.remoteDescriptionSet.set(fromId, true);
+    peer.remoteSdp = answer.sdp;
+    await this.flushIceCandidateBuffer(fromId);
+    await this.generateAndStoreFingerprint(fromId, peer);
   }
 
   /**
    * Generate and store connection fingerprint
    */
-  private async generateAndStoreFingerprint(peerId: string, peer: PeerConnection): Promise<void> {
+  private async generateAndStoreFingerprint(
+    peerId: string,
+    peer: PeerConnection,
+  ): Promise<void> {
     if (peer.localSdp && peer.remoteSdp) {
       try {
         const fingerprint = await generateSimpleFingerprint(peer.localSdp, peer.remoteSdp);
         peer.fingerprint = fingerprint;
         storeFingerprint(peerId, fingerprint);
-
-        // Notify handlers
-        this.fingerprintHandlers.forEach(handler => handler(peerId, fingerprint));
+        this.fingerprintHandlers.forEach((handler) => handler(peerId, fingerprint));
         console.log('[WebRTC] Generated fingerprint for', peerId, ':', fingerprint);
       } catch (error) {
         console.error('[WebRTC] Failed to generate fingerprint:', error);
@@ -276,34 +315,35 @@ export class WebRTCManager {
   }
 
   /**
-   * Handle incoming ICE candidate - buffer if remote description not yet set
+   * Handle incoming ICE candidate — buffer if remote description not yet set
    */
-  private async handleIceCandidate(fromId: string, candidate: RTCIceCandidateInit): Promise<void> {
+  private async handleIceCandidate(
+    fromId: string,
+    candidate: RTCIceCandidateInit,
+  ): Promise<void> {
     const peer = this.peers.get(fromId);
-    if (!peer || !candidate) return;
+    if (!peer || !candidate || !candidate.candidate) return;
 
-    // If remote description is not yet set, buffer the candidate
     if (!this.remoteDescriptionSet.get(fromId)) {
-      console.log('[WebRTC] Buffering ICE candidate for', fromId, '(remote description not set yet)');
-      const buffer = this.iceCandidateBuffer.get(fromId) || [];
+      const buffer = this.iceCandidateBuffer.get(fromId) ?? [];
       buffer.push(candidate);
       this.iceCandidateBuffer.set(fromId, buffer);
       return;
     }
 
-    // Remote description is set, add candidate directly
     try {
-      await peer.connection.addIceCandidate(candidate);
+      await peer.connection.addIceCandidate(new RTCIceCandidate(candidate));
     } catch (error) {
-      console.error('[WebRTC] Failed to add ICE candidate:', error);
+      // Benign: can happen on offer-collision rollback
+      console.warn('[WebRTC] addIceCandidate failed (benign during rollback):', error);
     }
   }
 
   /**
-   * Create a new peer connection
+   * Create a new RTCPeerConnection with all event handlers
    */
   private createPeerConnection(peerId: string, isNearby: boolean): PeerConnection {
-    // Close existing connection if any
+    // Close existing connection cleanly before creating a new one
     if (this.peers.has(peerId)) {
       this.closePeerConnection(peerId);
     }
@@ -314,23 +354,26 @@ export class WebRTCManager {
       peerId,
       connection,
       dataChannel: null,
-      dataChannels: [],           // Will be populated after offer/answer
-      channelsSendIndex: 0,       // Round-robin starting index
+      dataChannels: [],
+      channelsSendIndex: 0,
       state: 'new',
       isNearby,
-      initialNegotiationComplete: false,
       makingOffer: false,
       ignoreOffer: false,
-      isPolite: (this.signaling.getClientId() || '') > peerId,
+      // Politeness: higher string ID is polite (deterministic)
+      isPolite: (this.signaling.getClientId() ?? '') > peerId,
     };
 
-    // ICE candidate handling with batching
+    // Store IMMEDIATELY so handlers can look up this peer during async negotiation
+    this.peers.set(peerId, peerConnection);
+
+    // --- ICE Candidate batching ---
     let iceBatch: RTCIceCandidateInit[] = [];
     let iceBatchTimer: ReturnType<typeof setTimeout> | null = null;
-    
+
     connection.onicecandidate = (event) => {
       if (event.candidate) {
-        iceBatch.push(event.candidate);
+        iceBatch.push(event.candidate.toJSON());
         if (!iceBatchTimer) {
           iceBatchTimer = setTimeout(() => {
             this.signaling.send({
@@ -342,73 +385,88 @@ export class WebRTCManager {
             iceBatchTimer = null;
           }, 50);
         }
+      } else {
+        // End of candidates — flush any remaining batch immediately
+        if (iceBatch.length > 0 && iceBatchTimer) {
+          clearTimeout(iceBatchTimer);
+          iceBatchTimer = null;
+          this.signaling.send({
+            type: 'ice-candidates',
+            targetId: peerId,
+            candidates: iceBatch,
+          });
+          iceBatch = [];
+        }
       }
     };
 
-    // Log ICE gathering state for debugging
     connection.onicegatheringstatechange = () => {
       console.log('[WebRTC] ICE gathering state for', peerId, ':', connection.iceGatheringState);
     };
 
-    // Log ICE connection state for debugging
     connection.oniceconnectionstatechange = () => {
       console.log('[WebRTC] ICE connection state for', peerId, ':', connection.iceConnectionState);
 
-      // EDGE CASE #1: ICE Restarts (Network Hopping)
-      // When a user walks out the door and switches from WiFi to 5G, ICE disconnects.
-      // We trigger a restart immediately to gracefully recover the data channel without destroying logic.
       if (connection.iceConnectionState === 'disconnected') {
-        console.log('[WebRTC] ICE disconnected for', peerId, '- scheduling restart');
-        // Wait briefly for transient disconnects before restarting
         setTimeout(() => {
-          if (connection.iceConnectionState === 'disconnected' || connection.iceConnectionState === 'failed') {
-            console.log('[WebRTC] ICE still disconnected, performing restart for', peerId);
+          if (
+            connection.iceConnectionState === 'disconnected' ||
+            connection.iceConnectionState === 'failed'
+          ) {
+            console.log('[WebRTC] ICE still disconnected — restarting ICE for', peerId);
             connection.restartIce();
           }
         }, 2000);
       } else if (connection.iceConnectionState === 'failed') {
-        console.log('[WebRTC] ICE failed for', peerId, '- immediate restart');
+        console.log('[WebRTC] ICE failed for', peerId, '— immediate restart');
         connection.restartIce();
       }
     };
 
-    // Connection state changes
     connection.onconnectionstatechange = () => {
       const state = this.mapConnectionState(connection.connectionState);
       peerConnection.state = state;
       this.notifyStateChange(peerId, state);
 
       if (state === 'connected') {
-        console.log('[WebRTC] Successfully connected to', peerId);
-        this.checkIfRelay(peerId); // EDGE CASE #4: Detect TURN Relays
+        console.log('[WebRTC] ✅ Successfully connected to', peerId);
+        this.checkIfRelay(peerId);
       } else if (state === 'failed' || state === 'disconnected') {
         console.log('[WebRTC] Connection to', peerId, 'is', state);
       }
     };
 
-    // Handle remote media tracks (Screen share, Video, Audio)
     connection.ontrack = (event) => {
       console.log('[WebRTC] Received remote track from', peerId, event.track.kind);
       this.trackHandlers.forEach((handler) => handler(peerId, event.track, event.streams));
     };
 
-    // Handle renegotiation
+    // --- Perfect Negotiation: onnegotiationneeded ---
+    // This fires when createDataChannel() is called (offerer side).
+    // No gating flag — makingOffer acts as the proper debounce.
     connection.onnegotiationneeded = async () => {
-      if (!peerConnection.initialNegotiationComplete) {
-        // Ignoring negotiation needed during initial setup loop
+      // Debounce: if already making an offer, skip (browser will re-fire if still needed)
+      if (peerConnection.makingOffer) {
+        console.log('[WebRTC] onnegotiationneeded: already making offer, skipping for', peerId);
         return;
       }
+
       try {
         peerConnection.makingOffer = true;
-        console.log('[WebRTC] Renegotiation needed for', peerId);
+        console.log('[WebRTC] Creating offer for', peerId, '(onnegotiationneeded)');
+
         const offer = await connection.createOffer();
-        
-        // Check signaling state again just in case it changed during createOffer
-        if (connection.signalingState !== 'stable') return;
-        
+
+        // Stability check: if state changed during async createOffer, bail
+        if (connection.signalingState !== 'have-local-offer' && connection.signalingState !== 'stable') {
+          console.warn('[WebRTC] signalingState changed during createOffer for', peerId, '— aborting');
+          return;
+        }
+
         await connection.setLocalDescription(offer);
-        peerConnection.localSdp = offer.sdp;
-        
+        peerConnection.localSdp = connection.localDescription?.sdp;
+
+        console.log('[WebRTC] Sending offer to', peerId);
         this.signaling.send({
           type: 'offer',
           targetId: peerId,
@@ -416,27 +474,30 @@ export class WebRTCManager {
           isNearby: peerConnection.isNearby,
         });
       } catch (err) {
-        console.error('[WebRTC] onnegotiationneeded error:', err);
+        console.error('[WebRTC] onnegotiationneeded error for', peerId, ':', err);
       } finally {
         peerConnection.makingOffer = false;
       }
     };
 
-    this.peers.set(peerId, peerConnection);
     return peerConnection;
   }
 
   /**
    * Setup data channel event handlers
    */
-  private setupDataChannel(peerId: string, channel: RTCDataChannel, channelIndex: number = 0): void {
+  private setupDataChannel(
+    peerId: string,
+    channel: RTCDataChannel,
+    channelIndex: number = 0,
+  ): void {
     channel.binaryType = 'arraybuffer';
-    channel.bufferedAmountLowThreshold = 512 * 1024; // 512KB
+    channel.bufferedAmountLowThreshold = 512 * 1024; // 512 KB
 
     channel.onopen = () => {
-      console.log(`[WebRTC] Data channel [${channel.label}] opened with: ${peerId}`);
+      console.log(`[WebRTC] ✅ Data channel [${channel.label}] opened with: ${peerId}`);
       const peer = this.peers.get(peerId);
-      // Only notify 'connected' when the FIRST channel (index 0) opens
+      // Notify 'connected' when the FIRST channel (index 0) opens
       if (peer && channelIndex === 0) {
         peer.state = 'connected';
         this.notifyStateChange(peerId, 'connected');
@@ -446,7 +507,6 @@ export class WebRTCManager {
     channel.onclose = () => {
       console.log(`[WebRTC] Data channel [${channel.label}] closed with: ${peerId}`);
       const peer = this.peers.get(peerId);
-      // Only notify 'disconnected' when the primary channel (index 0) closes
       if (peer && channelIndex === 0) {
         peer.state = 'disconnected';
         this.notifyStateChange(peerId, 'disconnected');
@@ -457,37 +517,48 @@ export class WebRTCManager {
       this.notifyDataReceived(peerId, event.data);
     };
 
-    channel.onerror = () => {
+    channel.onerror = (err) => {
       if (channel.readyState === 'open' || channel.readyState === 'connecting') {
-        return; // Spurious error, channel is fine
+        return; // Spurious error on some browsers; channel is fine
       }
-      console.warn('[WebRTC] Data channel error for peer:', peerId, 'channel:', channel.label, 'state:', channel.readyState);
+      console.warn(
+        '[WebRTC] Data channel error:',
+        peerId,
+        channel.label,
+        channel.readyState,
+        err,
+      );
     };
   }
 
   /**
-   * Send data to a specific peer (with backpressure support)
+   * Send data to a specific peer with load-balanced round-robin + backpressure
    */
-  async sendToPeer(peerId: string, data: string | ArrayBuffer | ArrayBufferView, _retryCount = 0): Promise<boolean> {
+  async sendToPeer(
+    peerId: string,
+    data: string | ArrayBuffer | ArrayBufferView,
+    _retryCount = 0,
+  ): Promise<boolean> {
     const peer = this.peers.get(peerId);
     if (!peer) return false;
 
-    // Pick the best available channel using round-robin striping across parallel channels
-    const openChannels = peer.dataChannels.filter(ch => ch.readyState === 'open');
-    
-    // Fall back to legacy single channel if parallel channels aren't ready yet
-    const channels = openChannels.length > 0 ? openChannels : 
-      (peer.dataChannel?.readyState === 'open' ? [peer.dataChannel] : []);
-    
+    const openChannels = peer.dataChannels.filter((ch) => ch.readyState === 'open');
+    const channels =
+      openChannels.length > 0
+        ? openChannels
+        : peer.dataChannel?.readyState === 'open'
+          ? [peer.dataChannel]
+          : [];
+
     if (channels.length === 0) return false;
 
-    // Round-robin: pick the channel with the least buffered data (load balancing)
-    const channel = channels.reduce((best, ch) => 
-      ch.bufferedAmount < best.bufferedAmount ? ch : best
-    , channels[0]);
+    // Pick channel with least buffered data
+    const channel = channels.reduce((best, ch) =>
+      ch.bufferedAmount < best.bufferedAmount ? ch : best,
+      channels[0],
+    );
 
-    // Backpressure: wait if the chosen channel's buffer is overwhelmed (~8MB for high-speed saturation)
-    // Liquid-Metal Backpressure: Tuned to 8MB to prevent Chrome's 16MB strict limit queue-full crashes
+    // Backpressure: wait if buffer is > 8 MB
     while (channel.bufferedAmount > 8 * 1024 * 1024) {
       await new Promise<void>((resolve) => {
         const onLow = () => {
@@ -498,7 +569,7 @@ export class WebRTCManager {
         setTimeout(() => {
           channel.removeEventListener('bufferedamountlow', onLow);
           resolve();
-        }, 100); // Shorter fallback timeout to keep throughput high
+        }, 100);
       });
     }
 
@@ -509,9 +580,11 @@ export class WebRTCManager {
       }
     } catch (e: unknown) {
       const error = e as Error;
-      if (error.name === 'OperationError' || (error.message && error.message.includes('queue is full'))) {
+      if (
+        error.name === 'OperationError' ||
+        (error.message && error.message.includes('queue is full'))
+      ) {
         if (_retryCount < 5) {
-          // Dynamic backpressure wait if queue is unexpectedly full
           await new Promise<void>((resolve) => {
             const onLow = () => {
               channel.removeEventListener('bufferedamountlow', onLow);
@@ -530,7 +603,7 @@ export class WebRTCManager {
       }
       console.error('[WebRTC] Data channel send error:', e);
     }
-    
+
     return false;
   }
 
@@ -549,8 +622,7 @@ export class WebRTCManager {
    * Get the raw RTCPeerConnection for a peer (used for getStats)
    */
   getPeerConnection(peerId: string): RTCPeerConnection | null {
-    const peer = this.peers.get(peerId);
-    return peer?.connection || null;
+    return this.peers.get(peerId)?.connection ?? null;
   }
 
   /**
@@ -559,10 +631,11 @@ export class WebRTCManager {
   closePeerConnection(peerId: string): void {
     const peer = this.peers.get(peerId);
     if (peer) {
-      // Close all parallel channels
-      peer.dataChannels.forEach(ch => { try { ch.close(); } catch { /* ignore */ } });
-      peer.dataChannel?.close();
-      peer.connection.close();
+      peer.dataChannels.forEach((ch) => {
+        try { ch.close(); } catch { /* ignore */ }
+      });
+      try { peer.dataChannel?.close(); } catch { /* ignore */ }
+      try { peer.connection.close(); } catch { /* ignore */ }
       this.peers.delete(peerId);
       this.iceCandidateBuffer.delete(peerId);
       this.remoteDescriptionSet.delete(peerId);
@@ -571,95 +644,55 @@ export class WebRTCManager {
     }
   }
 
-  /**
-   * Close all peer connections
-   */
   closeAllConnections(): void {
-    this.peers.forEach((_, peerId) => {
-      this.closePeerConnection(peerId);
-    });
+    this.peers.forEach((_, peerId) => this.closePeerConnection(peerId));
   }
 
-  /**
-   * Get all connected peers
-   */
   getConnectedPeers(): PeerConnection[] {
-    return Array.from(this.peers.values()).filter(
-      (peer) => peer.state === 'connected'
-    );
+    return Array.from(this.peers.values()).filter((peer) => peer.state === 'connected');
   }
 
-  /**
-   * Get peer by ID
-   */
   getPeer(peerId: string): PeerConnection | undefined {
     return this.peers.get(peerId);
   }
 
-  /**
-   * Get fingerprint for a peer
-   */
   getFingerprint(peerId: string): string | undefined {
     return this.peers.get(peerId)?.fingerprint;
   }
 
-  /**
-   * Register data handler
-   */
   onData(handler: DataHandler): () => void {
     this.dataHandlers.add(handler);
     return () => this.dataHandlers.delete(handler);
   }
 
-  /**
-   * Register state change handler
-   */
   onStateChange(handler: StateChangeHandler): () => void {
     this.stateHandlers.add(handler);
     return () => this.stateHandlers.delete(handler);
   }
 
-  /**
-   * Register relay mode handler
-   */
   onRelayMode(handler: (peerId: string, isRelay: boolean) => void): () => void {
     this.relayHandlers.add(handler);
     return () => this.relayHandlers.delete(handler);
   }
 
-  /**
-   * Register fingerprint handler
-   */
   onFingerprint(handler: FingerprintHandler): () => void {
     this.fingerprintHandlers.add(handler);
     return () => this.fingerprintHandlers.delete(handler);
   }
 
-  /**
-   * Register track handler
-   */
   onTrack(handler: TrackHandler): () => void {
     this.trackHandlers.add(handler);
     return () => this.trackHandlers.delete(handler);
   }
 
-  /**
-   * Add a MediaStreamTrack to a peer
-   */
   addTrack(peerId: string, track: MediaStreamTrack, stream: MediaStream): RTCRtpSender | null {
     const peer = this.peers.get(peerId);
     if (!peer) return null;
     return peer.connection.addTrack(track, stream);
   }
 
-  /**
-   * Remove a MediaStreamTrack from a peer
-   */
   removeTrack(peerId: string, sender: RTCRtpSender): void {
-    const peer = this.peers.get(peerId);
-    if (peer) {
-      peer.connection.removeTrack(sender);
-    }
+    this.peers.get(peerId)?.connection.removeTrack(sender);
   }
 
   private notifyDataReceived(peerId: string, data: ArrayBuffer | string): void {
@@ -672,24 +705,16 @@ export class WebRTCManager {
 
   private mapConnectionState(state: RTCPeerConnectionState): ConnectionState {
     switch (state) {
-      case 'new':
-        return 'new';
-      case 'connecting':
-        return 'connecting';
-      case 'connected':
-        return 'connected';
-      case 'disconnected':
-        return 'disconnected';
-      case 'failed':
-        return 'failed';
-      case 'closed':
-        return 'disconnected';
-      default:
-        return 'new';
+      case 'new': return 'new';
+      case 'connecting': return 'connecting';
+      case 'connected': return 'connected';
+      case 'disconnected': return 'disconnected';
+      case 'failed': return 'failed';
+      case 'closed': return 'disconnected';
+      default: return 'new';
     }
   }
 
-  // EDGE CASE #4: TURN Relay Detection
   private async checkIfRelay(peerId: string): Promise<void> {
     const peer = this.peers.get(peerId);
     if (!peer) return;
@@ -697,45 +722,44 @@ export class WebRTCManager {
     try {
       const stats = await peer.connection.getStats();
       let isRelay = false;
-      
-      stats.forEach(report => {
+
+      stats.forEach((report) => {
         if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) {
           const localCandidate = stats.get(report.localCandidateId);
           const remoteCandidate = stats.get(report.remoteCandidateId);
-          if (localCandidate?.candidateType === 'relay' || remoteCandidate?.candidateType === 'relay') {
+          if (
+            localCandidate?.candidateType === 'relay' ||
+            remoteCandidate?.candidateType === 'relay'
+          ) {
             isRelay = true;
           }
         }
       });
-      
+
       if (isRelay) {
-        console.warn(`[WebRTC] Strict Firewall Detected. Peer ${peerId} connected via TURN Relay.`);
+        console.warn(`[WebRTC] Peer ${peerId} connected via TURN relay (strict firewall detected).`);
       }
-      this.relayHandlers.forEach(handler => handler(peerId, isRelay));
+      this.relayHandlers.forEach((handler) => handler(peerId, isRelay));
     } catch (err) {
-      console.log('Failed to check relay stat', err);
+      console.warn('[WebRTC] Failed to check relay stats:', err);
     }
   }
 
-  /**
-   * Cleanup resources
-   */
   destroy(): void {
     this.closeAllConnections();
     if (this.cleanupHandler) {
       this.cleanupHandler();
+      this.cleanupHandler = null;
     }
-    this.prewarmPCs.forEach(pc => {
-      try { pc.close(); } catch {}
-    });
+    this.prewarmPCs.forEach((pc) => { try { pc.close(); } catch {} });
     this.prewarmPCs.clear();
-    
+
     this.dataHandlers.clear();
     this.stateHandlers.clear();
     this.fingerprintHandlers.clear();
     this.trackHandlers.clear();
     this.relayHandlers.clear();
-    
+
     if (typeof window !== 'undefined' && this.boundBeforeUnload) {
       window.removeEventListener('beforeunload', this.boundBeforeUnload);
       this.boundBeforeUnload = null;
@@ -743,33 +767,27 @@ export class WebRTCManager {
   }
 
   /**
-   * 120% Polish: Instant-Connect Pre-warming
-   * Triggers ICE gathering early so candidates are cached by the browser
+   * Pre-warm ICE candidates so the first connection is instant
    */
   prewarmICECandidates(): void {
     console.log('[WebRTC] Pre-warming ICE candidates...');
     const pc = new RTCPeerConnection(ICE_SERVERS);
     this.prewarmPCs.add(pc);
-    pc.onicecandidate = () => { /* gathering to cache in OS stack */ };
+    pc.onicecandidate = () => { /* gathering to warm the OS stack */ };
     pc.createDataChannel('prewarm');
-    pc.createOffer().then(offer => pc.setLocalDescription(offer)).catch(() => {});
-    // Close after 3s of gathering (enough for most environments)
-    setTimeout(() => { 
-      try { pc.close(); } catch {} 
+    pc.createOffer()
+      .then((offer) => pc.setLocalDescription(offer))
+      .catch(() => {});
+    setTimeout(() => {
+      try { pc.close(); } catch {}
       this.prewarmPCs.delete(pc);
     }, 3000);
   }
-  /**
-   * Get the current state of a peer connection
-   */
+
   getPeerState(peerId: string): ConnectionState {
-    const peer = this.peers.get(peerId);
-    if (!peer) return 'disconnected';
-    return peer.state;
+    return this.peers.get(peerId)?.state ?? 'disconnected';
   }
 }
-
-
 
 export function createWebRTCManager(): WebRTCManager {
   return new WebRTCManager();
