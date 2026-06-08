@@ -378,6 +378,10 @@ async function handleMessage(ws, message) {
       handleIceCandidate(ws, payload);
       break;
 
+    case 'ice-candidates':
+      handleIceCandidates(ws, payload);
+      break;
+
     case 'chat':
       handleChat(ws, payload);
       break;
@@ -713,6 +717,24 @@ function handleIceCandidate(ws, { targetId, candidate }) {
       type: 'ice-candidate',
       fromId: ws.clientId,
       candidate,
+    });
+  }
+}
+
+/**
+ * Handle bulk ICE candidates forwarding
+ */
+function handleIceCandidates(ws, { targetId, candidates }) {
+  const targetWs = clients.get(targetId);
+  if (!targetWs || !canSignalBetween(ws.clientId, targetId)) {
+    return;
+  }
+
+  if (targetWs) {
+    sendToClient(targetWs, {
+      type: 'ice-candidates',
+      fromId: ws.clientId,
+      candidates,
     });
   }
 }

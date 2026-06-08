@@ -89,9 +89,9 @@ export const ConnectionQualityDashboard = memo(function ConnectionQualityDashboa
                   height: `${level * 25}%`,
                   backgroundColor:
                     (stats.quality === 'excellent' && level <= 4) ||
-                    (stats.quality === 'good' && level <= 3) ||
-                    (stats.quality === 'fair' && level <= 2) ||
-                    (stats.quality === 'poor' && level <= 1)
+                      (stats.quality === 'good' && level <= 3) ||
+                      (stats.quality === 'fair' && level <= 2) ||
+                      (stats.quality === 'poor' && level <= 1)
                       ? qualityColor
                       : '#3f3f46',
                 }}
@@ -158,15 +158,14 @@ export const ConnectionQualityDashboard = memo(function ConnectionQualityDashboa
               <div className="pt-3 border-t border-[#27272a]">
                 <div className="flex justify-between text-xs mb-1">
                   <span className="text-[#71717a]">Connection Type</span>
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                    stats.connectionType === 'direct'
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${stats.connectionType === 'direct'
                       ? 'bg-green-500/10 text-green-400'
                       : stats.connectionType === 'relay'
-                      ? 'bg-orange-500/10 text-orange-400'
-                      : 'bg-[#27272a] text-[#a1a1aa]'
-                  }`}>
-                    {stats.connectionType === 'direct' ? 'Direct P2P' : 
-                     stats.connectionType === 'relay' ? 'TURN Relay' : 'Unknown'}
+                        ? 'bg-orange-500/10 text-orange-400'
+                        : 'bg-[#27272a] text-[#a1a1aa]'
+                    }`}>
+                    {stats.connectionType === 'direct' ? 'Direct P2P' :
+                      stats.connectionType === 'relay' ? 'TURN Relay' : 'Unknown'}
                   </span>
                 </div>
               </div>
