@@ -394,6 +394,10 @@ async function handleMessage(ws, message) {
       handleGetNearby(ws);
       break;
 
+    case 'ping':
+      sendToClient(ws, { type: 'pong' });
+      break;
+
     default:
       sendToClient(ws, {
         type: 'error',

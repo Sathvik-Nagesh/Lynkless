@@ -67,6 +67,11 @@ class NotificationSounds {
 
   private playTone(frequency: number, duration: number, type: OscillatorType = 'sine') {
     if (!this.audioContext) return;
+    
+    // Suppress warning if audio context is not allowed to start yet
+    if (this.audioContext.state === 'suspended') {
+      return;
+    }
 
     const oscillator = this.audioContext.createOscillator();
     const gainNode = this.audioContext.createGain();
