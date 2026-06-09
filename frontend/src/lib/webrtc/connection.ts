@@ -18,20 +18,43 @@ try {
 }
 
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
+  // STUN servers
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+  // TURN via UDP (fast but may be blocked by strict firewalls)
   {
     urls: 'turn:openrelay.metered.ca:80',
     username: 'openrelayproject',
     credential: 'openrelayproject',
   },
+  // TURN via TCP port 80 — passes through most firewalls that block UDP
+  {
+    urls: 'turn:openrelay.metered.ca:80?transport=tcp',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  // TURN via TCP port 443 — passes through even strict HTTPS-only firewalls
+  {
+    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  // TURNS (TLS) — encrypted relay, highest compatibility with corporate NATs
   {
     urls: 'turns:openrelay.metered.ca:443',
     username: 'openrelayproject',
     credential: 'openrelayproject',
   },
 ];
+
+// Relay-only ICE config used as a fallback when direct+STUN fails
+const RELAY_ONLY_ICE_SERVERS: RTCConfiguration = {
+  iceServers: customIceServers.length > 0 ? customIceServers : DEFAULT_ICE_SERVERS,
+  iceCandidatePoolSize: 5,
+  iceTransportPolicy: 'relay', // force TURN — skip all local/STUN candidates
+};
 
 const ICE_SERVERS: RTCConfiguration = {
   iceServers: customIceServers.length > 0 ? customIceServers : DEFAULT_ICE_SERVERS,
@@ -40,8 +63,9 @@ const ICE_SERVERS: RTCConfiguration = {
 
 export type ConnectionState = 'new' | 'connecting' | 'connected' | 'disconnected' | 'failed';
 
-// 4 parallel data channels for high throughput
-const PARALLEL_CHANNELS = 4;
+// 1 reliable data channel — multiple channels cause issues across asymmetric NAT.
+// Can be increased to 4 when both peers are on same LAN.
+const PARALLEL_CHANNELS = 1;
 
 export interface PeerConnection {
   peerId: string;
@@ -58,6 +82,9 @@ export interface PeerConnection {
   makingOffer: boolean;
   ignoreOffer: boolean;
   isPolite: boolean;
+  // Relay fallback: after ICE fails with normal config, retry with relay-only
+  relayFallbackAttempted: boolean;
+  iceFailCount: number;
 }
 
 export type DataHandler = (peerId: string, data: ArrayBuffer | string) => void;
@@ -361,127 +388,21 @@ export class WebRTCManager {
       makingOffer: false,
       ignoreOffer: false,
       // Politeness: higher string ID is polite (deterministic)
+      // Impolite peer = original offerer = owns ICE restart
       isPolite: (this.signaling.getClientId() ?? '') > peerId,
+      relayFallbackAttempted: false,
+      iceFailCount: 0,
     };
 
     // Store IMMEDIATELY so handlers can look up this peer during async negotiation
     this.peers.set(peerId, peerConnection);
 
-    // --- ICE Candidate batching ---
-    let iceBatch: RTCIceCandidateInit[] = [];
-    let iceBatchTimer: ReturnType<typeof setTimeout> | null = null;
-
-    connection.onicecandidate = (event) => {
-      if (event.candidate) {
-        iceBatch.push(event.candidate.toJSON());
-        if (!iceBatchTimer) {
-          iceBatchTimer = setTimeout(() => {
-            this.signaling.send({
-              type: 'ice-candidates',
-              targetId: peerId,
-              candidates: iceBatch,
-            });
-            iceBatch = [];
-            iceBatchTimer = null;
-          }, 50);
-        }
-      } else {
-        // End of candidates — flush any remaining batch immediately
-        if (iceBatch.length > 0 && iceBatchTimer) {
-          clearTimeout(iceBatchTimer);
-          iceBatchTimer = null;
-          this.signaling.send({
-            type: 'ice-candidates',
-            targetId: peerId,
-            candidates: iceBatch,
-          });
-          iceBatch = [];
-        }
-      }
-    };
-
-    connection.onicegatheringstatechange = () => {
-      console.log('[WebRTC] ICE gathering state for', peerId, ':', connection.iceGatheringState);
-    };
-
-    connection.oniceconnectionstatechange = () => {
-      console.log('[WebRTC] ICE connection state for', peerId, ':', connection.iceConnectionState);
-
-      if (connection.iceConnectionState === 'disconnected') {
-        setTimeout(() => {
-          if (
-            connection.iceConnectionState === 'disconnected' ||
-            connection.iceConnectionState === 'failed'
-          ) {
-            console.log('[WebRTC] ICE still disconnected — restarting ICE for', peerId);
-            connection.restartIce();
-          }
-        }, 2000);
-      } else if (connection.iceConnectionState === 'failed') {
-        console.log('[WebRTC] ICE failed for', peerId, '— immediate restart');
-        connection.restartIce();
-      }
-    };
-
-    connection.onconnectionstatechange = () => {
-      const state = this.mapConnectionState(connection.connectionState);
-      peerConnection.state = state;
-      this.notifyStateChange(peerId, state);
-
-      if (state === 'connected') {
-        console.log('[WebRTC] ✅ Successfully connected to', peerId);
-        this.checkIfRelay(peerId);
-      } else if (state === 'failed' || state === 'disconnected') {
-        console.log('[WebRTC] Connection to', peerId, 'is', state);
-      }
-    };
-
-    connection.ontrack = (event) => {
-      console.log('[WebRTC] Received remote track from', peerId, event.track.kind);
-      this.trackHandlers.forEach((handler) => handler(peerId, event.track, event.streams));
-    };
-
-    // --- Perfect Negotiation: onnegotiationneeded ---
-    // This fires when createDataChannel() is called (offerer side).
-    // No gating flag — makingOffer acts as the proper debounce.
-    connection.onnegotiationneeded = async () => {
-      // Debounce: if already making an offer, skip (browser will re-fire if still needed)
-      if (peerConnection.makingOffer) {
-        console.log('[WebRTC] onnegotiationneeded: already making offer, skipping for', peerId);
-        return;
-      }
-
-      try {
-        peerConnection.makingOffer = true;
-        console.log('[WebRTC] Creating offer for', peerId, '(onnegotiationneeded)');
-
-        const offer = await connection.createOffer();
-
-        // Stability check: if state changed during async createOffer, bail
-        if (connection.signalingState !== 'have-local-offer' && connection.signalingState !== 'stable') {
-          console.warn('[WebRTC] signalingState changed during createOffer for', peerId, '— aborting');
-          return;
-        }
-
-        await connection.setLocalDescription(offer);
-        peerConnection.localSdp = connection.localDescription?.sdp;
-
-        console.log('[WebRTC] Sending offer to', peerId);
-        this.signaling.send({
-          type: 'offer',
-          targetId: peerId,
-          offer: connection.localDescription,
-          isNearby: peerConnection.isNearby,
-        });
-      } catch (err) {
-        console.error('[WebRTC] onnegotiationneeded error for', peerId, ':', err);
-      } finally {
-        peerConnection.makingOffer = false;
-      }
-    };
+    // Attach all event handlers (shared with relay-only fallback path)
+    this.attachConnectionHandlers(peerId, peerConnection, connection);
 
     return peerConnection;
   }
+
 
   /**
    * Setup data channel event handlers
@@ -713,6 +634,191 @@ export class WebRTCManager {
       case 'closed': return 'disconnected';
       default: return 'new';
     }
+  }
+
+  /**
+   * ICE recovery strategy with relay-only fallback.
+   * - Attempt 1: restartIce() — fast, reuses same PeerConnection, tries new candidates
+   * - Attempt 2+: recreate PeerConnection with relay-only policy — forces TURN relay,
+   *   bypasses any broken local/STUN candidates (handles mobile data + WiFi cross-network)
+   */
+  private attemptIceRecovery(
+    peerId: string,
+    peerConnection: PeerConnection,
+    connection: RTCPeerConnection,
+  ): void {
+    const failCount = peerConnection.iceFailCount;
+
+    if (failCount <= 1 && !peerConnection.relayFallbackAttempted) {
+      // First failure: standard ICE restart (reuse same PeerConnection)
+      console.log('[WebRTC] ICE recovery attempt 1: restartIce() for', peerId);
+      connection.restartIce();
+    } else if (!peerConnection.relayFallbackAttempted) {
+      // Second failure: recreate with relay-only (force TURN, skip STUN)
+      peerConnection.relayFallbackAttempted = true;
+      console.log('[WebRTC] ICE recovery attempt 2: relay-only fallback for', peerId, '— creating new PeerConnection with iceTransportPolicy=relay');
+      this.reconnectPeerWithRelayOnly(peerId, peerConnection.isNearby);
+    } else {
+      // Already tried relay-only — notify user of permanent failure
+      console.error('[WebRTC] ICE permanently failed for', peerId, '— all recovery strategies exhausted');
+      this.notifyStateChange(peerId, 'failed');
+    }
+  }
+
+  /**
+   * Recreate peer connection with relay-only ICE policy.
+   * Called when direct P2P and STUN both fail — forces all traffic through TURN relay.
+   */
+  private async reconnectPeerWithRelayOnly(peerId: string, isNearby: boolean): Promise<void> {
+    console.log('[WebRTC] 🔄 Reconnecting', peerId, 'with relay-only ICE policy...');
+
+    // Close old connection cleanly (but DON'T notify disconnected — we're recovering)
+    const oldPeer = this.peers.get(peerId);
+    if (oldPeer) {
+      oldPeer.dataChannels.forEach((ch) => { try { ch.close(); } catch {} });
+      try { oldPeer.dataChannel?.close(); } catch {}
+      try { oldPeer.connection.close(); } catch {}
+      // Delete from map without notifying — we'll reconnect immediately
+      this.peers.delete(peerId);
+      this.iceCandidateBuffer.delete(peerId);
+      this.remoteDescriptionSet.delete(peerId);
+    }
+
+    // Create new PeerConnection with relay-only policy
+    const connection = new RTCPeerConnection(RELAY_ONLY_ICE_SERVERS);
+
+    const peerConnection: PeerConnection = {
+      peerId,
+      connection,
+      dataChannel: null,
+      dataChannels: [],
+      channelsSendIndex: 0,
+      state: 'connecting',
+      isNearby,
+      makingOffer: false,
+      ignoreOffer: false,
+      isPolite: (this.signaling.getClientId() ?? '') > peerId,
+      relayFallbackAttempted: true,
+      iceFailCount: 0,
+    };
+
+    this.peers.set(peerId, peerConnection);
+    this.iceCandidateBuffer.set(peerId, []);
+    this.remoteDescriptionSet.set(peerId, false);
+
+    // Re-attach all event handlers from the new connection
+    this.attachConnectionHandlers(peerId, peerConnection, connection);
+
+    // Open data channel and trigger new offer
+    const dataChannel = connection.createDataChannel('lynkless-0', {
+      ordered: false,
+      maxRetransmits: 30,
+    });
+    this.setupDataChannel(peerId, dataChannel, 0);
+    peerConnection.dataChannels[0] = dataChannel;
+    peerConnection.dataChannel = dataChannel;
+
+    // ondatachannel for when the new offer arrives at the other side
+    // (the other side will create a new peer connection via handleOffer)
+  }
+
+  /**
+   * Attach ICE, connection state, and negotiation event handlers to a connection.
+   * Extracted so it can be reused when creating relay-only fallback connections.
+   */
+  private attachConnectionHandlers(
+    peerId: string,
+    peerConnection: PeerConnection,
+    connection: RTCPeerConnection,
+  ): void {
+    let iceBatch: RTCIceCandidateInit[] = [];
+    let iceBatchTimer: ReturnType<typeof setTimeout> | null = null;
+
+    connection.onicecandidate = (event) => {
+      if (event.candidate) {
+        iceBatch.push(event.candidate.toJSON());
+        if (!iceBatchTimer) {
+          iceBatchTimer = setTimeout(() => {
+            this.signaling.send({ type: 'ice-candidates', targetId: peerId, candidates: iceBatch });
+            iceBatch = [];
+            iceBatchTimer = null;
+          }, 50);
+        }
+      } else {
+        if (iceBatch.length > 0 && iceBatchTimer) {
+          clearTimeout(iceBatchTimer);
+          iceBatchTimer = null;
+          this.signaling.send({ type: 'ice-candidates', targetId: peerId, candidates: iceBatch });
+          iceBatch = [];
+        }
+      }
+    };
+
+    connection.onicegatheringstatechange = () => {
+      console.log('[WebRTC] ICE gathering state for', peerId, ':', connection.iceGatheringState);
+    };
+
+    connection.oniceconnectionstatechange = () => {
+      console.log('[WebRTC] ICE connection state for', peerId, ':', connection.iceConnectionState);
+
+      if (connection.iceConnectionState === 'disconnected') {
+        setTimeout(() => {
+          if (
+            connection.iceConnectionState === 'disconnected' ||
+            connection.iceConnectionState === 'failed'
+          ) {
+            if (!peerConnection.isPolite) {
+              peerConnection.iceFailCount++;
+              this.attemptIceRecovery(peerId, peerConnection, connection);
+            }
+          }
+        }, 2000);
+      } else if (connection.iceConnectionState === 'failed') {
+        if (!peerConnection.isPolite) {
+          peerConnection.iceFailCount++;
+          this.attemptIceRecovery(peerId, peerConnection, connection);
+        }
+      }
+    };
+
+    connection.onconnectionstatechange = () => {
+      const state = this.mapConnectionState(connection.connectionState);
+      peerConnection.state = state;
+      this.notifyStateChange(peerId, state);
+
+      if (state === 'connected') {
+        console.log('[WebRTC] ✅ Successfully connected to', peerId, peerConnection.relayFallbackAttempted ? '(via TURN relay)' : '(direct)');
+        this.checkIfRelay(peerId);
+      } else if (state === 'failed') {
+        console.log('[WebRTC] Connection to', peerId, 'permanently failed');
+      }
+    };
+
+    connection.ontrack = (event) => {
+      this.trackHandlers.forEach((handler) => handler(peerId, event.track, event.streams));
+    };
+
+    connection.onnegotiationneeded = async () => {
+      if (peerConnection.makingOffer) return;
+      try {
+        peerConnection.makingOffer = true;
+        console.log('[WebRTC] Creating offer for', peerId, peerConnection.relayFallbackAttempted ? '(relay-only)' : '');
+        const offer = await connection.createOffer();
+        if (connection.signalingState !== 'have-local-offer' && connection.signalingState !== 'stable') return;
+        await connection.setLocalDescription(offer);
+        peerConnection.localSdp = connection.localDescription?.sdp;
+        this.signaling.send({
+          type: 'offer',
+          targetId: peerId,
+          offer: connection.localDescription,
+          isNearby: peerConnection.isNearby,
+        });
+      } catch (err) {
+        console.error('[WebRTC] onnegotiationneeded error:', err);
+      } finally {
+        peerConnection.makingOffer = false;
+      }
+    };
   }
 
   private async checkIfRelay(peerId: string): Promise<void> {
