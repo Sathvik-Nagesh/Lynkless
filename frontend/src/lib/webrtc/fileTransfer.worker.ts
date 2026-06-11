@@ -4,6 +4,8 @@ interface TransferMetadata {
   id: string;
   size: number;
   totalChunks: number;
+  salt?: string;
+  binaryId?: ArrayBuffer;
 }
 
 interface InitPayload {
@@ -40,25 +42,23 @@ interface WorkerTransferState {
 const fileHandles = new Map<string, FileSystemFileHandle>();
 const accessHandles = new Map<string, SyncHandle>();
 const metadataMap = new Map<string, WorkerTransferState>();
-const lastProgressUpdate = new Map<string, number>();
+/**
+ * Bolt: Single-slot cache for the most recent 'write' operation.
+ * Since chunks for a file typically arrive in long consecutive sequences,
+ * this bypasses expensive Map lookups in the high-frequency hot path.
+ */
+let lastWriteCache: {
+  fileId: string;
+  accessHandle: SyncHandle;
+  meta: WorkerTransferState;
+  expectedIdBuffer: Uint8Array;
+} | null = null;
 
-const PROGRESS_THROTTLE_MS = 100;
 const WORKER_CHUNK_SIZE = 64 * 1024; // 64KB - MUST match CHUNK_SIZE in fileTransfer.ts
 
 // Speed performance: Pre-allocate reusable buffers and encoders
 const encoder = new TextEncoder();
 const fileIdBufferMap = new Map<string, Uint8Array>();
-
-/**
- * Fast binary comparison for File IDs
- */
-function compareUint8Arrays(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
 
 const messageQueue: MessageEvent[] = [];
 let isProcessing = false;
@@ -95,11 +95,11 @@ async function handleMessage(e: MessageEvent) {
     try {
       const root = await navigator.storage.getDirectory();
       const fileId = metadata.id;
-      const salt = (metadata as any).salt || '';
+      const salt = metadata.salt || '';
       const opfsName = salt ? `lynkless-${fileId}-${salt}` : `lynkless-${fileId}`;
       
       // Cache binary File ID for fast comparison
-      const binaryId = (metadata as any).binaryId;
+      const binaryId = metadata.binaryId;
       if (binaryId) {
         fileIdBufferMap.set(fileId, new Uint8Array(binaryId));
       } else {
@@ -141,19 +141,39 @@ async function handleMessage(e: MessageEvent) {
     if (!payload) return;
     const { chunkIndex, data } = payload;
 
-    const accessHandle = accessHandles.get(msg.fileId);
-    const meta = metadataMap.get(msg.fileId);
-    const expectedIdBuffer = fileIdBufferMap.get(msg.fileId);
-    
-    if (accessHandle && meta && expectedIdBuffer && chunkIndex !== undefined && data) {
-      try {
-        // Fast binary header validation (CPU optimization)
-        const actualIdBuffer = new Uint8Array(data, 0, 16); // 16 = Compact FILE_ID_SIZE
-        if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
+    // Bolt: Use single-slot cache to bypass Map lookups for consecutive chunks
+    let cache = lastWriteCache;
+    if (!cache || cache.fileId !== msg.fileId) {
+      const accessHandle = accessHandles.get(msg.fileId);
+      const meta = metadataMap.get(msg.fileId);
+      const expectedIdBuffer = fileIdBufferMap.get(msg.fileId);
 
-        // Dedup: Skip if this chunk was already written (Tail Redundancy sends last chunks twice)
-        const byteIndex = Math.floor(chunkIndex / 8);
-        const bitMask = 1 << (chunkIndex % 8);
+      if (accessHandle && meta && expectedIdBuffer) {
+        cache = { fileId: msg.fileId, accessHandle, meta, expectedIdBuffer };
+        lastWriteCache = cache;
+      } else {
+        return;
+      }
+    }
+
+    const { accessHandle, meta, expectedIdBuffer } = cache;
+    
+    if (chunkIndex !== undefined && data) {
+      try {
+        // Bolt: Optimized 4x uint32 header comparison (O(1) vs O(N))
+        const view = new DataView(data);
+        const expectedView = new DataView(expectedIdBuffer.buffer, expectedIdBuffer.byteOffset, expectedIdBuffer.byteLength);
+
+        if (view.getUint32(0, true) !== expectedView.getUint32(0, true) ||
+            view.getUint32(4, true) !== expectedView.getUint32(4, true) ||
+            view.getUint32(8, true) !== expectedView.getUint32(8, true) ||
+            view.getUint32(12, true) !== expectedView.getUint32(12, true)) {
+          return;
+        }
+
+        // Bolt: Micro-optimized bitfield indexing using bitwise shifts
+        const byteIndex = chunkIndex >> 3; // Equivalent to Math.floor(chunkIndex / 8)
+        const bitMask = 1 << (chunkIndex & 7); // Equivalent to chunkIndex % 8
         if ((meta.receivedBitfield[byteIndex] & bitMask) !== 0) {
           // Still return the buffer for recycling
           self.postMessage({ 
@@ -165,8 +185,8 @@ async function handleMessage(e: MessageEvent) {
         }
         meta.receivedBitfield[byteIndex] |= bitMask;
 
-        // Direct Synchronous Write (Atomic and Safe for out-of-order)
-        const writeOffset = chunkIndex * 65536;
+        // Bolt: Use WORKER_CHUNK_SIZE constant for offset calculation
+        const writeOffset = chunkIndex * WORKER_CHUNK_SIZE;
         const chunkData = new Uint8Array(data, 20); // 20-byte header
         accessHandle.write(chunkData, { at: writeOffset });
         
@@ -180,8 +200,8 @@ async function handleMessage(e: MessageEvent) {
         }, [data]);
 
         const progressInt = Math.min(Math.floor((meta.receivedChunks / meta.totalChunks) * 100), 100);
-        if (progressInt > ((meta as any).lastReportedProgress || 0) || meta.receivedChunks === meta.totalChunks) {
-          (meta as any).lastReportedProgress = progressInt;
+        if (progressInt > meta.lastReportedProgress || meta.receivedChunks === meta.totalChunks) {
+          meta.lastReportedProgress = progressInt;
           self.postMessage({
             type: 'progress',
             fileId: msg.fileId,
@@ -190,11 +210,11 @@ async function handleMessage(e: MessageEvent) {
           });
         }
        } catch (err: unknown) {
-        const error = err as any;
-        let message = error?.message || 'Unknown worker write error';
+        const error = err as { name?: string; message?: string };
+        let message = error.message || 'Unknown worker write error';
         
         // DETECT STORAGE QUOTA EXCEEDED (Edge Case Part 2)
-        if (error?.name === 'QuotaExceededError' || message.includes('quota')) {
+        if (error.name === 'QuotaExceededError' || message.includes('quota')) {
           message = 'DISK_FULL';
         }
 
@@ -231,7 +251,9 @@ async function handleMessage(e: MessageEvent) {
       accessHandles.delete(msg.fileId);
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
-      lastProgressUpdate.delete(msg.fileId);
+      if (lastWriteCache?.fileId === msg.fileId) {
+        lastWriteCache = null;
+      }
     }
   }
   else if (msg.type === 'abort') {
@@ -250,7 +272,9 @@ async function handleMessage(e: MessageEvent) {
       accessHandles.delete(msg.fileId);
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
-      lastProgressUpdate.delete(msg.fileId);
+      if (lastWriteCache?.fileId === msg.fileId) {
+        lastWriteCache = null;
+      }
       
       self.postMessage({ type: 'abort-success', fileId: msg.fileId });
     }
