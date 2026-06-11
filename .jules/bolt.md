@@ -69,3 +69,7 @@
 ## 2026-06-15 - O(1) Cache for High-Frequency Binary Intake
 **Learning:** Even with optimized UUID conversion, performing `bytesToUuid` and `Map.get()` for every 64KB chunk in a high-speed transfer (e.g. 1Gbps+) consumes non-trivial CPU cycles and creates contention in the JS engine. Since chunks for a file typically arrive in long, consecutive sequences, a single-slot cache for the last active file state can bypass these operations entirely.
 **Action:** Implement a `lastIncomingCache` that stores the raw header bytes (as `uint32`) and the resolved `IncomingTransferState`. Compare the header of incoming chunks against this cache using four `uint32` checks via `DataView` to achieve a "fast-path" for consecutive chunks.
+
+## 2025-05-15 - O(1) Cache and Fast Header Validation in Web Workers
+**Learning:** High-frequency binary intake in a Web Worker (every 64KB chunk) can be bottlenecked by repetitive Map lookups and string/loop-based header comparisons. Since chunks for a single file usually arrive in long, consecutive sequences, a single-slot cache for the last active file state (metadata, access handles) can bypass these lookups entirely. Furthermore, comparing a 16-byte File ID using four `uint32` checks via `DataView` is significantly faster than byte-by-byte loops or string conversions.
+**Action:** Implement a `lastWriteCache` and use `DataView.getUint32` for atomic header validation in performance-critical worker paths.
