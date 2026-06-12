@@ -75,7 +75,6 @@ export default function Home() {
 
   const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
   const [isGlobalDragging, setIsGlobalDragging] = useState(false);
-  const [isFocusMode, setIsFocusMode] = useState(false);
   const dragCounter = useRef(0);
   const sounds = useRef(getSounds());
   const { showToast } = useToast();
@@ -135,9 +134,7 @@ export default function Home() {
     transfers.filter(t => t.status === 'transferring' || t.status === 'paused').length,
     [transfers]);
 
-  useEffect(() => {
-    setIsFocusMode(activeTransfersCount > 0);
-  }, [activeTransfersCount]);
+  const isFocusMode = activeTransfersCount > 0;
 
   useTransferProtection(activeTransfersCount);
 

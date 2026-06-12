@@ -44,6 +44,7 @@ const Radar = memo(function Radar({
   activeTransferPeerIds = []
 }: RadarProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationRef = useRef<number>(0);
   const angleRef = useRef(0);
 
@@ -59,6 +60,62 @@ const Radar = memo(function Radar({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Create offscreen canvas for background caching
+    if (!bgCanvasRef.current && typeof document !== 'undefined') {
+      bgCanvasRef.current = document.createElement('canvas');
+    }
+
+    const drawBackground = (size: number) => {
+      const bgCanvas = bgCanvasRef.current;
+      if (!bgCanvas) return;
+
+      const bgCtx = bgCanvas.getContext('2d');
+      if (!bgCtx) return;
+
+      const dpr = window.devicePixelRatio || 1;
+      bgCanvas.width = size * dpr;
+      bgCanvas.height = size * dpr;
+      bgCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const centerX = size / 2;
+      const centerY = size / 2;
+      const maxRadius = size / 2 - 20;
+
+      bgCtx.clearRect(0, 0, size, size);
+
+      // Draw background circles - thin, subtle lines
+      bgCtx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+      bgCtx.lineWidth = 1;
+
+      // Inner circle (nearby - matches 18% radius)
+      bgCtx.beginPath();
+      bgCtx.arc(centerX, centerY, size * 0.18, 0, Math.PI * 2);
+      bgCtx.stroke();
+
+      // Middle circle (remote - matches 38% radius)
+      bgCtx.beginPath();
+      bgCtx.arc(centerX, centerY, size * 0.38, 0, Math.PI * 2);
+      bgCtx.stroke();
+
+      // Outer circle (sweep limit)
+      bgCtx.beginPath();
+      bgCtx.arc(centerX, centerY, maxRadius, 0, Math.PI * 2);
+      bgCtx.stroke();
+
+      // Draw subtle grid lines
+      bgCtx.strokeStyle = '#27272a';
+      for (let i = 0; i < 8; i++) {
+        const angle = (Math.PI * 2 * i) / 8;
+        bgCtx.beginPath();
+        bgCtx.moveTo(centerX, centerY);
+        bgCtx.lineTo(
+          centerX + Math.cos(angle) * maxRadius,
+          centerY + Math.sin(angle) * maxRadius
+        );
+        bgCtx.stroke();
+      }
+    };
+
     // Responsive canvas sizing
     const resizeCanvas = () => {
       const size = Math.min(canvas.parentElement?.clientWidth || 400, 400);
@@ -68,6 +125,8 @@ const Radar = memo(function Radar({
       canvas.style.width = `${size}px`;
       canvas.style.height = `${size}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      drawBackground(size);
     };
     resizeCanvas();
 
@@ -85,36 +144,9 @@ const Radar = memo(function Radar({
 
       ctx.clearRect(0, 0, size, size);
 
-      // Draw background circles - thin, subtle lines
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
-      ctx.lineWidth = 1;
-
-      // Inner circle (nearby)
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, maxRadius * 0.4, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Middle circle
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, maxRadius * 0.7, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Outer circle (remote)
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, maxRadius, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Draw subtle grid lines
-      ctx.strokeStyle = '#27272a';
-      for (let i = 0; i < 8; i++) {
-        const angle = (Math.PI * 2 * i) / 8;
-        ctx.beginPath();
-        ctx.moveTo(centerX, centerY);
-        ctx.lineTo(
-          centerX + Math.cos(angle) * maxRadius,
-          centerY + Math.sin(angle) * maxRadius
-        );
-        ctx.stroke();
+      // Bolt: Draw cached background instead of re-calculating static elements every frame (~11 draw calls saved)
+      if (bgCanvasRef.current) {
+        ctx.drawImage(bgCanvasRef.current, 0, 0, size, size);
       }
 
       // Draw radar sweep - subtle gradient
@@ -155,12 +187,14 @@ const Radar = memo(function Radar({
 
            let userIndex = nearby.findIndex(u => u.id === peerId);
            if (userIndex !== -1) {
-              const posPercent = getUserPosition(userIndex, Math.max(nearby.length, 1), 40);
+              // Bolt: Use consistent radii (18% for nearby) to match React component positioning
+              const posPercent = getUserPosition(userIndex, Math.max(nearby.length, 1), 18);
               foundPos = { x: (posPercent.x / 100) * size, y: (posPercent.y / 100) * size };
            } else {
               userIndex = remote.findIndex(u => u.id === peerId);
               if (userIndex !== -1) {
-                 const posPercent = getUserPosition(userIndex, Math.max(remote.length, 1), 80);
+                 // Bolt: Use consistent radii (38% for remote) to match React component positioning
+                 const posPercent = getUserPosition(userIndex, Math.max(remote.length, 1), 38);
                  foundPos = { x: (posPercent.x / 100) * size, y: (posPercent.y / 100) * size };
               }
            }
@@ -327,8 +361,6 @@ const Radar = memo(function Radar({
     remoteUsersRef.current = remoteUsers;
     activeTransfersRef.current = activeTransferPeerIds;
   }, [allNearbyUsers, remoteUsers, activeTransferPeerIds]);
-
-  const hasAnyPeers = allNearbyUsers.length > 0 || remoteUsers.length > 0;
 
   return (
     <div className="relative w-full max-w-[400px] aspect-square mx-auto">
