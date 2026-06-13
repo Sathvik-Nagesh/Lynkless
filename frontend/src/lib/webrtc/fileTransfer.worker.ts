@@ -42,6 +42,14 @@ const accessHandles = new Map<string, SyncHandle>();
 const metadataMap = new Map<string, WorkerTransferState>();
 const lastProgressUpdate = new Map<string, number>();
 
+// Hot Path Cache: Avoids Map lookups for consecutive chunks of the same file
+let lastWriteCache: {
+  fileId: string;
+  meta: WorkerTransferState;
+  accessHandle: SyncHandle;
+  expectedIdBuffer: Uint8Array;
+} | null = null;
+
 const PROGRESS_THROTTLE_MS = 100;
 const WORKER_CHUNK_SIZE = 64 * 1024; // 64KB - MUST match CHUNK_SIZE in fileTransfer.ts
 
@@ -51,13 +59,15 @@ const fileIdBufferMap = new Map<string, Uint8Array>();
 
 /**
  * Fast binary comparison for File IDs
+ * Optimized with 4x uint32 checks via DataView for 16-byte UUIDs.
  */
-function compareUint8Arrays(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
+function compareFileIds(data: ArrayBuffer, expected: Uint8Array): boolean {
+  const v = new DataView(data);
+  const e = new DataView(expected.buffer, expected.byteOffset, expected.byteLength);
+  return v.getUint32(0, true) === e.getUint32(0, true) &&
+         v.getUint32(4, true) === e.getUint32(4, true) &&
+         v.getUint32(8, true) === e.getUint32(8, true) &&
+         v.getUint32(12, true) === e.getUint32(12, true);
 }
 
 const messageQueue: MessageEvent[] = [];
@@ -141,19 +151,34 @@ async function handleMessage(e: MessageEvent) {
     if (!payload) return;
     const { chunkIndex, data } = payload;
 
-    const accessHandle = accessHandles.get(msg.fileId);
-    const meta = metadataMap.get(msg.fileId);
-    const expectedIdBuffer = fileIdBufferMap.get(msg.fileId);
+    let accessHandle: SyncHandle | undefined;
+    let meta: WorkerTransferState | undefined;
+    let expectedIdBuffer: Uint8Array | undefined;
+
+    // Check hot path cache first
+    if (lastWriteCache && lastWriteCache.fileId === msg.fileId) {
+      accessHandle = lastWriteCache.accessHandle;
+      meta = lastWriteCache.meta;
+      expectedIdBuffer = lastWriteCache.expectedIdBuffer;
+    } else {
+      accessHandle = accessHandles.get(msg.fileId);
+      meta = metadataMap.get(msg.fileId);
+      expectedIdBuffer = fileIdBufferMap.get(msg.fileId);
+
+      // Update cache
+      if (accessHandle && meta && expectedIdBuffer) {
+        lastWriteCache = { fileId: msg.fileId, accessHandle, meta, expectedIdBuffer };
+      }
+    }
     
     if (accessHandle && meta && expectedIdBuffer && chunkIndex !== undefined && data) {
       try {
         // Fast binary header validation (CPU optimization)
-        const actualIdBuffer = new Uint8Array(data, 0, 16); // 16 = Compact FILE_ID_SIZE
-        if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
+        if (!compareFileIds(data, expectedIdBuffer)) return;
 
         // Dedup: Skip if this chunk was already written (Tail Redundancy sends last chunks twice)
-        const byteIndex = Math.floor(chunkIndex / 8);
-        const bitMask = 1 << (chunkIndex % 8);
+        const byteIndex = chunkIndex >> 3;
+        const bitMask = 1 << (chunkIndex & 7);
         if ((meta.receivedBitfield[byteIndex] & bitMask) !== 0) {
           // Still return the buffer for recycling
           self.postMessage({ 
@@ -232,6 +257,9 @@ async function handleMessage(e: MessageEvent) {
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
       lastProgressUpdate.delete(msg.fileId);
+      if (lastWriteCache?.fileId === msg.fileId) {
+        lastWriteCache = null;
+      }
     }
   }
   else if (msg.type === 'abort') {
@@ -251,6 +279,9 @@ async function handleMessage(e: MessageEvent) {
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
       lastProgressUpdate.delete(msg.fileId);
+      if (lastWriteCache?.fileId === msg.fileId) {
+        lastWriteCache = null;
+      }
       
       self.postMessage({ type: 'abort-success', fileId: msg.fileId });
     }

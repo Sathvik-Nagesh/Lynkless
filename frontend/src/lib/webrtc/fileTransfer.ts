@@ -681,9 +681,6 @@ export class FileTransferManager {
       return;
     }
 
-    // Header Compaction: Use cached 16-byte binary ID
-    const binaryId = this.getBinaryId(fileId);
-    
     // Start Audio Anchor for Mobile Performance
     startAudioAnchor();
 
@@ -947,6 +944,9 @@ export class FileTransferManager {
       resumable: true,
     });
 
+    // Header Compaction: Cache binary UUID for entire transfer
+    const binaryId = this.getBinaryId(fileId);
+
     try {
       while (chunkIndex < totalChunks) {
         if (transfer.cancelled || transfer.paused) break;
@@ -960,7 +960,6 @@ export class FileTransferManager {
         // This reduces signaling overhead and eliminates inter-message race conditions.
         const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
         // Header Compaction (20-byte footprint)
-        const binaryId = this.getBinaryId(fileId);
         packedChunk.set(binaryId, 0);
         const chunkView = new DataView(packedChunk.buffer);
         chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
@@ -1080,6 +1079,9 @@ export class FileTransferManager {
     let chunkIndex = 0;
     let transferredSize = 0;
 
+    // Header Compaction: Cache binary UUID for entire transfer (avoid per-chunk conversion)
+    const binaryId = this.getBinaryId(fileId);
+
     try {
       while (true) {
         const { done, value } = await streamReader.read();
@@ -1100,14 +1102,10 @@ export class FileTransferManager {
         const transferBuffer = this.getBufferFromPool();
         const packedChunk = new Uint8Array(transferBuffer);
         
-        // Header Compaction: Cache binary UUID for entire transfer (avoid per-chunk conversion)
-        const binaryId = this.getBinaryId(fileId);
         packedChunk.set(binaryId, 0);
         
-        packedChunk[16] = chunkIndex & 0xFF;
-        packedChunk[17] = (chunkIndex >> 8) & 0xFF;
-        packedChunk[18] = (chunkIndex >> 16) & 0xFF;
-        packedChunk[19] = (chunkIndex >> 24) & 0xFF;
+        const chunkView = new DataView(transferBuffer);
+        chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
         
         packedChunk.set(rawChunk, HEADER_SIZE);
 
@@ -1303,6 +1301,9 @@ export class FileTransferManager {
     let chunkIndex = 0;
     let transferredSize = 0;
 
+    // Header Compaction: Cache binary UUID for entire transfer (avoid per-chunk conversion)
+    const binaryId = this.getBinaryId(fileId);
+
     // Run async mesh transfer loop without blocking the return of meshId
     (async () => {
       try {
@@ -1325,7 +1326,6 @@ export class FileTransferManager {
             // Bolt: Pack metadata and data into a single atomic binary message for broadcast.
             const packedChunk = new Uint8Array(HEADER_SIZE + rawChunk.length);
             // Header Compaction (20-byte footprint)
-            const binaryId = this.getBinaryId(fileId);
             packedChunk.set(binaryId, 0);
             const chunkView = new DataView(packedChunk.buffer);
             chunkView.setUint32(FILE_ID_SIZE, chunkIndex, true);
