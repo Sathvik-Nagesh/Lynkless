@@ -42,23 +42,23 @@ const accessHandles = new Map<string, SyncHandle>();
 const metadataMap = new Map<string, WorkerTransferState>();
 const lastProgressUpdate = new Map<string, number>();
 
+// Bolt: Single-slot cache for high-frequency consecutive chunk writes
+let lastWriteCache: {
+  fileId: string;
+  accessHandle: SyncHandle;
+  meta: WorkerTransferState;
+  ev0: number;
+  ev1: number;
+  ev2: number;
+  ev3: number;
+} | null = null;
+
 const PROGRESS_THROTTLE_MS = 100;
 const WORKER_CHUNK_SIZE = 64 * 1024; // 64KB - MUST match CHUNK_SIZE in fileTransfer.ts
 
 // Speed performance: Pre-allocate reusable buffers and encoders
 const encoder = new TextEncoder();
 const fileIdBufferMap = new Map<string, Uint8Array>();
-
-/**
- * Fast binary comparison for File IDs
- */
-function compareUint8Arrays(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
 
 const messageQueue: MessageEvent[] = [];
 let isProcessing = false;
@@ -95,13 +95,20 @@ async function handleMessage(e: MessageEvent) {
     try {
       const root = await navigator.storage.getDirectory();
       const fileId = metadata.id;
-      const salt = (metadata as any).salt || '';
+      const salt = (metadata as unknown as { salt?: string }).salt || '';
       const opfsName = salt ? `lynkless-${fileId}-${salt}` : `lynkless-${fileId}`;
       
       // Cache binary File ID for fast comparison
-      const binaryId = (metadata as any).binaryId;
+      const binaryId = (metadata as unknown as { binaryId?: ArrayBuffer }).binaryId;
+      let ev0 = 0, ev1 = 0, ev2 = 0, ev3 = 0;
       if (binaryId) {
-        fileIdBufferMap.set(fileId, new Uint8Array(binaryId));
+        const idBytes = new Uint8Array(binaryId);
+        fileIdBufferMap.set(fileId, idBytes);
+        const idView = new DataView(idBytes.buffer, idBytes.byteOffset, idBytes.byteLength);
+        ev0 = idView.getUint32(0, true);
+        ev1 = idView.getUint32(4, true);
+        ev2 = idView.getUint32(8, true);
+        ev3 = idView.getUint32(12, true);
       } else {
         fileIdBufferMap.set(fileId, encoder.encode(fileId)); // Fallback
       }
@@ -118,9 +125,7 @@ async function handleMessage(e: MessageEvent) {
         accessHandle.truncate(metadata.size);
       }
       
-      fileHandles.set(metadata.id, fileHandle);
-      accessHandles.set(metadata.id, accessHandle);
-      metadataMap.set(fileId, {
+      const meta: WorkerTransferState = {
         totalChunks: metadata.totalChunks,
         receivedChunks: 0,
         lastReceivedIndex: -1,
@@ -128,11 +133,21 @@ async function handleMessage(e: MessageEvent) {
         lastReportedProgress: 0,
         // Bitfield takes 1 bit per chunk (1MB RAM handles > 8 Million chunks)
         receivedBitfield: new Uint8Array(Math.ceil(metadata.totalChunks / 8))
-      });
+      };
+
+      fileHandles.set(metadata.id, fileHandle);
+      accessHandles.set(metadata.id, accessHandle);
+      metadataMap.set(fileId, meta);
+
+      // Seed cache
+      if (binaryId) {
+        lastWriteCache = { fileId, accessHandle, meta, ev0, ev1, ev2, ev3 };
+      }
 
       self.postMessage({ type: 'init-success', fileId: metadata.id });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown worker init error';
+      if (lastWriteCache?.fileId === msg.fileId) lastWriteCache = null;
       self.postMessage({ type: 'error', fileId: metadata.id, error: message });
     }
   } 
@@ -141,19 +156,48 @@ async function handleMessage(e: MessageEvent) {
     if (!payload) return;
     const { chunkIndex, data } = payload;
 
-    const accessHandle = accessHandles.get(msg.fileId);
-    const meta = metadataMap.get(msg.fileId);
-    const expectedIdBuffer = fileIdBufferMap.get(msg.fileId);
-    
-    if (accessHandle && meta && expectedIdBuffer && chunkIndex !== undefined && data) {
-      try {
-        // Fast binary header validation (CPU optimization)
-        const actualIdBuffer = new Uint8Array(data, 0, 16); // 16 = Compact FILE_ID_SIZE
-        if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
+    // Bolt: Optimized context lookup via single-slot cache
+    let accessHandle: SyncHandle | undefined;
+    let meta: WorkerTransferState | undefined;
+    let ev0 = 0, ev1 = 0, ev2 = 0, ev3 = 0;
 
-        // Dedup: Skip if this chunk was already written (Tail Redundancy sends last chunks twice)
-        const byteIndex = Math.floor(chunkIndex / 8);
-        const bitMask = 1 << (chunkIndex % 8);
+    if (lastWriteCache && lastWriteCache.fileId === msg.fileId) {
+      accessHandle = lastWriteCache.accessHandle;
+      meta = lastWriteCache.meta;
+      ev0 = lastWriteCache.ev0;
+      ev1 = lastWriteCache.ev1;
+      ev2 = lastWriteCache.ev2;
+      ev3 = lastWriteCache.ev3;
+    } else {
+      accessHandle = accessHandles.get(msg.fileId);
+      meta = metadataMap.get(msg.fileId);
+      const expectedIdBuffer = fileIdBufferMap.get(msg.fileId);
+      if (accessHandle && meta && expectedIdBuffer) {
+        const idView = new DataView(expectedIdBuffer.buffer, expectedIdBuffer.byteOffset, expectedIdBuffer.byteLength);
+        ev0 = idView.getUint32(0, true);
+        ev1 = idView.getUint32(4, true);
+        ev2 = idView.getUint32(8, true);
+        ev3 = idView.getUint32(12, true);
+        lastWriteCache = { fileId: msg.fileId, accessHandle, meta, ev0, ev1, ev2, ev3 };
+      }
+    }
+    
+    if (accessHandle && meta && chunkIndex !== undefined && data) {
+      try {
+        // Bolt: High-performance binary header validation using 4x uint32 comparisons
+        // This avoids creating temporary Uint8Arrays and performs O(1) comparison.
+        const view = new DataView(data);
+        if (view.getUint32(0, true) !== ev0 ||
+            view.getUint32(4, true) !== ev1 ||
+            view.getUint32(8, true) !== ev2 ||
+            view.getUint32(12, true) !== ev3) {
+          return;
+        }
+
+        // Bolt: Micro-optimized bitfield indexing using bitwise shifts
+        const byteIndex = chunkIndex >> 3; // Equivalent to Math.floor(chunkIndex / 8)
+        const bitMask = 1 << (chunkIndex & 7); // Equivalent to 1 << (chunkIndex % 8)
+
         if ((meta.receivedBitfield[byteIndex] & bitMask) !== 0) {
           // Still return the buffer for recycling
           self.postMessage({ 
@@ -180,8 +224,8 @@ async function handleMessage(e: MessageEvent) {
         }, [data]);
 
         const progressInt = Math.min(Math.floor((meta.receivedChunks / meta.totalChunks) * 100), 100);
-        if (progressInt > ((meta as any).lastReportedProgress || 0) || meta.receivedChunks === meta.totalChunks) {
-          (meta as any).lastReportedProgress = progressInt;
+        if (progressInt > (meta.lastReportedProgress || 0) || meta.receivedChunks === meta.totalChunks) {
+          meta.lastReportedProgress = progressInt;
           self.postMessage({
             type: 'progress',
             fileId: msg.fileId,
@@ -190,7 +234,7 @@ async function handleMessage(e: MessageEvent) {
           });
         }
        } catch (err: unknown) {
-        const error = err as any;
+        const error = err as Error;
         let message = error?.message || 'Unknown worker write error';
         
         // DETECT STORAGE QUOTA EXCEEDED (Edge Case Part 2)
@@ -198,6 +242,7 @@ async function handleMessage(e: MessageEvent) {
           message = 'DISK_FULL';
         }
 
+        if (lastWriteCache?.fileId === msg.fileId) lastWriteCache = null;
         self.postMessage({ type: 'error', fileId: msg.fileId, error: message });
       }
     }
@@ -232,6 +277,7 @@ async function handleMessage(e: MessageEvent) {
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
       lastProgressUpdate.delete(msg.fileId);
+      if (lastWriteCache?.fileId === msg.fileId) lastWriteCache = null;
     }
   }
   else if (msg.type === 'abort') {
@@ -251,6 +297,7 @@ async function handleMessage(e: MessageEvent) {
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
       lastProgressUpdate.delete(msg.fileId);
+      if (lastWriteCache?.fileId === msg.fileId) lastWriteCache = null;
       
       self.postMessage({ type: 'abort-success', fileId: msg.fileId });
     }
