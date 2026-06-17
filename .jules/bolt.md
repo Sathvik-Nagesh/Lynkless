@@ -69,3 +69,7 @@
 ## 2026-06-15 - O(1) Cache for High-Frequency Binary Intake
 **Learning:** Even with optimized UUID conversion, performing `bytesToUuid` and `Map.get()` for every 64KB chunk in a high-speed transfer (e.g. 1Gbps+) consumes non-trivial CPU cycles and creates contention in the JS engine. Since chunks for a file typically arrive in long, consecutive sequences, a single-slot cache for the last active file state can bypass these operations entirely.
 **Action:** Implement a `lastIncomingCache` that stores the raw header bytes (as `uint32`) and the resolved `IncomingTransferState`. Compare the header of incoming chunks against this cache using four `uint32` checks via `DataView` to achieve a "fast-path" for consecutive chunks.
+
+## 2026-06-20 - Canvas Background Caching & Layout Stability
+**Learning:** Redrawing complex static geometry (concentric circles, grid lines) in a high-frequency (60Hz) canvas animation loop consumes significant CPU and increases frame-time variance. Additionally, repeated DOM property lookups like `clientWidth` in the loop force the browser to recalculate layouts synchronously (layout thrashing).
+**Action:** Use an offscreen canvas to pre-render static background elements once and blit them via `drawImage()` in the main loop. Cache element dimensions in `useRef` and update them only via `ResizeObserver` to ensure the animation loop remains purely computational.

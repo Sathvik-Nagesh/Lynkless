@@ -52,6 +52,11 @@ const Radar = memo(function Radar({
   const remoteUsersRef = useRef<RadarUser[]>([]);
   const activeTransfersRef = useRef<string[]>([]);
 
+  // Bolt: Performance refs to avoid layout-forcing DOM access in hot animation loop
+  const sizeRef = useRef(400);
+  const maxRadiusRef = useRef(180);
+  const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -59,15 +64,78 @@ const Radar = memo(function Radar({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Bolt: Initialize offscreen canvas for caching static background
+    if (!offscreenCanvasRef.current && typeof document !== 'undefined') {
+      offscreenCanvasRef.current = document.createElement('canvas');
+    }
+
+    const drawBackground = (size: number, dpr: number) => {
+      const offscreen = offscreenCanvasRef.current;
+      if (!offscreen) return;
+
+      offscreen.width = size * dpr;
+      offscreen.height = size * dpr;
+      const oCtx = offscreen.getContext('2d');
+      if (!oCtx) return;
+
+      oCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const centerX = size / 2;
+      const centerY = size / 2;
+      const maxRadius = size / 2 - 20;
+
+      oCtx.clearRect(0, 0, size, size);
+
+      // Draw background circles - thin, subtle lines
+      oCtx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+      oCtx.lineWidth = 1;
+
+      // Inner circle (nearby)
+      oCtx.beginPath();
+      oCtx.arc(centerX, centerY, maxRadius * 0.4, 0, Math.PI * 2);
+      oCtx.stroke();
+
+      // Middle circle
+      oCtx.beginPath();
+      oCtx.arc(centerX, centerY, maxRadius * 0.7, 0, Math.PI * 2);
+      oCtx.stroke();
+
+      // Outer circle (remote)
+      oCtx.beginPath();
+      oCtx.arc(centerX, centerY, maxRadius, 0, Math.PI * 2);
+      oCtx.stroke();
+
+      // Draw subtle grid lines
+      oCtx.strokeStyle = '#27272a';
+      for (let i = 0; i < 8; i++) {
+        const angle = (Math.PI * 2 * i) / 8;
+        oCtx.beginPath();
+        oCtx.moveTo(centerX, centerY);
+        oCtx.lineTo(
+          centerX + Math.cos(angle) * maxRadius,
+          centerY + Math.sin(angle) * maxRadius
+        );
+        oCtx.stroke();
+      }
+    };
+
     // Responsive canvas sizing
     const resizeCanvas = () => {
-      const size = Math.min(canvas.parentElement?.clientWidth || 400, 400);
+      const parentSize = canvas.parentElement?.clientWidth || 400;
+      const size = Math.min(parentSize, 400);
       const dpr = window.devicePixelRatio || 1;
+
+      // Cache values for draw loop
+      sizeRef.current = size;
+      maxRadiusRef.current = size / 2 - 20;
+
       canvas.width = size * dpr;
       canvas.height = size * dpr;
       canvas.style.width = `${size}px`;
       canvas.style.height = `${size}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      // Update offscreen cache
+      drawBackground(size, dpr);
     };
     resizeCanvas();
 
@@ -75,46 +143,17 @@ const Radar = memo(function Radar({
     const observer = new ResizeObserver(resizeCanvas);
     if (canvas.parentElement) observer.observe(canvas.parentElement);
 
-    const getSize = () => Math.min(canvas.parentElement?.clientWidth || 400, 400);
-
     const drawRadar = () => {
-      const size = getSize();
+      const size = sizeRef.current;
       const centerX = size / 2;
       const centerY = size / 2;
-      const maxRadius = size / 2 - 20;
+      const maxRadius = maxRadiusRef.current;
 
       ctx.clearRect(0, 0, size, size);
 
-      // Draw background circles - thin, subtle lines
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
-      ctx.lineWidth = 1;
-
-      // Inner circle (nearby)
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, maxRadius * 0.4, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Middle circle
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, maxRadius * 0.7, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Outer circle (remote)
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, maxRadius, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Draw subtle grid lines
-      ctx.strokeStyle = '#27272a';
-      for (let i = 0; i < 8; i++) {
-        const angle = (Math.PI * 2 * i) / 8;
-        ctx.beginPath();
-        ctx.moveTo(centerX, centerY);
-        ctx.lineTo(
-          centerX + Math.cos(angle) * maxRadius,
-          centerY + Math.sin(angle) * maxRadius
-        );
-        ctx.stroke();
+      // Bolt: Render cached background from offscreen canvas instead of repeated draw calls
+      if (offscreenCanvasRef.current) {
+        ctx.drawImage(offscreenCanvasRef.current, 0, 0, size, size);
       }
 
       // Draw radar sweep - subtle gradient
