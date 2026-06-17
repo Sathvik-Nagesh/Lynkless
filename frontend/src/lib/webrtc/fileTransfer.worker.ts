@@ -42,6 +42,15 @@ const accessHandles = new Map<string, SyncHandle>();
 const metadataMap = new Map<string, WorkerTransferState>();
 const lastProgressUpdate = new Map<string, number>();
 
+// Bolt: Single-slot cache for high-frequency intake.
+// Consecutive chunks for the same file bypass redundant Map lookups.
+let lastWriteCache: {
+  fileId: string;
+  meta: WorkerTransferState;
+  accessHandle: SyncHandle;
+  expectedIdBuffer: Uint8Array;
+} | null = null;
+
 const PROGRESS_THROTTLE_MS = 100;
 const WORKER_CHUNK_SIZE = 64 * 1024; // 64KB - MUST match CHUNK_SIZE in fileTransfer.ts
 
@@ -50,14 +59,17 @@ const encoder = new TextEncoder();
 const fileIdBufferMap = new Map<string, Uint8Array>();
 
 /**
- * Fast binary comparison for File IDs
+ * Fast binary comparison for File IDs (16-byte UUIDs)
+ * Optimized using 4x uint32 comparisons via DataView to reduce CPU overhead in hot path.
  */
 function compareUint8Arrays(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
+  if (a.length !== 16 || b.length !== 16) return false;
+  const dvA = new DataView(a.buffer, a.byteOffset, 16);
+  const dvB = new DataView(b.buffer, b.byteOffset, 16);
+  return dvA.getUint32(0, true) === dvB.getUint32(0, true) &&
+         dvA.getUint32(4, true) === dvB.getUint32(4, true) &&
+         dvA.getUint32(8, true) === dvB.getUint32(8, true) &&
+         dvA.getUint32(12, true) === dvB.getUint32(12, true);
 }
 
 const messageQueue: MessageEvent[] = [];
@@ -141,9 +153,25 @@ async function handleMessage(e: MessageEvent) {
     if (!payload) return;
     const { chunkIndex, data } = payload;
 
-    const accessHandle = accessHandles.get(msg.fileId);
-    const meta = metadataMap.get(msg.fileId);
-    const expectedIdBuffer = fileIdBufferMap.get(msg.fileId);
+    let accessHandle: SyncHandle | undefined;
+    let meta: WorkerTransferState | undefined;
+    let expectedIdBuffer: Uint8Array | undefined;
+
+    // Bolt: Fast-path via single-slot cache for consecutive chunks
+    if (lastWriteCache && lastWriteCache.fileId === msg.fileId) {
+      accessHandle = lastWriteCache.accessHandle;
+      meta = lastWriteCache.meta;
+      expectedIdBuffer = lastWriteCache.expectedIdBuffer;
+    } else {
+      accessHandle = accessHandles.get(msg.fileId);
+      meta = metadataMap.get(msg.fileId);
+      expectedIdBuffer = fileIdBufferMap.get(msg.fileId);
+
+      // Update cache if lookup was successful
+      if (accessHandle && meta && expectedIdBuffer) {
+        lastWriteCache = { fileId: msg.fileId, accessHandle, meta, expectedIdBuffer };
+      }
+    }
     
     if (accessHandle && meta && expectedIdBuffer && chunkIndex !== undefined && data) {
       try {
@@ -152,8 +180,9 @@ async function handleMessage(e: MessageEvent) {
         if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
 
         // Dedup: Skip if this chunk was already written (Tail Redundancy sends last chunks twice)
-        const byteIndex = Math.floor(chunkIndex / 8);
-        const bitMask = 1 << (chunkIndex % 8);
+        // Optimized using bitwise shifts for O(1) indexing without Math.floor/modulo.
+        const byteIndex = chunkIndex >> 3;
+        const bitMask = 1 << (chunkIndex & 7);
         if ((meta.receivedBitfield[byteIndex] & bitMask) !== 0) {
           // Still return the buffer for recycling
           self.postMessage({ 
@@ -166,7 +195,7 @@ async function handleMessage(e: MessageEvent) {
         meta.receivedBitfield[byteIndex] |= bitMask;
 
         // Direct Synchronous Write (Atomic and Safe for out-of-order)
-        const writeOffset = chunkIndex * 65536;
+        const writeOffset = chunkIndex * WORKER_CHUNK_SIZE;
         const chunkData = new Uint8Array(data, 20); // 20-byte header
         accessHandle.write(chunkData, { at: writeOffset });
         
@@ -232,6 +261,7 @@ async function handleMessage(e: MessageEvent) {
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
       lastProgressUpdate.delete(msg.fileId);
+      if (lastWriteCache?.fileId === msg.fileId) lastWriteCache = null;
     }
   }
   else if (msg.type === 'abort') {
@@ -251,6 +281,7 @@ async function handleMessage(e: MessageEvent) {
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
       lastProgressUpdate.delete(msg.fileId);
+      if (lastWriteCache?.fileId === msg.fileId) lastWriteCache = null;
       
       self.postMessage({ type: 'abort-success', fileId: msg.fileId });
     }
