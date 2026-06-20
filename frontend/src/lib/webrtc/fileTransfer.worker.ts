@@ -152,8 +152,9 @@ async function handleMessage(e: MessageEvent) {
         if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
 
         // Dedup: Skip if this chunk was already written (Tail Redundancy sends last chunks twice)
-        const byteIndex = Math.floor(chunkIndex / 8);
-        const bitMask = 1 << (chunkIndex % 8);
+        // Bolt: Micro-optimization using bitwise shifts instead of Math.floor/modulo
+        const byteIndex = chunkIndex >> 3;
+        const bitMask = 1 << (chunkIndex & 7);
         if ((meta.receivedBitfield[byteIndex] & bitMask) !== 0) {
           // Still return the buffer for recycling
           self.postMessage({ 
