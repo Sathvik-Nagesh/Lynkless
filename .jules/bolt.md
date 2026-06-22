@@ -73,3 +73,11 @@
 ## 2026-06-20 - Canvas Background Caching & Layout Stability
 **Learning:** Redrawing complex static geometry (concentric circles, grid lines) in a high-frequency (60Hz) canvas animation loop consumes significant CPU and increases frame-time variance. Additionally, repeated DOM property lookups like `clientWidth` in the loop force the browser to recalculate layouts synchronously (layout thrashing).
 **Action:** Use an offscreen canvas to pre-render static background elements once and blit them via `drawImage()` in the main loop. Cache element dimensions in `useRef` and update them only via `ResizeObserver` to ensure the animation loop remains purely computational.
+
+## 2026-06-25 - Single-Slot Cache for High-Frequency Binary Intake in Worker
+**Learning:** Even with optimized Web Worker writes, performing multiple 'Map.get()' lookups and O(N) array comparisons for every 64KB chunk in a high-speed transfer (e.g. 1Gbps+) creates significant CPU contention. A single-slot cache for the last active file state bypasses these operations for consecutive chunks.
+**Action:** Use 'lastWriteCache' to store resolved transfer state and perform 4x 'uint32' comparisons via 'DataView' for O(1) header validation in binary intake paths.
+
+## 2026-06-25 - Capped Buffer Pool for Stable Memory Footprint
+**Learning:** An uncapped buffer pool can grow indefinitely during high-concurrency transfers or mesh broadcasts, leading to increased memory pressure and potential OOM on resource-constrained devices.
+**Action:** Implement a hard cap (e.g., 64 slabs) on the buffer pool to balance memory reuse with heap stability.

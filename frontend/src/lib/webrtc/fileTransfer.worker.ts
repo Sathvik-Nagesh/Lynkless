@@ -35,6 +35,10 @@ interface WorkerTransferState {
   opfsName: string; // Store the exact salted name
   lastReportedProgress: number;
   receivedBitfield: Uint8Array; // Dedup: track which chunks have been written using bits
+  v0: number; // Binary ID cache for fast header validation
+  v1: number;
+  v2: number;
+  v3: number;
 }
 
 const fileHandles = new Map<string, FileSystemFileHandle>();
@@ -42,23 +46,19 @@ const accessHandles = new Map<string, SyncHandle>();
 const metadataMap = new Map<string, WorkerTransferState>();
 const lastProgressUpdate = new Map<string, number>();
 
-const PROGRESS_THROTTLE_MS = 100;
+// Bolt: Single-slot cache for high-frequency binary intake
+let lastWriteCache: {
+  fileId: string;
+  meta: WorkerTransferState;
+  accessHandle: SyncHandle;
+  expectedIdBuffer: Uint8Array;
+} | null = null;
+
 const WORKER_CHUNK_SIZE = 64 * 1024; // 64KB - MUST match CHUNK_SIZE in fileTransfer.ts
 
 // Speed performance: Pre-allocate reusable buffers and encoders
 const encoder = new TextEncoder();
 const fileIdBufferMap = new Map<string, Uint8Array>();
-
-/**
- * Fast binary comparison for File IDs
- */
-function compareUint8Arrays(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
 
 const messageQueue: MessageEvent[] = [];
 let isProcessing = false;
@@ -100,8 +100,16 @@ async function handleMessage(e: MessageEvent) {
       
       // Cache binary File ID for fast comparison
       const binaryId = (metadata as any).binaryId;
+      let v0 = 0, v1 = 0, v2 = 0, v3 = 0;
+
       if (binaryId) {
-        fileIdBufferMap.set(fileId, new Uint8Array(binaryId));
+        const idBytes = new Uint8Array(binaryId);
+        fileIdBufferMap.set(fileId, idBytes);
+        const view = new DataView(idBytes.buffer);
+        v0 = view.getUint32(0, true);
+        v1 = view.getUint32(4, true);
+        v2 = view.getUint32(8, true);
+        v3 = view.getUint32(12, true);
       } else {
         fileIdBufferMap.set(fileId, encoder.encode(fileId)); // Fallback
       }
@@ -127,7 +135,8 @@ async function handleMessage(e: MessageEvent) {
         opfsName: opfsName,
         lastReportedProgress: 0,
         // Bitfield takes 1 bit per chunk (1MB RAM handles > 8 Million chunks)
-        receivedBitfield: new Uint8Array(Math.ceil(metadata.totalChunks / 8))
+        receivedBitfield: new Uint8Array(Math.ceil(metadata.totalChunks / 8)),
+        v0, v1, v2, v3
       });
 
       self.postMessage({ type: 'init-success', fileId: metadata.id });
@@ -140,20 +149,43 @@ async function handleMessage(e: MessageEvent) {
     const payload = msg.payload as WritePayload | undefined;
     if (!payload) return;
     const { chunkIndex, data } = payload;
+    if (data.byteLength < 20) return; // Bolt: Header safety guard
 
-    const accessHandle = accessHandles.get(msg.fileId);
-    const meta = metadataMap.get(msg.fileId);
-    const expectedIdBuffer = fileIdBufferMap.get(msg.fileId);
+    let accessHandle: SyncHandle | undefined;
+    let meta: WorkerTransferState | undefined;
+    let expectedIdBuffer: Uint8Array | undefined;
+
+    // Bolt: Fast-path via single-slot cache for consecutive chunks
+    if (lastWriteCache && lastWriteCache.fileId === msg.fileId) {
+      accessHandle = lastWriteCache.accessHandle;
+      meta = lastWriteCache.meta;
+      expectedIdBuffer = lastWriteCache.expectedIdBuffer;
+    } else {
+      accessHandle = accessHandles.get(msg.fileId);
+      meta = metadataMap.get(msg.fileId);
+      expectedIdBuffer = fileIdBufferMap.get(msg.fileId);
+
+      if (accessHandle && meta && expectedIdBuffer) {
+        lastWriteCache = { fileId: msg.fileId, meta, accessHandle, expectedIdBuffer };
+      }
+    }
     
     if (accessHandle && meta && expectedIdBuffer && chunkIndex !== undefined && data) {
       try {
-        // Fast binary header validation (CPU optimization)
-        const actualIdBuffer = new Uint8Array(data, 0, 16); // 16 = Compact FILE_ID_SIZE
-        if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
+        // Bolt: Optimized header validation using 4x uint32 comparisons
+        const view = new DataView(data);
+        if (view.getUint32(0, true) !== meta.v0 ||
+            view.getUint32(4, true) !== meta.v1 ||
+            view.getUint32(8, true) !== meta.v2 ||
+            view.getUint32(12, true) !== meta.v3) {
+          // Return buffer to pool even on invalid header to prevent memory leaks
+          self.postMessage({ type: 'buffer-return', fileId: msg.fileId, data: data }, [data]);
+          return;
+        }
 
-        // Dedup: Skip if this chunk was already written (Tail Redundancy sends last chunks twice)
-        const byteIndex = Math.floor(chunkIndex / 8);
-        const bitMask = 1 << (chunkIndex % 8);
+        // Bolt: Refactored bitfield indexing using bitwise operators for O(1) performance
+        const byteIndex = chunkIndex >> 3;
+        const bitMask = 1 << (chunkIndex & 7);
         if ((meta.receivedBitfield[byteIndex] & bitMask) !== 0) {
           // Still return the buffer for recycling
           self.postMessage({ 
@@ -166,7 +198,7 @@ async function handleMessage(e: MessageEvent) {
         meta.receivedBitfield[byteIndex] |= bitMask;
 
         // Direct Synchronous Write (Atomic and Safe for out-of-order)
-        const writeOffset = chunkIndex * 65536;
+        const writeOffset = chunkIndex * WORKER_CHUNK_SIZE;
         const chunkData = new Uint8Array(data, 20); // 20-byte header
         accessHandle.write(chunkData, { at: writeOffset });
         
@@ -232,6 +264,7 @@ async function handleMessage(e: MessageEvent) {
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
       lastProgressUpdate.delete(msg.fileId);
+      if (lastWriteCache?.fileId === msg.fileId) lastWriteCache = null;
     }
   }
   else if (msg.type === 'abort') {
@@ -251,6 +284,7 @@ async function handleMessage(e: MessageEvent) {
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
       lastProgressUpdate.delete(msg.fileId);
+      if (lastWriteCache?.fileId === msg.fileId) lastWriteCache = null;
       
       self.postMessage({ type: 'abort-success', fileId: msg.fileId });
     }

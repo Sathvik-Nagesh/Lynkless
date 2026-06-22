@@ -294,7 +294,7 @@ export class FileTransferManager {
 
     // Buffer Pool: Prime with 4 slabs (reduced from 8 to lower baseline memory)
     for (let i = 0; i < 4; i++) {
-       this.bufferPool.push(new ArrayBuffer(HEADER_SIZE + CHUNK_SIZE));
+       this.returnBufferToPool(new ArrayBuffer(HEADER_SIZE + CHUNK_SIZE));
     }
 
     // LEAK-11: Clean up resources when page is unloaded
@@ -339,7 +339,7 @@ export class FileTransferManager {
       }
     } else if (msg.type === 'buffer-return') {
       // Receiver-side: Worker finished writing this buffer to OPFS, safe to recycle
-      this.bufferPool.push(msg.data);
+      this.returnBufferToPool(msg.data);
     }
   }
 
@@ -347,6 +347,16 @@ export class FileTransferManager {
   private bufferPool: ArrayBuffer[] = [];
   private getBufferFromPool(): ArrayBuffer {
     return this.bufferPool.pop() || new ArrayBuffer(HEADER_SIZE + CHUNK_SIZE);
+  }
+
+  /**
+   * Return a buffer to the pool for reuse.
+   * Bolt: Capped at 64 slabs to balance memory reuse and heap pressure.
+   */
+  private returnBufferToPool(buffer: ArrayBuffer): void {
+    if (this.bufferPool.length < 64) {
+      this.bufferPool.push(buffer);
+    }
   }
 
   private setupDataHandler(): void {
@@ -681,9 +691,6 @@ export class FileTransferManager {
       return;
     }
 
-    // Header Compaction: Use cached 16-byte binary ID
-    const binaryId = this.getBinaryId(fileId);
-    
     // Start Audio Anchor for Mobile Performance
     startAudioAnchor();
 
@@ -1132,7 +1139,7 @@ export class FileTransferManager {
 
         // LEAK-2 FIX: Return buffer to pool. WebRTC send() synchronously copies the ArrayBuffer 
         // into its internal queue before returning, so it's safe to reuse it now.
-        this.bufferPool.push(transferBuffer);
+        this.returnBufferToPool(transferBuffer);
 
           if (transfer) transfer.lastChunkIndex = chunkIndex;
           chunkIndex++;
