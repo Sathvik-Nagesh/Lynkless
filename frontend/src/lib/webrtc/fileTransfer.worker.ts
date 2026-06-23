@@ -4,6 +4,8 @@ interface TransferMetadata {
   id: string;
   size: number;
   totalChunks: number;
+  salt?: string;
+  binaryId?: Uint8Array;
 }
 
 interface InitPayload {
@@ -29,36 +31,39 @@ interface SyncHandle {
 }
 
 interface WorkerTransferState {
-  totalChunks: number;
+  fileHandle: FileSystemFileHandle;
+  accessHandle: SyncHandle;
+  metadata: TransferMetadata;
+  // Pre-calculated uint32 components for ultra-fast header validation
+  exp0: number;
+  exp1: number;
+  exp2: number;
+  exp3: number;
   receivedChunks: number;
   lastReceivedIndex: number;
-  opfsName: string; // Store the exact salted name
+  opfsName: string;
   lastReportedProgress: number;
-  receivedBitfield: Uint8Array; // Dedup: track which chunks have been written using bits
+  receivedBitfield: Uint8Array;
 }
 
-const fileHandles = new Map<string, FileSystemFileHandle>();
-const accessHandles = new Map<string, SyncHandle>();
-const metadataMap = new Map<string, WorkerTransferState>();
-const lastProgressUpdate = new Map<string, number>();
-
-const PROGRESS_THROTTLE_MS = 100;
-const WORKER_CHUNK_SIZE = 64 * 1024; // 64KB - MUST match CHUNK_SIZE in fileTransfer.ts
-
-// Speed performance: Pre-allocate reusable buffers and encoders
-const encoder = new TextEncoder();
-const fileIdBufferMap = new Map<string, Uint8Array>();
+const activeTransfers = new Map<string, WorkerTransferState>();
 
 /**
- * Fast binary comparison for File IDs
+ * Cache for high-frequency binary intake (last file processed).
+ * Consecutive chunks for the same file bypass Map lookups.
  */
-function compareUint8Arrays(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
+let lastWriteCache: {
+  fileId: string;
+  state: WorkerTransferState;
+  v0: number;
+  v1: number;
+  v2: number;
+  v3: number;
+} | null = null;
+
+const HEADER_SIZE = 20;
+
+const encoder = new TextEncoder();
 
 const messageQueue: MessageEvent[] = [];
 let isProcessing = false;
@@ -95,41 +100,35 @@ async function handleMessage(e: MessageEvent) {
     try {
       const root = await navigator.storage.getDirectory();
       const fileId = metadata.id;
-      const salt = (metadata as any).salt || '';
+      const salt = metadata.salt || '';
       const opfsName = salt ? `lynkless-${fileId}-${salt}` : `lynkless-${fileId}`;
       
-      // Cache binary File ID for fast comparison
-      const binaryId = (metadata as any).binaryId;
-      if (binaryId) {
-        fileIdBufferMap.set(fileId, new Uint8Array(binaryId));
-      } else {
-        fileIdBufferMap.set(fileId, encoder.encode(fileId)); // Fallback
-      }
+      const expectedIdBuffer = metadata.binaryId ? new Uint8Array(metadata.binaryId) : encoder.encode(fileId);
+      const expView = new DataView(expectedIdBuffer.buffer, expectedIdBuffer.byteOffset, expectedIdBuffer.byteLength);
 
       const fileHandle = await root.getFileHandle(opfsName, { create: true });
-      
-      // Request synchronous access handle (only available in Web Workers!)
-      // This is vastly faster than asynchronous main-thread FileSystemWritableFileStream
       const accessHandle = await (fileHandle as FileSystemFileHandle & { createSyncAccessHandle: () => Promise<SyncHandle> }).createSyncAccessHandle();
 
-      // Bolt: Pre-allocate disk space to improve write performance and reduce fragmentation.
-      // Truncating to the final size upfront ensures the OS reserves the space.
       if (metadata.size) {
         accessHandle.truncate(metadata.size);
       }
       
-      fileHandles.set(metadata.id, fileHandle);
-      accessHandles.set(metadata.id, accessHandle);
-      metadataMap.set(fileId, {
-        totalChunks: metadata.totalChunks,
+      const state: WorkerTransferState = {
+        fileHandle,
+        accessHandle,
+        metadata,
+        exp0: expView.getUint32(0, true),
+        exp1: expView.getUint32(4, true),
+        exp2: expView.getUint32(8, true),
+        exp3: expView.getUint32(12, true),
         receivedChunks: 0,
         lastReceivedIndex: -1,
-        opfsName: opfsName,
+        opfsName,
         lastReportedProgress: 0,
-        // Bitfield takes 1 bit per chunk (1MB RAM handles > 8 Million chunks)
         receivedBitfield: new Uint8Array(Math.ceil(metadata.totalChunks / 8))
-      });
+      };
 
+      activeTransfers.set(fileId, state);
       self.postMessage({ type: 'init-success', fileId: metadata.id });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown worker init error';
@@ -141,120 +140,127 @@ async function handleMessage(e: MessageEvent) {
     if (!payload) return;
     const { chunkIndex, data } = payload;
 
-    const accessHandle = accessHandles.get(msg.fileId);
-    const meta = metadataMap.get(msg.fileId);
-    const expectedIdBuffer = fileIdBufferMap.get(msg.fileId);
-    
-    if (accessHandle && meta && expectedIdBuffer && chunkIndex !== undefined && data) {
-      try {
-        // Fast binary header validation (CPU optimization)
-        const actualIdBuffer = new Uint8Array(data, 0, 16); // 16 = Compact FILE_ID_SIZE
-        if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
+    // PRE-FLIGHT GUARD: Ensure buffer is large enough for header
+    if (data.byteLength < HEADER_SIZE) {
+      self.postMessage({ type: 'buffer-return', fileId: msg.fileId, data: data }, [data]);
+      return;
+    }
 
-        // Dedup: Skip if this chunk was already written (Tail Redundancy sends last chunks twice)
-        const byteIndex = Math.floor(chunkIndex / 8);
-        const bitMask = 1 << (chunkIndex % 8);
-        if ((meta.receivedBitfield[byteIndex] & bitMask) !== 0) {
-          // Still return the buffer for recycling
-          self.postMessage({ 
-            type: 'buffer-return', 
-            fileId: msg.fileId, 
-            data: data 
-          }, [data]);
+    const view = new DataView(data);
+    const v0 = view.getUint32(0, true);
+    const v1 = view.getUint32(4, true);
+    const v2 = view.getUint32(8, true);
+    const v3 = view.getUint32(12, true);
+
+    let state: WorkerTransferState | undefined;
+
+    // Bolt: Fast-path via single-slot cache for consecutive chunks
+    if (lastWriteCache &&
+        v0 === lastWriteCache.v0 &&
+        v1 === lastWriteCache.v1 &&
+        v2 === lastWriteCache.v2 &&
+        v3 === lastWriteCache.v3) {
+      state = lastWriteCache.state;
+    } else {
+      state = activeTransfers.get(msg.fileId);
+      if (state) {
+        // Seed the cache
+        lastWriteCache = { fileId: msg.fileId, state, v0, v1, v2, v3 };
+      }
+    }
+    
+    if (state && chunkIndex !== undefined) {
+      try {
+        // O(1) Header Validation via pre-calculated uint32 components
+        if (v0 !== state.exp0 || v1 !== state.exp1 || v2 !== state.exp2 || v3 !== state.exp3) {
+          self.postMessage({ type: 'buffer-return', fileId: msg.fileId, data: data }, [data]);
           return;
         }
-        meta.receivedBitfield[byteIndex] |= bitMask;
 
-        // Direct Synchronous Write (Atomic and Safe for out-of-order)
+        // Micro-optimized bitfield operations (>> 3 and & 7)
+        const byteIndex = chunkIndex >> 3;
+        const bitMask = 1 << (chunkIndex & 7);
+
+        if ((state.receivedBitfield[byteIndex] & bitMask) !== 0) {
+          self.postMessage({ type: 'buffer-return', fileId: msg.fileId, data: data }, [data]);
+          return;
+        }
+        state.receivedBitfield[byteIndex] |= bitMask;
+
         const writeOffset = chunkIndex * 65536;
-        const chunkData = new Uint8Array(data, 20); // 20-byte header
-        accessHandle.write(chunkData, { at: writeOffset });
+        const chunkData = new Uint8Array(data, HEADER_SIZE);
+        state.accessHandle.write(chunkData, { at: writeOffset });
         
-        meta.receivedChunks++;
-        meta.lastReceivedIndex = Math.max(meta.lastReceivedIndex, chunkIndex);
+        state.receivedChunks++;
+        state.lastReceivedIndex = Math.max(state.lastReceivedIndex, chunkIndex);
         
-        self.postMessage({ 
-          type: 'buffer-return', 
-          fileId: msg.fileId, 
-          data: data 
-        }, [data]);
+        self.postMessage({ type: 'buffer-return', fileId: msg.fileId, data: data }, [data]);
 
-        const progressInt = Math.min(Math.floor((meta.receivedChunks / meta.totalChunks) * 100), 100);
-        if (progressInt > ((meta as any).lastReportedProgress || 0) || meta.receivedChunks === meta.totalChunks) {
-          (meta as any).lastReportedProgress = progressInt;
+        const progressInt = Math.min(Math.floor((state.receivedChunks / state.metadata.totalChunks) * 100), 100);
+        if (progressInt > state.lastReportedProgress || state.receivedChunks === state.metadata.totalChunks) {
+          state.lastReportedProgress = progressInt;
           self.postMessage({
             type: 'progress',
             fileId: msg.fileId,
-            receivedChunks: meta.receivedChunks,
-            lastReceivedIndex: meta.lastReceivedIndex
+            receivedChunks: state.receivedChunks,
+            lastReceivedIndex: state.lastReceivedIndex
           });
         }
        } catch (err: unknown) {
-        const error = err as any;
-        let message = error?.message || 'Unknown worker write error';
-        
-        // DETECT STORAGE QUOTA EXCEEDED (Edge Case Part 2)
-        if (error?.name === 'QuotaExceededError' || message.includes('quota')) {
-          message = 'DISK_FULL';
+        const message = (err as Error)?.message || 'Unknown worker write error';
+        if ((err as { name?: string })?.name === 'QuotaExceededError' || message.includes('quota')) {
+          self.postMessage({ type: 'error', fileId: msg.fileId, error: 'DISK_FULL' });
+        } else {
+          self.postMessage({ type: 'error', fileId: msg.fileId, error: message });
         }
-
-        self.postMessage({ type: 'error', fileId: msg.fileId, error: message });
       }
+    } else {
+      // Return buffer even if no state found to prevent leak
+      self.postMessage({ type: 'buffer-return', fileId: msg.fileId, data: data }, [data]);
     }
   }
   else if (msg.type === 'complete') {
-    const accessHandle = accessHandles.get(msg.fileId);
-    const fileHandle = fileHandles.get(msg.fileId);
-    const meta = metadataMap.get(msg.fileId);
+    const state = activeTransfers.get(msg.fileId);
 
-    if (accessHandle && fileHandle && meta) {
+    if (state) {
       self.postMessage({
         type: 'progress',
         fileId: msg.fileId,
-        receivedChunks: meta.receivedChunks,
-        lastReceivedIndex: meta.lastReceivedIndex
+        receivedChunks: state.receivedChunks,
+        lastReceivedIndex: state.lastReceivedIndex
       });
 
-      accessHandle.flush();
-      accessHandle.close();
+      state.accessHandle.flush();
+      state.accessHandle.close();
       
-      const file = await fileHandle.getFile();
+      const file = await state.fileHandle.getFile();
       
-      // Transfer the file blob back to main thread
       self.postMessage({ 
         type: 'complete-success', 
         fileId: msg.fileId, 
         file,
-        checksum: '' // Checksum disabled for performance
+        checksum: ''
       });
       
-      accessHandles.delete(msg.fileId);
-      fileHandles.delete(msg.fileId);
-      metadataMap.delete(msg.fileId);
-      lastProgressUpdate.delete(msg.fileId);
+      activeTransfers.delete(msg.fileId);
+      if (lastWriteCache?.fileId === msg.fileId) lastWriteCache = null;
     }
   }
   else if (msg.type === 'abort') {
-    const meta = metadataMap.get(msg.fileId);
-    if (meta) {
-      const accessHandle = accessHandles.get(msg.fileId);
-      if (accessHandle) accessHandle.close();
+    const state = activeTransfers.get(msg.fileId);
+    if (state) {
+      state.accessHandle.close();
       
       try {
         const root = await navigator.storage.getDirectory();
-        await root.removeEntry(meta.opfsName);
+        await root.removeEntry(state.opfsName);
       } catch {
         // Silent fail on cleanup
       }
 
-      accessHandles.delete(msg.fileId);
-      fileHandles.delete(msg.fileId);
-      metadataMap.delete(msg.fileId);
-      lastProgressUpdate.delete(msg.fileId);
-      
+      activeTransfers.delete(msg.fileId);
+      if (lastWriteCache?.fileId === msg.fileId) lastWriteCache = null;
       self.postMessage({ type: 'abort-success', fileId: msg.fileId });
     }
   }
 }
-
-// Checksum disabled for performance in current version

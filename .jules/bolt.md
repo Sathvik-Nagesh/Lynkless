@@ -73,3 +73,7 @@
 ## 2026-06-20 - Canvas Background Caching & Layout Stability
 **Learning:** Redrawing complex static geometry (concentric circles, grid lines) in a high-frequency (60Hz) canvas animation loop consumes significant CPU and increases frame-time variance. Additionally, repeated DOM property lookups like `clientWidth` in the loop force the browser to recalculate layouts synchronously (layout thrashing).
 **Action:** Use an offscreen canvas to pre-render static background elements once and blit them via `drawImage()` in the main loop. Cache element dimensions in `useRef` and update them only via `ResizeObserver` to ensure the animation loop remains purely computational.
+
+## 2026-06-25 - Zero-Allocation Binary Validation in Workers
+**Learning:** Even small object allocations like 'new DataView()' or 'new Uint8Array()' inside high-frequency intake loops (every 64KB chunk) create significant garbage collection pressure at high throughput (e.g., 1Gbps+). Furthermore, multiple 'Map.get()' calls for the same file state add redundant hash overhead.
+**Action:** Pre-calculate validation components (like uint32 parts of a File ID) during initialization and use a single-slot 'lastWriteCache' for the most recent file. This allows the hot path to operate with zero allocations and minimal lookups.
