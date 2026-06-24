@@ -73,3 +73,7 @@
 ## 2026-06-20 - Canvas Background Caching & Layout Stability
 **Learning:** Redrawing complex static geometry (concentric circles, grid lines) in a high-frequency (60Hz) canvas animation loop consumes significant CPU and increases frame-time variance. Additionally, repeated DOM property lookups like `clientWidth` in the loop force the browser to recalculate layouts synchronously (layout thrashing).
 **Action:** Use an offscreen canvas to pre-render static background elements once and blit them via `drawImage()` in the main loop. Cache element dimensions in `useRef` and update them only via `ResizeObserver` to ensure the animation loop remains purely computational.
+
+## 2026-06-25 - 32-bit Limit in Bitwise Offsets
+**Learning:** JavaScript bitwise operators (like `<<`) operate on 32-bit signed integers. Using `chunkIndex << 16` to calculate a 64KB-aligned file offset will overflow and wrap to negative values for files larger than 2GB (^{31}$ bytes).
+**Action:** Use standard multiplication (`chunkIndex * 65536`) for file offsets to support large transfers (up to 20GB+) while maintaining precision beyond the 32-bit boundary.
