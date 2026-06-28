@@ -4,6 +4,9 @@ interface TransferMetadata {
   id: string;
   size: number;
   totalChunks: number;
+  salt: string;
+  binaryId: Uint8Array;
+  lastReportedProgress: number;
 }
 
 interface InitPayload {
@@ -35,30 +38,17 @@ interface WorkerTransferState {
   opfsName: string; // Store the exact salted name
   lastReportedProgress: number;
   receivedBitfield: Uint8Array; // Dedup: track which chunks have been written using bits
+  // Compact File ID components for ultra-fast 4-way uint32 comparison
+  exp0: number;
+  exp1: number;
+  exp2: number;
+  exp3: number;
 }
 
 const fileHandles = new Map<string, FileSystemFileHandle>();
 const accessHandles = new Map<string, SyncHandle>();
 const metadataMap = new Map<string, WorkerTransferState>();
 const lastProgressUpdate = new Map<string, number>();
-
-const PROGRESS_THROTTLE_MS = 100;
-const WORKER_CHUNK_SIZE = 64 * 1024; // 64KB - MUST match CHUNK_SIZE in fileTransfer.ts
-
-// Speed performance: Pre-allocate reusable buffers and encoders
-const encoder = new TextEncoder();
-const fileIdBufferMap = new Map<string, Uint8Array>();
-
-/**
- * Fast binary comparison for File IDs
- */
-function compareUint8Arrays(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
 
 const messageQueue: MessageEvent[] = [];
 let isProcessing = false;
@@ -95,16 +85,11 @@ async function handleMessage(e: MessageEvent) {
     try {
       const root = await navigator.storage.getDirectory();
       const fileId = metadata.id;
-      const salt = (metadata as any).salt || '';
+      const salt = metadata.salt || '';
       const opfsName = salt ? `lynkless-${fileId}-${salt}` : `lynkless-${fileId}`;
       
       // Cache binary File ID for fast comparison
-      const binaryId = (metadata as any).binaryId;
-      if (binaryId) {
-        fileIdBufferMap.set(fileId, new Uint8Array(binaryId));
-      } else {
-        fileIdBufferMap.set(fileId, encoder.encode(fileId)); // Fallback
-      }
+      const binaryId = metadata.binaryId;
 
       const fileHandle = await root.getFileHandle(opfsName, { create: true });
       
@@ -120,6 +105,14 @@ async function handleMessage(e: MessageEvent) {
       
       fileHandles.set(metadata.id, fileHandle);
       accessHandles.set(metadata.id, accessHandle);
+      // Bolt: Pre-calculate the four uint32 components of the binary file ID
+      // This allows O(1) validation in handleMessage('write') via DataView.
+      const idView = new DataView(new Uint8Array(binaryId).buffer);
+      const exp0 = idView.getUint32(0, true);
+      const exp1 = idView.getUint32(4, true);
+      const exp2 = idView.getUint32(8, true);
+      const exp3 = idView.getUint32(12, true);
+
       metadataMap.set(fileId, {
         totalChunks: metadata.totalChunks,
         receivedChunks: 0,
@@ -127,7 +120,11 @@ async function handleMessage(e: MessageEvent) {
         opfsName: opfsName,
         lastReportedProgress: 0,
         // Bitfield takes 1 bit per chunk (1MB RAM handles > 8 Million chunks)
-        receivedBitfield: new Uint8Array(Math.ceil(metadata.totalChunks / 8))
+        receivedBitfield: new Uint8Array(Math.ceil(metadata.totalChunks / 8)),
+        exp0,
+        exp1,
+        exp2,
+        exp3
       });
 
       self.postMessage({ type: 'init-success', fileId: metadata.id });
@@ -143,13 +140,20 @@ async function handleMessage(e: MessageEvent) {
 
     const accessHandle = accessHandles.get(msg.fileId);
     const meta = metadataMap.get(msg.fileId);
-    const expectedIdBuffer = fileIdBufferMap.get(msg.fileId);
     
-    if (accessHandle && meta && expectedIdBuffer && chunkIndex !== undefined && data) {
+    if (accessHandle && meta && chunkIndex !== undefined && data) {
       try {
-        // Fast binary header validation (CPU optimization)
-        const actualIdBuffer = new Uint8Array(data, 0, 16); // 16 = Compact FILE_ID_SIZE
-        if (!compareUint8Arrays(actualIdBuffer, expectedIdBuffer)) return;
+        // Bolt: Fast Binary Header Validation (CPU Optimization)
+        // Bypass compareUint8Arrays loop with four uint32 checks via DataView.
+        const view = new DataView(data);
+        if (view.getUint32(0, true) !== meta.exp0 ||
+            view.getUint32(4, true) !== meta.exp1 ||
+            view.getUint32(8, true) !== meta.exp2 ||
+            view.getUint32(12, true) !== meta.exp3) {
+          // Still return the buffer for recycling if validation fails
+          self.postMessage({ type: 'buffer-return', fileId: msg.fileId, data: data }, [data]);
+          return;
+        }
 
         // Dedup: Skip if this chunk was already written (Tail Redundancy sends last chunks twice)
         const byteIndex = Math.floor(chunkIndex / 8);
@@ -180,8 +184,8 @@ async function handleMessage(e: MessageEvent) {
         }, [data]);
 
         const progressInt = Math.min(Math.floor((meta.receivedChunks / meta.totalChunks) * 100), 100);
-        if (progressInt > ((meta as any).lastReportedProgress || 0) || meta.receivedChunks === meta.totalChunks) {
-          (meta as any).lastReportedProgress = progressInt;
+        if (progressInt > (meta.lastReportedProgress || 0) || meta.receivedChunks === meta.totalChunks) {
+          meta.lastReportedProgress = progressInt;
           self.postMessage({
             type: 'progress',
             fileId: msg.fileId,
@@ -190,7 +194,7 @@ async function handleMessage(e: MessageEvent) {
           });
         }
        } catch (err: unknown) {
-        const error = err as any;
+        const error = err as { name?: string; message?: string };
         let message = error?.message || 'Unknown worker write error';
         
         // DETECT STORAGE QUOTA EXCEEDED (Edge Case Part 2)
