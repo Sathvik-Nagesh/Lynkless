@@ -201,7 +201,7 @@ interface IncomingTransferState {
   useWorker?: boolean;
   // RAM fallback: streaming Blob accumulation instead of full chunk array
   blobParts?: Blob[]; // Flushed blob segments
-  pendingChunks?: (ArrayBuffer | null)[]; // Small bounded buffer before flush
+  pendingChunks?: (Uint8Array | null)[]; // Small bounded buffer before flush
   pendingChunksCount?: number; // Track how many pending slots are filled
   totalReceivedBytes?: number; // Track total bytes for validation (SEC-3)
   checksum?: string;
@@ -698,7 +698,8 @@ export class FileTransferManager {
       }, [data]);
     } else if (incoming.pendingChunks) {
       // LEAK-1 FIX: Streaming RAM fallback — bounded buffer with periodic Blob flush
-      const chunkData = data.slice(HEADER_SIZE);
+      // Bolt: Use zero-copy view instead of slice() to extract chunk data
+      const chunkData = new Uint8Array(data, HEADER_SIZE);
       const bufferIndex = chunkIndex % RAM_FALLBACK_FLUSH_THRESHOLD;
       
       // Only store if slot is empty (dedup for tail redundancy)
@@ -737,7 +738,7 @@ export class FileTransferManager {
   private flushPendingChunksToBlob(incoming: IncomingTransferState): void {
     if (!incoming.pendingChunks) return;
     // Collect non-null chunks in order
-    const parts: ArrayBuffer[] = [];
+    const parts: Uint8Array[] = [];
     for (let i = 0; i < incoming.pendingChunks.length; i++) {
       if (incoming.pendingChunks[i] !== null) {
         parts.push(incoming.pendingChunks[i]!);
@@ -745,7 +746,8 @@ export class FileTransferManager {
       }
     }
     if (parts.length > 0) {
-      incoming.blobParts!.push(new Blob(parts));
+      // Bolt: Use type assertion to satisfy strict BlobPart requirements in Next.js environment
+      incoming.blobParts!.push(new Blob(parts as unknown as BlobPart[]));
     }
     incoming.pendingChunksCount = 0;
   }
