@@ -54,6 +54,12 @@ export default function Home() {
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [showFilePreview, setShowFilePreview] = useState(false);
+  const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
+  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
+  const [isFocusMode, setIsFocusMode] = useState(false);
+  const dragCounter = useRef(0);
+  const sounds = useRef(getSounds());
+  const { showToast } = useToast();
   
   // 120% Upgrade: Handle PWA Share Target Intent
   useEffect(() => {
@@ -71,14 +77,7 @@ export default function Home() {
       }
     };
     handleSharedIntent();
-  }, []);
-
-  const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
-  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
-  const [isFocusMode, setIsFocusMode] = useState(false);
-  const dragCounter = useRef(0);
-  const sounds = useRef(getSounds());
-  const { showToast } = useToast();
+  }, [showToast]);
 
   const {
     clientId,
@@ -136,7 +135,9 @@ export default function Home() {
     [transfers]);
 
   useEffect(() => {
-    setIsFocusMode(activeTransfersCount > 0);
+    requestAnimationFrame(() => {
+      setIsFocusMode(activeTransfersCount > 0);
+    });
   }, [activeTransfersCount]);
 
   useTransferProtection(activeTransfersCount);
@@ -251,7 +252,9 @@ export default function Home() {
   useEffect(() => {
     const connectedPeers = peers.filter(p => p.state === 'connected');
     if (pendingFiles.length > 0 && connectedPeers.length > 0 && !showFilePreview) {
-      setShowFilePreview(true);
+      requestAnimationFrame(() => {
+        setShowFilePreview(true);
+      });
     }
   }, [pendingFiles, peers, showFilePreview]);
 
