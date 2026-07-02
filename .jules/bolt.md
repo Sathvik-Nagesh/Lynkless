@@ -73,3 +73,7 @@
 ## 2026-06-20 - Canvas Background Caching & Layout Stability
 **Learning:** Redrawing complex static geometry (concentric circles, grid lines) in a high-frequency (60Hz) canvas animation loop consumes significant CPU and increases frame-time variance. Additionally, repeated DOM property lookups like `clientWidth` in the loop force the browser to recalculate layouts synchronously (layout thrashing).
 **Action:** Use an offscreen canvas to pre-render static background elements once and blit them via `drawImage()` in the main loop. Cache element dimensions in `useRef` and update them only via `ResizeObserver` to ensure the animation loop remains purely computational.
+
+## 2026-06-25 - Redundant Lockfiles and Workspace Root Inference
+**Learning:** Running 'pnpm install' in a subdirectory can generate extraneous lockfiles ('pnpm-lock.yaml' or 'package-lock.json') that cause Next.js/Turbopack to incorrectly infer the workspace root. This leads to build warnings and potential issues with 'outputFileTracingRoot'.
+**Action:** Always delete redundant lockfiles in subdirectories after installation if a root lockfile exists, or ensure the build environment is configured to ignore them.
