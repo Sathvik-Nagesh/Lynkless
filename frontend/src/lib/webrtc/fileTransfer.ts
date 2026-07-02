@@ -73,10 +73,17 @@ function uuidToBytes(uuid: string): Uint8Array {
   const bytes = new Uint8Array(16);
   let j = 0;
   for (let i = 0; i < uuid.length; i++) {
-    if (uuid[i] === '-') continue;
-    const hexPair = uuid.substring(i, i + 2).toLowerCase();
-    bytes[j++] = hexToByte[hexPair];
-    i++;
+    const c = uuid.charCodeAt(i);
+    if (c === 45) continue; // Skip hyphens '-'
+
+    // Bolt: Optimized zero-allocation hex parser
+    // Nibble 1
+    const n1 = c > 96 ? c - 87 : c > 64 ? c - 55 : c - 48;
+    // Nibble 2
+    const c2 = uuid.charCodeAt(++i);
+    const n2 = c2 > 96 ? c2 - 87 : c2 > 64 ? c2 - 55 : c2 - 48;
+
+    bytes[j++] = (n1 << 4) | n2;
   }
   return bytes;
 }
@@ -525,6 +532,9 @@ export class FileTransferManager {
       }
     }
 
+    // Bolt: Proactively start audio anchor to prevent mobile throttling
+    startAudioAnchor();
+
     const now = Date.now();
     const incomingState: IncomingTransferState = {
       metadata,
@@ -693,9 +703,6 @@ export class FileTransferManager {
       orphanBuffer.push(data);
       return;
     }
-
-    // Start Audio Anchor for Mobile Performance
-    startAudioAnchor();
 
     if (incoming.useWorker && this.worker) {
       this.worker.postMessage({ 
@@ -958,6 +965,10 @@ export class FileTransferManager {
     // Efficient seeking: slice the file and use stream() for memory-efficient reading
     const streamReader = file.slice(startByte).stream().getReader();
 
+    // Bolt: Hoist redundant calls out of the chunking loop
+    const binaryId = this.getBinaryId(fileId);
+    startAudioAnchor();
+
     try {
       while (true) {
         const { done, value } = await streamReader.read();
@@ -975,7 +986,6 @@ export class FileTransferManager {
           const transferBuffer = this.getBufferFromPool();
           const packedChunk = new Uint8Array(transferBuffer);
 
-          const binaryId = this.getBinaryId(fileId);
           packedChunk.set(binaryId, 0);
 
           packedChunk[16] = chunkIndex & 0xFF;
@@ -1090,6 +1100,10 @@ export class FileTransferManager {
     let chunkIndex = 0;
     let transferredSize = 0;
 
+    // Bolt: Hoist redundant calls out of the chunking loop
+    const binaryId = this.getBinaryId(fileId);
+    startAudioAnchor();
+
     try {
       while (true) {
         const { done, value } = await streamReader.read();
@@ -1110,8 +1124,6 @@ export class FileTransferManager {
         const transferBuffer = this.getBufferFromPool();
         const packedChunk = new Uint8Array(transferBuffer);
         
-        // Header Compaction: Cache binary UUID for entire transfer (avoid per-chunk conversion)
-        const binaryId = this.getBinaryId(fileId);
         packedChunk.set(binaryId, 0);
         
         packedChunk[16] = chunkIndex & 0xFF;
@@ -1120,9 +1132,6 @@ export class FileTransferManager {
         packedChunk[19] = (chunkIndex >> 24) & 0xFF;
         
         packedChunk.set(rawChunk, HEADER_SIZE);
-
-        // Mobile Throttling Defense
-        startAudioAnchor();
 
         // Create a view containing only the valid data length for this chunk
         const validChunkView = new Uint8Array(transferBuffer, 0, HEADER_SIZE + rawChunk.length);
@@ -1313,6 +1322,10 @@ export class FileTransferManager {
     let chunkIndex = 0;
     let transferredSize = 0;
 
+    // Bolt: Hoist redundant calls out of the chunking loop
+    const binaryId = this.getBinaryId(fileId);
+    startAudioAnchor();
+
     // Run async mesh transfer loop without blocking the return of meshId
     (async () => {
       try {
@@ -1336,8 +1349,6 @@ export class FileTransferManager {
             const transferBuffer = this.getBufferFromPool();
             const packedChunk = new Uint8Array(transferBuffer);
 
-            // Header Compaction: Cache binary UUID for entire transfer
-            const binaryId = this.getBinaryId(fileId);
             packedChunk.set(binaryId, 0);
 
             packedChunk[16] = chunkIndex & 0xFF;
