@@ -73,3 +73,7 @@
 ## 2026-06-20 - Canvas Background Caching & Layout Stability
 **Learning:** Redrawing complex static geometry (concentric circles, grid lines) in a high-frequency (60Hz) canvas animation loop consumes significant CPU and increases frame-time variance. Additionally, repeated DOM property lookups like `clientWidth` in the loop force the browser to recalculate layouts synchronously (layout thrashing).
 **Action:** Use an offscreen canvas to pre-render static background elements once and blit them via `drawImage()` in the main loop. Cache element dimensions in `useRef` and update them only via `ResizeObserver` to ensure the animation loop remains purely computational.
+
+## 2026-07-05 - Zero-Allocation Binary Protocol Optimizations
+**Learning:** In high-throughput paths (64KB chunks at 1Gbps+), even 'fast' operations like Map lookups and small string allocations (substring) add measurable CPU overhead and GC pressure. Hoisting lookups and using bit-shifting for parsing makes the hot path nearly free of engine-level overhead.
+**Action:** Always hoist Map lookups and object access out of chunk-processing loops. Use bitwise operations for fixed-length binary headers instead of string manipulation.
