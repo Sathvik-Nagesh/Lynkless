@@ -50,6 +50,14 @@ const accessHandles = new Map<string, SyncHandle>();
 const metadataMap = new Map<string, WorkerTransferState>();
 const lastProgressUpdate = new Map<string, number>();
 
+// Bolt: Single-slot cache for high-frequency intake.
+// Consecutive chunks for the same file bypass Map lookups.
+let lastWriteCache: {
+  fileId: string;
+  handle: SyncHandle;
+  meta: WorkerTransferState;
+} | null = null;
+
 const messageQueue: MessageEvent[] = [];
 let isProcessing = false;
 
@@ -135,11 +143,23 @@ async function handleMessage(e: MessageEvent) {
   } 
   else if (msg.type === 'write') {
     const payload = msg.payload as WritePayload | undefined;
-    if (!payload) return;
+    if (!payload || payload.data.byteLength < 20) return;
     const { chunkIndex, data } = payload;
 
-    const accessHandle = accessHandles.get(msg.fileId);
-    const meta = metadataMap.get(msg.fileId);
+    // Bolt: Use single-slot cache to bypass Map lookups for consecutive chunks
+    let accessHandle: SyncHandle | undefined;
+    let meta: WorkerTransferState | undefined;
+
+    if (lastWriteCache && lastWriteCache.fileId === msg.fileId) {
+      accessHandle = lastWriteCache.handle;
+      meta = lastWriteCache.meta;
+    } else {
+      accessHandle = accessHandles.get(msg.fileId);
+      meta = metadataMap.get(msg.fileId);
+      if (accessHandle && meta) {
+        lastWriteCache = { fileId: msg.fileId, handle: accessHandle, meta };
+      }
+    }
     
     if (accessHandle && meta && chunkIndex !== undefined && data) {
       try {
@@ -155,9 +175,9 @@ async function handleMessage(e: MessageEvent) {
           return;
         }
 
-        // Dedup: Skip if this chunk was already written (Tail Redundancy sends last chunks twice)
-        const byteIndex = Math.floor(chunkIndex / 8);
-        const bitMask = 1 << (chunkIndex % 8);
+        // Bolt: Optimized bitfield indexing using bitwise shifts
+        const byteIndex = chunkIndex >> 3;
+        const bitMask = 1 << (chunkIndex & 7);
         if ((meta.receivedBitfield[byteIndex] & bitMask) !== 0) {
           // Still return the buffer for recycling
           self.postMessage({ 
@@ -170,6 +190,7 @@ async function handleMessage(e: MessageEvent) {
         meta.receivedBitfield[byteIndex] |= bitMask;
 
         // Direct Synchronous Write (Atomic and Safe for out-of-order)
+        // Bolt: writeOffset calculation remains multiplication to avoid 32-bit signed overflow for >2GB files
         const writeOffset = chunkIndex * 65536;
         const chunkData = new Uint8Array(data, 20); // 20-byte header
         accessHandle.write(chunkData, { at: writeOffset });
@@ -236,6 +257,7 @@ async function handleMessage(e: MessageEvent) {
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
       lastProgressUpdate.delete(msg.fileId);
+      if (lastWriteCache?.fileId === msg.fileId) lastWriteCache = null;
     }
   }
   else if (msg.type === 'abort') {
@@ -255,6 +277,7 @@ async function handleMessage(e: MessageEvent) {
       fileHandles.delete(msg.fileId);
       metadataMap.delete(msg.fileId);
       lastProgressUpdate.delete(msg.fileId);
+      if (lastWriteCache?.fileId === msg.fileId) lastWriteCache = null;
       
       self.postMessage({ type: 'abort-success', fileId: msg.fileId });
     }
