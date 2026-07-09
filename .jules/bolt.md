@@ -73,3 +73,7 @@
 ## 2026-06-20 - Canvas Background Caching & Layout Stability
 **Learning:** Redrawing complex static geometry (concentric circles, grid lines) in a high-frequency (60Hz) canvas animation loop consumes significant CPU and increases frame-time variance. Additionally, repeated DOM property lookups like `clientWidth` in the loop force the browser to recalculate layouts synchronously (layout thrashing).
 **Action:** Use an offscreen canvas to pre-render static background elements once and blit them via `drawImage()` in the main loop. Cache element dimensions in `useRef` and update them only via `ResizeObserver` to ensure the animation loop remains purely computational.
+
+## 2026-07-09 - Overhead of Higher-Order Functions in Hot Paths
+**Learning:** Using `filter()`, `reduce()`, or `map()` in a hot loop (e.g., every 64KB chunk in a multi-gigabyte transfer) creates significant garbage collection pressure due to repeated array and object allocations. Manual `for` loops with pre-allocated result buffers or simple counters are much more efficient.
+**Action:** Replace higher-order functions and array spread operators with manual `for` loops in high-frequency transmission paths.
