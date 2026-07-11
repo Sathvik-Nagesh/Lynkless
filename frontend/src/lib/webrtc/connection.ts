@@ -463,21 +463,29 @@ export class WebRTCManager {
     const peer = this.peers.get(peerId);
     if (!peer) return false;
 
-    const openChannels = peer.dataChannels.filter((ch) => ch.readyState === 'open');
-    const channels =
-      openChannels.length > 0
-        ? openChannels
-        : peer.dataChannel?.readyState === 'open'
-          ? [peer.dataChannel]
-          : [];
+    let channel: RTCDataChannel | null = null;
+    let minBuffered = Infinity;
 
-    if (channels.length === 0) return false;
+    // Bolt: Optimized manual loop to find the best open channel without array allocations
+    const channelsArray = peer.dataChannels;
+    for (let i = 0; i < channelsArray.length; i++) {
+      const ch = channelsArray[i];
+      if (ch.readyState === 'open') {
+        if (ch.bufferedAmount < minBuffered) {
+          minBuffered = ch.bufferedAmount;
+          channel = ch;
+        }
+      }
+    }
 
-    // Pick channel with least buffered data
-    const channel = channels.reduce((best, ch) =>
-      ch.bufferedAmount < best.bufferedAmount ? ch : best,
-      channels[0],
-    );
+    if (!channel) {
+      const fallback = peer.dataChannel;
+      if (fallback && fallback.readyState === 'open') {
+        channel = fallback;
+      }
+    }
+
+    if (!channel) return false;
 
     // Backpressure: wait if buffer is > 8 MB
     while (channel.bufferedAmount > 8 * 1024 * 1024) {
