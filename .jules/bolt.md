@@ -73,3 +73,11 @@
 ## 2026-06-20 - Canvas Background Caching & Layout Stability
 **Learning:** Redrawing complex static geometry (concentric circles, grid lines) in a high-frequency (60Hz) canvas animation loop consumes significant CPU and increases frame-time variance. Additionally, repeated DOM property lookups like `clientWidth` in the loop force the browser to recalculate layouts synchronously (layout thrashing).
 **Action:** Use an offscreen canvas to pre-render static background elements once and blit them via `drawImage()` in the main loop. Cache element dimensions in `useRef` and update them only via `ResizeObserver` to ensure the animation loop remains purely computational.
+
+## 2026-07-15 - Zero-Allocation Mesh Broadcast Iteration
+**Learning:** Using intermediate arrays (like `activeIndices`) to track active peers in a high-frequency mesh broadcast loop still triggers garbage collection pressure (~16,000 allocations per GB).
+**Action:** Use manual loops and direct state property checks (`!tx.cancelled && !tx.paused`) within the broadcast loop to achieve true zero-allocation pathing for mesh transmission.
+
+## 2026-07-15 - Multi-Lockfile Hazards in Next.js Builds
+**Learning:** Deleting a `package-lock.json` in a Next.js workspace to satisfy "multiple lockfile" warnings can break dependency integrity and consistent builds.
+**Action:** Maintain lockfiles in their respective directories. If Next.js incorrectly infers the workspace root, use `turbopack.root` in `next.config.js` instead of deleting critical dependency artifacts.
