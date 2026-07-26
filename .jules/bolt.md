@@ -73,3 +73,7 @@
 ## 2026-06-20 - Canvas Background Caching & Layout Stability
 **Learning:** Redrawing complex static geometry (concentric circles, grid lines) in a high-frequency (60Hz) canvas animation loop consumes significant CPU and increases frame-time variance. Additionally, repeated DOM property lookups like `clientWidth` in the loop force the browser to recalculate layouts synchronously (layout thrashing).
 **Action:** Use an offscreen canvas to pre-render static background elements once and blit them via `drawImage()` in the main loop. Cache element dimensions in `useRef` and update them only via `ResizeObserver` to ensure the animation loop remains purely computational.
+
+## 2026-06-25 - Zero-Allocation WebRTC Data Channel Selection
+**Learning:** Performing array operations like `.filter()` and `.reduce()` inside high-frequency WebRTC `sendToPeer` calls (for every single 64KB chunk) creates significant CPU overhead, closure allocation, and garbage collection pressure on the main thread.
+**Action:** Replace functional array pipelines in high-throughput hot paths with standard single-pass `for` loops to select assets (like data channels) with zero memory allocations and O(1) space complexity.
