@@ -48,6 +48,7 @@ const ENABLE_CALLS = process.env.NEXT_PUBLIC_ENABLE_CALLS !== 'false';
 import { checkSharedFiles } from '@/lib/pwa/shareTarget';
 
 export default function Home() {
+  const { showToast } = useToast();
   const [isLoading, setIsLoading] = useState(true);
   const [selectedPeer, setSelectedPeer] = useState<string | null>(null);
   const [showQRCode, setShowQRCode] = useState(false);
@@ -71,14 +72,12 @@ export default function Home() {
       }
     };
     handleSharedIntent();
-  }, []);
+  }, [showToast]);
 
   const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
   const [isGlobalDragging, setIsGlobalDragging] = useState(false);
-  const [isFocusMode, setIsFocusMode] = useState(false);
   const dragCounter = useRef(0);
   const sounds = useRef(getSounds());
-  const { showToast } = useToast();
 
   const {
     clientId,
@@ -135,9 +134,7 @@ export default function Home() {
     transfers.filter(t => t.status === 'transferring' || t.status === 'paused').length,
     [transfers]);
 
-  useEffect(() => {
-    setIsFocusMode(activeTransfersCount > 0);
-  }, [activeTransfersCount]);
+  const isFocusMode = activeTransfersCount > 0;
 
   useTransferProtection(activeTransfersCount);
 
@@ -251,7 +248,7 @@ export default function Home() {
   useEffect(() => {
     const connectedPeers = peers.filter(p => p.state === 'connected');
     if (pendingFiles.length > 0 && connectedPeers.length > 0 && !showFilePreview) {
-      setShowFilePreview(true);
+      requestAnimationFrame(() => setShowFilePreview(true));
     }
   }, [pendingFiles, peers, showFilePreview]);
 
