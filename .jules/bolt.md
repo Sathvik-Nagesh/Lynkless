@@ -1,3 +1,7 @@
+## 2026-06-25 - Zero-Allocation WebRTC Channel Selection
+**Learning:** High-frequency data transmission paths (e.g., sending 64KB chunks) are extremely sensitive to garbage collection overhead. Calling `.filter()` and `.reduce()` on every single chunk to select the best active data channel creates thousands of short-lived array and function-callback allocations, leading to CPU spikes and throughput degradation.
+**Action:** Replace high-frequency array filter and reduce operations with a single manual loop using stable local references to completely eliminate garbage collection churn in the hot path.
+
 ## 2026-02-12 - UI Thraging during High-Speed Transfers
 **Learning:** High-frequency state updates (e.g., file transfer progress every 64KB chunk) can cause massive UI thrashing and block the main thread, especially when multiple heavy components are listening to these updates.
 **Action:** Implement throttling for progress notifications (100ms interval is a good balance) and memoize components that receive these updates to prevent redundant re-renders.
