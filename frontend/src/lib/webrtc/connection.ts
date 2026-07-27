@@ -463,21 +463,30 @@ export class WebRTCManager {
     const peer = this.peers.get(peerId);
     if (!peer) return false;
 
-    const openChannels = peer.dataChannels.filter((ch) => ch.readyState === 'open');
-    const channels =
-      openChannels.length > 0
-        ? openChannels
-        : peer.dataChannel?.readyState === 'open'
-          ? [peer.dataChannel]
-          : [];
+    // Bolt: Zero-allocation data channel selection.
+    // Replaces .filter() and .reduce() with a manual loop to find the open channel with
+    // the least buffered data. This eliminates per-chunk array allocations on high-throughput paths.
+    let channel: RTCDataChannel | null = null;
+    let minBufferedAmount = Infinity;
 
-    if (channels.length === 0) return false;
+    const dataChannels = peer.dataChannels;
+    for (let i = 0; i < dataChannels.length; i++) {
+      const ch = dataChannels[i];
+      if (ch.readyState === 'open') {
+        if (ch.bufferedAmount < minBufferedAmount) {
+          minBufferedAmount = ch.bufferedAmount;
+          channel = ch;
+        }
+      }
+    }
 
-    // Pick channel with least buffered data
-    const channel = channels.reduce((best, ch) =>
-      ch.bufferedAmount < best.bufferedAmount ? ch : best,
-      channels[0],
-    );
+    if (!channel) {
+      if (peer.dataChannel?.readyState === 'open') {
+        channel = peer.dataChannel;
+      } else {
+        return false;
+      }
+    }
 
     // Backpressure: wait if buffer is > 8 MB
     while (channel.bufferedAmount > 8 * 1024 * 1024) {
