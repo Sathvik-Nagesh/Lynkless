@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { WebRTCManager } from '@/lib/webrtc/connection';
 import { FileTransferManager } from '@/lib/webrtc/fileTransfer';
 import { ChatManager } from '@/lib/webrtc/chat';
@@ -24,36 +24,33 @@ export const useEngine = () => {
 };
 
 export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const engineRef = useRef<EngineContextType | null>(null);
-
-  if (!engineRef.current) {
+  // Use useState initializer for stable, render-safe singleton initialization
+  const [engine] = useState<EngineContextType>(() => {
     const webrtc = new WebRTCManager();
     const fileTransfer = new FileTransferManager(webrtc);
     const chat = new ChatManager(webrtc);
     const connectionQuality = new ConnectionQualityManager(webrtc);
 
-    engineRef.current = {
+    return {
       webrtc,
       fileTransfer,
       chat,
       connectionQuality,
     };
-  }
+  });
 
   useEffect(() => {
     return () => {
       // Clean up all managers when the engine unmounts
-      if (engineRef.current) {
-        engineRef.current.fileTransfer.destroy();
-        engineRef.current.chat.destroy();
-        engineRef.current.connectionQuality.destroy();
-        engineRef.current.webrtc.destroy();
-      }
+      engine.fileTransfer.destroy();
+      engine.chat.destroy();
+      engine.connectionQuality.destroy();
+      engine.webrtc.destroy();
     };
-  }, []);
+  }, [engine]);
 
   return (
-    <EngineContext.Provider value={engineRef.current}>
+    <EngineContext.Provider value={engine}>
       {children}
     </EngineContext.Provider>
   );
