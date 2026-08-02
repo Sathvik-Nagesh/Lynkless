@@ -53,8 +53,13 @@ export default function Home() {
   const [showQRCode, setShowQRCode] = useState(false);
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [showFilePreview, setShowFilePreview] = useState(false);
   
+  const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
+  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
+  const dragCounter = useRef(0);
+  const sounds = useRef(getSounds());
+  const { showToast } = useToast();
+
   // 120% Upgrade: Handle PWA Share Target Intent
   useEffect(() => {
     const handleSharedIntent = async () => {
@@ -63,7 +68,6 @@ export default function Home() {
         const sharedFiles = await checkSharedFiles();
         if (sharedFiles.length > 0) {
           setPendingFiles(sharedFiles);
-          setShowFilePreview(true);
           showToast(`Prepared ${sharedFiles.length} shared files`, 'info');
           // Clean up URL
           window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
@@ -71,14 +75,7 @@ export default function Home() {
       }
     };
     handleSharedIntent();
-  }, []);
-
-  const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
-  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
-  const [isFocusMode, setIsFocusMode] = useState(false);
-  const dragCounter = useRef(0);
-  const sounds = useRef(getSounds());
-  const { showToast } = useToast();
+  }, [showToast]);
 
   const {
     clientId,
@@ -135,9 +132,7 @@ export default function Home() {
     transfers.filter(t => t.status === 'transferring' || t.status === 'paused').length,
     [transfers]);
 
-  useEffect(() => {
-    setIsFocusMode(activeTransfersCount > 0);
-  }, [activeTransfersCount]);
+  const isFocusMode = activeTransfersCount > 0;
 
   useTransferProtection(activeTransfersCount);
 
@@ -244,16 +239,7 @@ export default function Home() {
     }
 
     setPendingFiles(files);
-    setShowFilePreview(true);
   }, [peers, showToast]);
-
-  // Handle queued files when a peer connects eventually
-  useEffect(() => {
-    const connectedPeers = peers.filter(p => p.state === 'connected');
-    if (pendingFiles.length > 0 && connectedPeers.length > 0 && !showFilePreview) {
-      setShowFilePreview(true);
-    }
-  }, [pendingFiles, peers, showFilePreview]);
 
   // Invulnerability Patch: Service Worker Keep-Alive Loop
   useEffect(() => {
@@ -273,9 +259,7 @@ export default function Home() {
 
   // Confirm and send files
   const handleConfirmSend = useCallback(async (password?: string, shouldZip?: boolean, compressImagesFlag?: boolean) => {
-    setShowFilePreview(false);
-
-    // Clear pending files immediately so useEffect doesn't reopen modal
+    // Clear pending files immediately so modal closes and doesn't reopen
     const finalFilesToProcess = [...pendingFiles];
     setPendingFiles([]);
 
@@ -453,6 +437,9 @@ export default function Home() {
   // Count connected peers
   const connectedPeersCount = connectedPeers.length;
 
+  // Derive file preview modal visibility to completely bypass sync useEffects
+  const showFilePreview = pendingFiles.length > 0 && connectedPeersCount > 0;
+
   // Check if we can send files (have a connected peer)
   const canSendFile = useMemo(() =>
     !!selectedPeer && connectedPeers.some(p => p.id === selectedPeer),
@@ -599,7 +586,6 @@ export default function Home() {
             peerNames={connectedPeers.map(p => getPeerName(p.id))}
             onConfirm={handleConfirmSend}
             onCancel={() => {
-              setShowFilePreview(false);
               setPendingFiles([]);
             }}
           />
