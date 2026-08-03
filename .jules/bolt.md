@@ -73,3 +73,7 @@
 ## 2026-06-20 - Canvas Background Caching & Layout Stability
 **Learning:** Redrawing complex static geometry (concentric circles, grid lines) in a high-frequency (60Hz) canvas animation loop consumes significant CPU and increases frame-time variance. Additionally, repeated DOM property lookups like `clientWidth` in the loop force the browser to recalculate layouts synchronously (layout thrashing).
 **Action:** Use an offscreen canvas to pre-render static background elements once and blit them via `drawImage()` in the main loop. Cache element dimensions in `useRef` and update them only via `ResizeObserver` to ensure the animation loop remains purely computational.
+
+## 2026-10-24 - O(1) Transfer History Statistics with Local Cache
+**Learning:** Scanning the entire IndexedDB database table of historical transfer logs (using a cursor or `db.getAll()`) to sum cumulative sent/received bytes is an $O(N)$ linear-time and linear-space bottleneck. As transfer history grows, this causes blocking rendering lags and unnecessary main-thread memory overhead.
+**Action:** Maintain a persistent `localStorage` cache for aggregate statistics. In `saveTransferHistory`, incrementally adjust the totals in $O(1)$ time based on status changes, and read the totals instantly in $O(1)$ time in `getTransferStats` instead of querying the IndexedDB table.
