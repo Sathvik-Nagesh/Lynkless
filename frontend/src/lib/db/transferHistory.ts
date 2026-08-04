@@ -48,11 +48,49 @@ const notifyChange = () => {
   changeHandlers.forEach(handler => handler());
 };
 
+const STATS_SENT_KEY = 'lynkless-stats-sent-v2';
+const STATS_RCVD_KEY = 'lynkless-stats-received-v2';
+
+// Helper to retrieve stats from localStorage
+const getCachedStats = () => {
+  if (typeof window === 'undefined') return null;
+  const sent = localStorage.getItem(STATS_SENT_KEY);
+  const rcvd = localStorage.getItem(STATS_RCVD_KEY);
+  if (sent !== null && rcvd !== null) {
+    return {
+      totalSent: parseInt(sent, 10) || 0,
+      totalReceived: parseInt(rcvd, 10) || 0
+    };
+  }
+  return null;
+};
+
+// Helper to store stats in localStorage
+const setCachedStats = (totalSent: number, totalReceived: number) => {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(STATS_SENT_KEY, totalSent.toString());
+  localStorage.setItem(STATS_RCVD_KEY, totalReceived.toString());
+};
+
 export const saveTransferHistory = async (entry: TransferHistoryEntry) => {
   try {
     const db = await getDB();
     if (db) {
       await db.put('transfers', entry);
+
+      // Bolt: Update the cache incrementally for completed transfers
+      if (entry.status === 'completed') {
+        const cached = getCachedStats();
+        if (cached) {
+          if (entry.transferType === 'outgoing') {
+            cached.totalSent += entry.totalSize;
+          } else {
+            cached.totalReceived += entry.totalSize;
+          }
+          setCachedStats(cached.totalSent, cached.totalReceived);
+        }
+      }
+
       notifyChange();
     }
   } catch (err) {
@@ -85,11 +123,16 @@ export const getTransferHistory = async (limit = 50): Promise<TransferHistoryEnt
 };
 
 /**
- * Calculate aggregate statistics in a single O(N) pass using a cursor.
- * Bolt: Optimized using openCursor() for O(1) space complexity, preventing
- * memory spikes by avoiding loading the entire history into a large array.
+ * Calculate aggregate statistics in O(1) time using a localStorage-based cache.
+ * Bolt: Reduces the calculation from an O(N) database cursor scan to an O(1) cached lookup,
+ * with incremental O(1) updates when history entries are saved or cleared.
  */
 export const getTransferStats = async () => {
+  const cached = getCachedStats();
+  if (cached !== null) {
+    return cached;
+  }
+
   try {
     const db = await getDB();
     if (db) {
@@ -109,6 +152,7 @@ export const getTransferStats = async () => {
         cursor = await cursor.continue();
       }
 
+      setCachedStats(totalSent, totalReceived);
       return { totalSent, totalReceived };
     }
   } catch (err) {
@@ -122,6 +166,7 @@ export const clearTransferHistory = async () => {
     const db = await getDB();
     if (db) {
       await db.clear('transfers');
+      setCachedStats(0, 0);
       notifyChange();
     }
   } catch (err) {
