@@ -73,3 +73,7 @@
 ## 2026-06-20 - Canvas Background Caching & Layout Stability
 **Learning:** Redrawing complex static geometry (concentric circles, grid lines) in a high-frequency (60Hz) canvas animation loop consumes significant CPU and increases frame-time variance. Additionally, repeated DOM property lookups like `clientWidth` in the loop force the browser to recalculate layouts synchronously (layout thrashing).
 **Action:** Use an offscreen canvas to pre-render static background elements once and blit them via `drawImage()` in the main loop. Cache element dimensions in `useRef` and update them only via `ResizeObserver` to ensure the animation loop remains purely computational.
+
+## 2026-06-21 - Fragility of Off-Database State Caching
+**Learning:** Attempting to cache transactional database stats (like total bytes sent/received in IndexedDB) in a separate, synchronous store like `localStorage` is extremely fragile. It introduces double-counting/idempotency issues on upsert updates, multi-tab state drift, and cache-invalidation challenges. In contrast, scanning a lightweight IndexedDB history of a few hundred items is extremely fast (< 2ms) and preserves a single source of truth.
+**Action:** Keep database stats calculation directly tied to database operations and queries. Avoid caching database state inside a non-transactional off-database store like `localStorage`. Instead, optimize high-frequency rendering by memoizing visual panels (like peer lists) to eliminate re-renders during progress state updates.
