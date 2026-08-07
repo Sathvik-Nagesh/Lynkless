@@ -48,13 +48,19 @@ const ENABLE_CALLS = process.env.NEXT_PUBLIC_ENABLE_CALLS !== 'false';
 import { checkSharedFiles } from '@/lib/pwa/shareTarget';
 
 export default function Home() {
+  const { showToast } = useToast();
   const [isLoading, setIsLoading] = useState(true);
   const [selectedPeer, setSelectedPeer] = useState<string | null>(null);
   const [showQRCode, setShowQRCode] = useState(false);
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [showFilePreview, setShowFilePreview] = useState(false);
-  
+  const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
+  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
+  const dragCounter = useRef(0);
+  const sounds = useRef(getSounds());
+
+  const [hasManuallyClosedPreview, setHasManuallyClosedPreview] = useState(false);
+
   // 120% Upgrade: Handle PWA Share Target Intent
   useEffect(() => {
     const handleSharedIntent = async () => {
@@ -63,7 +69,6 @@ export default function Home() {
         const sharedFiles = await checkSharedFiles();
         if (sharedFiles.length > 0) {
           setPendingFiles(sharedFiles);
-          setShowFilePreview(true);
           showToast(`Prepared ${sharedFiles.length} shared files`, 'info');
           // Clean up URL
           window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
@@ -71,14 +76,7 @@ export default function Home() {
       }
     };
     handleSharedIntent();
-  }, []);
-
-  const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
-  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
-  const [isFocusMode, setIsFocusMode] = useState(false);
-  const dragCounter = useRef(0);
-  const sounds = useRef(getSounds());
-  const { showToast } = useToast();
+  }, [showToast]);
 
   const {
     clientId,
@@ -135,9 +133,8 @@ export default function Home() {
     transfers.filter(t => t.status === 'transferring' || t.status === 'paused').length,
     [transfers]);
 
-  useEffect(() => {
-    setIsFocusMode(activeTransfersCount > 0);
-  }, [activeTransfersCount]);
+  // Derived Focus Mode state to eliminate useEffect state sync and cascading renders
+  const isFocusMode = activeTransfersCount > 0;
 
   useTransferProtection(activeTransfersCount);
 
@@ -244,16 +241,8 @@ export default function Home() {
     }
 
     setPendingFiles(files);
-    setShowFilePreview(true);
+    setHasManuallyClosedPreview(false);
   }, [peers, showToast]);
-
-  // Handle queued files when a peer connects eventually
-  useEffect(() => {
-    const connectedPeers = peers.filter(p => p.state === 'connected');
-    if (pendingFiles.length > 0 && connectedPeers.length > 0 && !showFilePreview) {
-      setShowFilePreview(true);
-    }
-  }, [pendingFiles, peers, showFilePreview]);
 
   // Invulnerability Patch: Service Worker Keep-Alive Loop
   useEffect(() => {
@@ -273,7 +262,7 @@ export default function Home() {
 
   // Confirm and send files
   const handleConfirmSend = useCallback(async (password?: string, shouldZip?: boolean, compressImagesFlag?: boolean) => {
-    setShowFilePreview(false);
+    setHasManuallyClosedPreview(true);
 
     // Clear pending files immediately so useEffect doesn't reopen modal
     const finalFilesToProcess = [...pendingFiles];
@@ -453,6 +442,8 @@ export default function Home() {
   // Count connected peers
   const connectedPeersCount = connectedPeers.length;
 
+  const showFilePreview = pendingFiles.length > 0 && connectedPeersCount > 0 && !hasManuallyClosedPreview;
+
   // Check if we can send files (have a connected peer)
   const canSendFile = useMemo(() =>
     !!selectedPeer && connectedPeers.some(p => p.id === selectedPeer),
@@ -535,6 +526,7 @@ export default function Home() {
           handleFileDrop(validFiles);
         } else {
           setPendingFiles(validFiles);
+          setHasManuallyClosedPreview(false);
           showToast('Files queued! Select a peer on the radar to send them.', 'info');
         }
       }}
@@ -599,7 +591,7 @@ export default function Home() {
             peerNames={connectedPeers.map(p => getPeerName(p.id))}
             onConfirm={handleConfirmSend}
             onCancel={() => {
-              setShowFilePreview(false);
+              setHasManuallyClosedPreview(true);
               setPendingFiles([]);
             }}
           />

@@ -73,3 +73,7 @@
 ## 2026-06-20 - Canvas Background Caching & Layout Stability
 **Learning:** Redrawing complex static geometry (concentric circles, grid lines) in a high-frequency (60Hz) canvas animation loop consumes significant CPU and increases frame-time variance. Additionally, repeated DOM property lookups like `clientWidth` in the loop force the browser to recalculate layouts synchronously (layout thrashing).
 **Action:** Use an offscreen canvas to pre-render static background elements once and blit them via `drawImage()` in the main loop. Cache element dimensions in `useRef` and update them only via `ResizeObserver` to ensure the animation loop remains purely computational.
+
+## 2026-07-01 - Concurrent-Safe Engine Provider via useState Lazy Initializer
+**Learning:** Instantiating side-effectful classes (like WebRTCManagers, ChatManagers, and FileTransfers) inside a `useRef` initializer block or during the render body violates React's Concurrent Mode requirements. It triggers ESLint warnings ('Cannot access refs during render') and can result in resource leakages or duplicate instances.
+**Action:** Always utilize a `useState` lazy initializer function `useState(() => new MyClass())` to ensure stable, render-safe single-instance creation of context/state providers.
