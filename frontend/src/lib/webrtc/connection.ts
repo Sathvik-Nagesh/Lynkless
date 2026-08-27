@@ -454,6 +454,7 @@ export class WebRTCManager {
 
   /**
    * Send data to a specific peer with load-balanced round-robin + backpressure
+   * Bolt: Optimized to select the open data channel with the least buffered data in a single allocation-free pass.
    */
   async sendToPeer(
     peerId: string,
@@ -463,40 +464,47 @@ export class WebRTCManager {
     const peer = this.peers.get(peerId);
     if (!peer) return false;
 
-    const openChannels = peer.dataChannels.filter((ch) => ch.readyState === 'open');
-    const channels =
-      openChannels.length > 0
-        ? openChannels
-        : peer.dataChannel?.readyState === 'open'
-          ? [peer.dataChannel]
-          : [];
+    // Bolt: Find the open channel with the least buffered data in a single allocation-free pass.
+    let channel: RTCDataChannel | null = null;
+    let minBufferedAmount = Infinity;
 
-    if (channels.length === 0) return false;
+    for (let i = 0; i < peer.dataChannels.length; i++) {
+      const ch = peer.dataChannels[i];
+      if (ch.readyState === 'open') {
+        if (ch.bufferedAmount < minBufferedAmount) {
+          minBufferedAmount = ch.bufferedAmount;
+          channel = ch;
+        }
+      }
+    }
 
-    // Pick channel with least buffered data
-    const channel = channels.reduce((best, ch) =>
-      ch.bufferedAmount < best.bufferedAmount ? ch : best,
-      channels[0],
-    );
+    // Fallback to legacy single data channel if no channels were open in dataChannels
+    if (!channel && peer.dataChannel && peer.dataChannel.readyState === 'open') {
+      channel = peer.dataChannel;
+    }
+
+    if (!channel) return false;
+
+    const activeChannel = channel;
 
     // Backpressure: wait if buffer is > 8 MB
-    while (channel.bufferedAmount > 8 * 1024 * 1024) {
+    while (activeChannel.bufferedAmount > 8 * 1024 * 1024) {
       await new Promise<void>((resolve) => {
         const onLow = () => {
-          channel.removeEventListener('bufferedamountlow', onLow);
+          activeChannel.removeEventListener('bufferedamountlow', onLow);
           resolve();
         };
-        channel.addEventListener('bufferedamountlow', onLow);
+        activeChannel.addEventListener('bufferedamountlow', onLow);
         setTimeout(() => {
-          channel.removeEventListener('bufferedamountlow', onLow);
+          activeChannel.removeEventListener('bufferedamountlow', onLow);
           resolve();
         }, 100);
       });
     }
 
     try {
-      if (channel.readyState === 'open') {
-        channel.send(data as Parameters<RTCDataChannel['send']>[0]);
+      if (activeChannel.readyState === 'open') {
+        activeChannel.send(data as Parameters<RTCDataChannel['send']>[0]);
         return true;
       }
     } catch (e: unknown) {
@@ -508,12 +516,12 @@ export class WebRTCManager {
         if (_retryCount < 5) {
           await new Promise<void>((resolve) => {
             const onLow = () => {
-              channel.removeEventListener('bufferedamountlow', onLow);
+              activeChannel.removeEventListener('bufferedamountlow', onLow);
               resolve();
             };
-            channel.addEventListener('bufferedamountlow', onLow);
+            activeChannel.addEventListener('bufferedamountlow', onLow);
             setTimeout(() => {
-              channel.removeEventListener('bufferedamountlow', onLow);
+              activeChannel.removeEventListener('bufferedamountlow', onLow);
               resolve();
             }, 100);
           });
