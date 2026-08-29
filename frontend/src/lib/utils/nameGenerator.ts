@@ -55,6 +55,11 @@ export function generateCuteName(peerId: string): string {
 const emojiCache = new Map<string, string>();
 
 /**
+ * Internal cache for short display names to avoid redundant string allocations and regex execution
+ */
+const shortNameCache = new Map<string, string>();
+
+/**
  * Get emoji for a peer based on their name
  */
 export function getEmojiForPeer(name: string): string {
@@ -86,12 +91,27 @@ function hashCode(str: string): number {
 /**
  * Get short display name (first letter of each word + emoji)
  * Example: "PinkGulabCrispy" -> "PGC 🍬"
+ * Optimized with Map caching and allocation-free char code matching for uppercase letters.
  */
 export function getShortDisplayName(fullName: string): string {
+  if (shortNameCache.has(fullName)) {
+    return shortNameCache.get(fullName)!;
+  }
+
   const emoji = getEmojiForPeer(fullName);
-  const words = fullName.match(/[A-Z][a-z]*/g) || [];
-  const initials = words.map(w => w[0]).join('');
-  return `${initials} ${emoji}`;
+
+  // Fast extraction of uppercase initials without regex match() or array allocation
+  let initials = '';
+  for (let i = 0; i < fullName.length; i++) {
+    const code = fullName.charCodeAt(i);
+    if (code >= 65 && code <= 90) { // A-Z
+      initials += fullName[i];
+    }
+  }
+
+  const result = `${initials} ${emoji}`;
+  shortNameCache.set(fullName, result);
+  return result;
 }
 
 /**
@@ -115,4 +135,5 @@ export function getPeerName(peerId: string): string {
 export function clearNameCache(): void {
   nameCache.clear();
   emojiCache.clear();
+  shortNameCache.clear();
 }
