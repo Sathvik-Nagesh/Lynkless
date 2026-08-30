@@ -48,13 +48,13 @@ const ENABLE_CALLS = process.env.NEXT_PUBLIC_ENABLE_CALLS !== 'false';
 import { checkSharedFiles } from '@/lib/pwa/shareTarget';
 
 export default function Home() {
+  const { showToast } = useToast();
   const [isLoading, setIsLoading] = useState(true);
   const [selectedPeer, setSelectedPeer] = useState<string | null>(null);
   const [showQRCode, setShowQRCode] = useState(false);
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [showFilePreview, setShowFilePreview] = useState(false);
-  
+
   // 120% Upgrade: Handle PWA Share Target Intent
   useEffect(() => {
     const handleSharedIntent = async () => {
@@ -63,7 +63,6 @@ export default function Home() {
         const sharedFiles = await checkSharedFiles();
         if (sharedFiles.length > 0) {
           setPendingFiles(sharedFiles);
-          setShowFilePreview(true);
           showToast(`Prepared ${sharedFiles.length} shared files`, 'info');
           // Clean up URL
           window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
@@ -71,14 +70,12 @@ export default function Home() {
       }
     };
     handleSharedIntent();
-  }, []);
+  }, [showToast]);
 
   const [activeView, setActiveView] = useState<'files' | 'screen'>('files');
   const [isGlobalDragging, setIsGlobalDragging] = useState(false);
-  const [isFocusMode, setIsFocusMode] = useState(false);
   const dragCounter = useRef(0);
   const sounds = useRef(getSounds());
-  const { showToast } = useToast();
 
   const {
     clientId,
@@ -135,9 +132,8 @@ export default function Home() {
     transfers.filter(t => t.status === 'transferring' || t.status === 'paused').length,
     [transfers]);
 
-  useEffect(() => {
-    setIsFocusMode(activeTransfersCount > 0);
-  }, [activeTransfersCount]);
+  // Derived state: eliminate cascading render cycles
+  const isFocusMode = activeTransfersCount > 0;
 
   useTransferProtection(activeTransfersCount);
 
@@ -232,7 +228,7 @@ export default function Home() {
     prevPeersRef.current = [...peers];
   }, [peers, showToast]);
 
-  // Handle file drop - show preview modal
+  // Handle file drop - queue or prepare files
   const handleFileDrop = useCallback((files: File[]) => {
     const connectedPeers = peers.filter(p => p.state === 'connected');
 
@@ -244,16 +240,7 @@ export default function Home() {
     }
 
     setPendingFiles(files);
-    setShowFilePreview(true);
   }, [peers, showToast]);
-
-  // Handle queued files when a peer connects eventually
-  useEffect(() => {
-    const connectedPeers = peers.filter(p => p.state === 'connected');
-    if (pendingFiles.length > 0 && connectedPeers.length > 0 && !showFilePreview) {
-      setShowFilePreview(true);
-    }
-  }, [pendingFiles, peers, showFilePreview]);
 
   // Invulnerability Patch: Service Worker Keep-Alive Loop
   useEffect(() => {
@@ -273,9 +260,7 @@ export default function Home() {
 
   // Confirm and send files
   const handleConfirmSend = useCallback(async (password?: string, shouldZip?: boolean, compressImagesFlag?: boolean) => {
-    setShowFilePreview(false);
-
-    // Clear pending files immediately so useEffect doesn't reopen modal
+    // Clear pending files immediately to close modal
     const finalFilesToProcess = [...pendingFiles];
     setPendingFiles([]);
 
@@ -453,6 +438,9 @@ export default function Home() {
   // Count connected peers
   const connectedPeersCount = connectedPeers.length;
 
+  // Derived state for preview visibility: eliminates cascading render cycles from useEffect
+  const showFilePreview = pendingFiles.length > 0 && connectedPeersCount > 0;
+
   // Check if we can send files (have a connected peer)
   const canSendFile = useMemo(() =>
     !!selectedPeer && connectedPeers.some(p => p.id === selectedPeer),
@@ -599,7 +587,6 @@ export default function Home() {
             peerNames={connectedPeers.map(p => getPeerName(p.id))}
             onConfirm={handleConfirmSend}
             onCancel={() => {
-              setShowFilePreview(false);
               setPendingFiles([]);
             }}
           />
