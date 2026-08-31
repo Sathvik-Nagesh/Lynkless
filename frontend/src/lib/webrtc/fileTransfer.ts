@@ -258,6 +258,16 @@ export class FileTransferManager {
     }
   }
 
+  /**
+   * Bolt: Throttled Audio Anchor release.
+   * Only stops the silent audio if no more active transfers exist in either direction.
+   */
+  private maybeStopAudioAnchor(): void {
+    if (this.incomingFiles.size === 0 && this.outgoingTransfers.size === 0) {
+      stopAudioAnchor();
+    }
+  }
+
   constructor(private webrtc: WebRTCManager) {
     this.setupDataHandler();
     this.setupConnectionMonitor();
@@ -525,6 +535,9 @@ export class FileTransferManager {
       }
     }
 
+    // Mobile Throttling Defense: Start anchor once per transfer session
+    startAudioAnchor();
+
     const now = Date.now();
     const incomingState: IncomingTransferState = {
       metadata,
@@ -694,9 +707,6 @@ export class FileTransferManager {
       return;
     }
 
-    // Start Audio Anchor for Mobile Performance
-    startAudioAnchor();
-
     if (incoming.useWorker && this.worker) {
       this.worker.postMessage({ 
         type: 'write', 
@@ -786,9 +796,7 @@ export class FileTransferManager {
       this.incomingFiles.delete(fileId);
       this.cleanupTransferState(fileId);
       // Release audio anchor if no more active transfers
-      if (this.incomingFiles.size === 0 && this.outgoingTransfers.size === 0) {
-        stopAudioAnchor();
-      }
+      this.maybeStopAudioAnchor();
     }
   }
 
@@ -835,9 +843,7 @@ export class FileTransferManager {
       this.lastIncomingCache = null;
     }
     // Release audio anchor if no more active transfers
-    if (this.incomingFiles.size === 0 && this.outgoingTransfers.size === 0) {
-      stopAudioAnchor();
-    }
+    this.maybeStopAudioAnchor();
   }
 
   private async handleFileCancel(fileId: string): Promise<void> {
@@ -851,6 +857,7 @@ export class FileTransferManager {
       if (this.lastIncomingCache?.fileId === fileId) {
         this.lastIncomingCache = null;
       }
+      this.maybeStopAudioAnchor();
     }
     
     // Bolt: Handle cancellation of outgoing transfers (Sender side)
@@ -861,6 +868,7 @@ export class FileTransferManager {
       outgoing.cancelled = true;
       this.notifyProgress(fileId, 'cancelled');
       this.outgoingTransfers.delete(fileId);
+      this.maybeStopAudioAnchor();
     }
 
     // Clean up any orphaned chunks for this file
@@ -955,6 +963,10 @@ export class FileTransferManager {
     // Update status
     this.notifyProgress(fileId, 'transferring', { resumable: true });
 
+    // Bolt: Hoist hot-path lookups and system calls
+    startAudioAnchor();
+    const binaryId = this.getBinaryId(fileId);
+
     // Efficient seeking: slice the file and use stream() for memory-efficient reading
     const streamReader = file.slice(startByte).stream().getReader();
 
@@ -963,7 +975,8 @@ export class FileTransferManager {
         const { done, value } = await streamReader.read();
         if (done) break;
 
-        const currentTransfer = this.outgoingTransfers.get(fileId);
+        // Bolt: Use stable local reference to avoid Map.get() in the hot chunk loop
+        const currentTransfer = transfer;
         if (currentTransfer?.cancelled || currentTransfer?.paused) break;
 
         let offset = 0;
@@ -975,7 +988,6 @@ export class FileTransferManager {
           const transferBuffer = this.getBufferFromPool();
           const packedChunk = new Uint8Array(transferBuffer);
 
-          const binaryId = this.getBinaryId(fileId);
           packedChunk.set(binaryId, 0);
 
           packedChunk[16] = chunkIndex & 0xFF;
@@ -1007,10 +1019,12 @@ export class FileTransferManager {
         this.notifyProgress(fileId, 'completed', { transferredSize: file.size });
         this.outgoingTransfers.delete(fileId);
         this.cleanupTransferState(fileId);
+        this.maybeStopAudioAnchor();
       }
     } catch (error) {
       console.error('[FileTransfer] Error resuming file:', error);
       this.notifyProgress(fileId, 'failed', { transferredSize, resumable: true });
+      this.maybeStopAudioAnchor();
     } finally {
       streamReader.releaseLock();
     }
@@ -1085,6 +1099,10 @@ export class FileTransferManager {
       metadata,
     }));
 
+    // Bolt: Hoist hot-path lookups and system calls
+    startAudioAnchor();
+    const binaryId = this.getBinaryId(fileId);
+
     // Restore Rock-Solid Chunking: Sender and Receiver MUST use identical sizes
     const streamReader = file.stream().getReader();
     let chunkIndex = 0;
@@ -1095,7 +1113,8 @@ export class FileTransferManager {
         const { done, value } = await streamReader.read();
         if (done) break;
 
-        const transfer = this.outgoingTransfers.get(fileId);
+        // Bolt: Use stable local reference to avoid Map.get() in the hot chunk loop
+        const transfer = outgoing;
         if (transfer?.cancelled) {
           this.webrtc.sendToPeer(peerId, JSON.stringify({ type: 'file-cancel', fileId }));
           break;
@@ -1110,8 +1129,6 @@ export class FileTransferManager {
         const transferBuffer = this.getBufferFromPool();
         const packedChunk = new Uint8Array(transferBuffer);
         
-        // Header Compaction: Cache binary UUID for entire transfer (avoid per-chunk conversion)
-        const binaryId = this.getBinaryId(fileId);
         packedChunk.set(binaryId, 0);
         
         packedChunk[16] = chunkIndex & 0xFF;
@@ -1120,9 +1137,6 @@ export class FileTransferManager {
         packedChunk[19] = (chunkIndex >> 24) & 0xFF;
         
         packedChunk.set(rawChunk, HEADER_SIZE);
-
-        // Mobile Throttling Defense
-        startAudioAnchor();
 
         // Create a view containing only the valid data length for this chunk
         const validChunkView = new Uint8Array(transferBuffer, 0, HEADER_SIZE + rawChunk.length);
@@ -1186,9 +1200,7 @@ export class FileTransferManager {
         this.cleanupTransferState(fileId);
 
         // Release audio anchor if no more active transfers
-        if (this.outgoingTransfers.size === 0) {
-          stopAudioAnchor();
-        }
+        this.maybeStopAudioAnchor();
       }
 
     } catch (error) {
@@ -1197,6 +1209,7 @@ export class FileTransferManager {
         transferredSize,
         resumable: true,
       });
+      this.maybeStopAudioAnchor();
       throw error;
     }
 
@@ -1315,11 +1328,20 @@ export class FileTransferManager {
 
     // Run async mesh transfer loop without blocking the return of meshId
     (async () => {
+      // Bolt: Hoist hot-path lookups and system calls
+      startAudioAnchor();
+      const binaryId = this.getBinaryId(fileId);
+
+      // Bolt: Pre-resolve transfer state references to avoid Map.get() in loops
+      const activeTransferRefs = peerIds.map(peerId => ({
+        peerId,
+        tx: this.outgoingTransfers.get(`${fileId}-${peerId}`)!
+      }));
+
       try {
         while (true) {
-          const activePeers = peerIds.filter(peerId => {
-            const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
-            return tx && !tx.cancelled && !tx.paused;
+          const activePeers = activeTransferRefs.filter(ref => {
+            return ref.tx && !ref.tx.cancelled && !ref.tx.paused;
           });
 
           if (activePeers.length === 0) break; // All cancelled or paused
@@ -1336,8 +1358,6 @@ export class FileTransferManager {
             const transferBuffer = this.getBufferFromPool();
             const packedChunk = new Uint8Array(transferBuffer);
 
-            // Header Compaction: Cache binary UUID for entire transfer
-            const binaryId = this.getBinaryId(fileId);
             packedChunk.set(binaryId, 0);
 
             packedChunk[16] = chunkIndex & 0xFF;
@@ -1351,12 +1371,9 @@ export class FileTransferManager {
 
             // Bolt: Parallelize transmission to all active peers in the mesh
             // This prevents a single slow connection from bottlenecking the entire broadcast.
-            await Promise.all(activePeers.map(async (peerId) => {
-              const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
-              if (tx && !tx.cancelled && !tx.paused) {
-                await this.webrtc.sendToPeer(peerId, validChunkView);
-                tx.lastChunkIndex = chunkIndex;
-              }
+            await Promise.all(activePeers.map(async (ref) => {
+              await this.webrtc.sendToPeer(ref.peerId, validChunkView);
+              ref.tx.lastChunkIndex = chunkIndex;
             }));
 
             // Return buffer to pool
@@ -1365,8 +1382,8 @@ export class FileTransferManager {
             chunkIndex++;
             transferredSize += rawChunk.length;
 
-            activePeers.forEach(peerId => {
-              this.notifyProgress(`${fileId}-${peerId}`, 'transferring', {
+            activePeers.forEach(ref => {
+              this.notifyProgress(`${fileId}-${ref.peerId}`, 'transferring', {
                 transferredSize,
                 resumable: true,
               });
@@ -1379,16 +1396,16 @@ export class FileTransferManager {
           }
         }
 
-        peerIds.forEach(peerId => {
-          const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
-          if (tx && !tx.cancelled && !tx.paused) {
-            this.webrtc.sendToPeer(peerId, JSON.stringify({ type: 'file-complete', fileId }));
-            this.notifyProgress(`${fileId}-${peerId}`, 'completed', {
+        activeTransferRefs.forEach(ref => {
+          if (ref.tx && !ref.tx.cancelled && !ref.tx.paused) {
+            this.webrtc.sendToPeer(ref.peerId, JSON.stringify({ type: 'file-complete', fileId }));
+            this.notifyProgress(`${fileId}-${ref.peerId}`, 'completed', {
               transferredSize: file.size,
             });
-            this.outgoingTransfers.delete(`${fileId}-${peerId}`);
+            this.outgoingTransfers.delete(`${fileId}-${ref.peerId}`);
           }
         });
+        this.maybeStopAudioAnchor();
       } catch (error) {
         console.error('[FileTransfer] Error in mesh broadcast:', error);
         peerIds.forEach(peerId => {
@@ -1396,6 +1413,7 @@ export class FileTransferManager {
             transferredSize,
           });
         });
+        this.maybeStopAudioAnchor();
       } finally {
         this.meshTransfers.delete(meshId);
       }
