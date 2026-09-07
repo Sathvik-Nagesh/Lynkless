@@ -616,6 +616,9 @@ export class FileTransferManager {
       this.orphanedChunks.delete(metadata.id);
     }
 
+    // Mobile Throttling Defense
+    startAudioAnchor();
+
     this.notifyProgress(metadata.id, 'transferring', {
       fileName: metadata.name,
       totalSize: metadata.size,
@@ -693,9 +696,6 @@ export class FileTransferManager {
       orphanBuffer.push(data);
       return;
     }
-
-    // Start Audio Anchor for Mobile Performance
-    startAudioAnchor();
 
     if (incoming.useWorker && this.worker) {
       this.worker.postMessage({ 
@@ -957,14 +957,15 @@ export class FileTransferManager {
 
     // Efficient seeking: slice the file and use stream() for memory-efficient reading
     const streamReader = file.slice(startByte).stream().getReader();
+    const binaryId = this.getBinaryId(fileId);
+    startAudioAnchor();
 
     try {
       while (true) {
+        if (transfer.cancelled || transfer.paused) break;
+
         const { done, value } = await streamReader.read();
         if (done) break;
-
-        const currentTransfer = this.outgoingTransfers.get(fileId);
-        if (currentTransfer?.cancelled || currentTransfer?.paused) break;
 
         let offset = 0;
         while (offset < value.length) {
@@ -975,7 +976,6 @@ export class FileTransferManager {
           const transferBuffer = this.getBufferFromPool();
           const packedChunk = new Uint8Array(transferBuffer);
 
-          const binaryId = this.getBinaryId(fileId);
           packedChunk.set(binaryId, 0);
 
           packedChunk[16] = chunkIndex & 0xFF;
@@ -991,7 +991,7 @@ export class FileTransferManager {
           // Return buffer to pool
           this.returnBufferToPool(transferBuffer);
 
-          if (currentTransfer) currentTransfer.lastChunkIndex = chunkIndex;
+          transfer.lastChunkIndex = chunkIndex;
           chunkIndex++;
           transferredSize += rawChunk.length;
 
@@ -1089,17 +1089,18 @@ export class FileTransferManager {
     const streamReader = file.stream().getReader();
     let chunkIndex = 0;
     let transferredSize = 0;
+    const binaryId = this.getBinaryId(fileId);
+    startAudioAnchor();
 
     try {
       while (true) {
-        const { done, value } = await streamReader.read();
-        if (done) break;
-
-        const transfer = this.outgoingTransfers.get(fileId);
-        if (transfer?.cancelled) {
+        if (outgoing.cancelled) {
           this.webrtc.sendToPeer(peerId, JSON.stringify({ type: 'file-cancel', fileId }));
           break;
         }
+
+        const { done, value } = await streamReader.read();
+        if (done) break;
 
         let offset = 0;
         while (offset < value.length) {
@@ -1110,8 +1111,6 @@ export class FileTransferManager {
         const transferBuffer = this.getBufferFromPool();
         const packedChunk = new Uint8Array(transferBuffer);
         
-        // Header Compaction: Cache binary UUID for entire transfer (avoid per-chunk conversion)
-        const binaryId = this.getBinaryId(fileId);
         packedChunk.set(binaryId, 0);
         
         packedChunk[16] = chunkIndex & 0xFF;
@@ -1120,9 +1119,6 @@ export class FileTransferManager {
         packedChunk[19] = (chunkIndex >> 24) & 0xFF;
         
         packedChunk.set(rawChunk, HEADER_SIZE);
-
-        // Mobile Throttling Defense
-        startAudioAnchor();
 
         // Create a view containing only the valid data length for this chunk
         const validChunkView = new Uint8Array(transferBuffer, 0, HEADER_SIZE + rawChunk.length);
@@ -1144,7 +1140,7 @@ export class FileTransferManager {
         // into its internal queue before returning, so it's safe to reuse it now.
         this.returnBufferToPool(transferBuffer);
 
-          if (transfer) transfer.lastChunkIndex = chunkIndex;
+          outgoing.lastChunkIndex = chunkIndex;
           chunkIndex++;
           transferredSize += rawChunk.length;
 
@@ -1312,17 +1308,21 @@ export class FileTransferManager {
     const reader = file.stream().getReader();
     let chunkIndex = 0;
     let transferredSize = 0;
+    const binaryId = this.getBinaryId(fileId);
+    startAudioAnchor();
+
+    // Pre-resolve target state references to eliminate string formatting and Map lookups per chunk
+    const meshTargets = peerIds.map(peerId => {
+      const key = `${fileId}-${peerId}`;
+      return { peerId, key, tx: this.outgoingTransfers.get(key)! };
+    });
 
     // Run async mesh transfer loop without blocking the return of meshId
     (async () => {
       try {
         while (true) {
-          const activePeers = peerIds.filter(peerId => {
-            const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
-            return tx && !tx.cancelled && !tx.paused;
-          });
-
-          if (activePeers.length === 0) break; // All cancelled or paused
+          const activeTargets = meshTargets.filter(t => !t.tx.cancelled && !t.tx.paused);
+          if (activeTargets.length === 0) break; // All cancelled or paused
 
           const { done, value } = await reader.read();
           if (done) break;
@@ -1336,8 +1336,6 @@ export class FileTransferManager {
             const transferBuffer = this.getBufferFromPool();
             const packedChunk = new Uint8Array(transferBuffer);
 
-            // Header Compaction: Cache binary UUID for entire transfer
-            const binaryId = this.getBinaryId(fileId);
             packedChunk.set(binaryId, 0);
 
             packedChunk[16] = chunkIndex & 0xFF;
@@ -1351,11 +1349,10 @@ export class FileTransferManager {
 
             // Bolt: Parallelize transmission to all active peers in the mesh
             // This prevents a single slow connection from bottlenecking the entire broadcast.
-            await Promise.all(activePeers.map(async (peerId) => {
-              const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
-              if (tx && !tx.cancelled && !tx.paused) {
-                await this.webrtc.sendToPeer(peerId, validChunkView);
-                tx.lastChunkIndex = chunkIndex;
+            await Promise.all(activeTargets.map(async (target) => {
+              if (!target.tx.cancelled && !target.tx.paused) {
+                await this.webrtc.sendToPeer(target.peerId, validChunkView);
+                target.tx.lastChunkIndex = chunkIndex;
               }
             }));
 
@@ -1365,12 +1362,12 @@ export class FileTransferManager {
             chunkIndex++;
             transferredSize += rawChunk.length;
 
-            activePeers.forEach(peerId => {
-              this.notifyProgress(`${fileId}-${peerId}`, 'transferring', {
+            for (let i = 0; i < activeTargets.length; i++) {
+              this.notifyProgress(activeTargets[i].key, 'transferring', {
                 transferredSize,
                 resumable: true,
               });
-            });
+            }
 
             // Bolt: Yield the event loop every 16 chunks to keep UI responsive without killing performance
             if (chunkIndex % 16 === 0) {
