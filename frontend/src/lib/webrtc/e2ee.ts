@@ -63,10 +63,11 @@ export class E2EEHelper {
       throw new Error("Invalid encrypted file: too small");
     }
 
-    // Bolt: Use slice() to pass a clean ArrayBuffer to crypto.subtle.
+    // Bolt: Use zero-copy Uint8Array view on ArrayBuffer to pass to crypto.subtle.decrypt.
+    // This avoids arrayBuffer.slice(28) duplicating up to 512MB RAM in memory and avoids O(N) byte copying.
     const salt = new Uint8Array(arrayBuffer, 0, 16);
     const iv = new Uint8Array(arrayBuffer, 16, 12);
-    const encryptedData = arrayBuffer.slice(28); // Real offset
+    const encryptedData = new Uint8Array(arrayBuffer, 28); // Zero-copy offset view
 
     const key = await this.deriveKey(password, salt, ["decrypt"]);
     
