@@ -44,6 +44,7 @@ import { compressImage } from '@/lib/utils/imageCompression';
 
 const SIGNALING_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || 'ws://localhost:8080';
 const ENABLE_CALLS = process.env.NEXT_PUBLIC_ENABLE_CALLS !== 'false';
+const EMPTY_PEER_IDS: string[] = [];
 
 import { checkSharedFiles } from '@/lib/pwa/shareTarget';
 
@@ -467,11 +468,17 @@ export default function Home() {
     connectedPeers.map(p => ({ id: p.id })),
     [connectedPeers]);
 
-  // Active transfer peers for Radar Particle Animation
+  // Active transfer peer IDs for Radar Particle Animation - derived with stable key to prevent Radar re-renders on progress ticks
+  const activeTransferKey = transfers
+    .filter(t => t.status === 'transferring')
+    .map(t => t.peerId)
+    .sort()
+    .join(',');
+
   const activeTransferPeerIds = useMemo(() => {
-    const active = transfers.filter(t => t.status === 'transferring');
-    return Array.from(new Set(active.map(t => t.peerId)));
-  }, [transfers]);
+    if (!activeTransferKey) return EMPTY_PEER_IDS;
+    return Array.from(new Set(activeTransferKey.split(',')));
+  }, [activeTransferKey]);
 
   return (
     <main
