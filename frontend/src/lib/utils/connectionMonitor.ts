@@ -16,13 +16,16 @@ export class ConnectionMonitor {
 
   // Monitor a peer connection
   async monitorPeer(peerId: string, peerConnection: RTCPeerConnection) {
+    // Bolt: Capture lastBytesSent in local closure state across polling intervals.
+    // Prevents Map lookup on every 2s tick and ensures accurate cumulative byte delta calculation for bandwidth.
+    let lastBytesSent = 0;
+
     const interval = setInterval(async () => {
       try {
         const stats = await peerConnection.getStats();
         let latency = 0;
         let packetsLost = 0;
         let bytesSent = 0;
-        const lastBytesSent = this.stats.get(peerId)?.bandwidth || 0;
 
         stats.forEach((report) => {
           if (report.type === 'candidate-pair' && report.state === 'succeeded') {
@@ -34,8 +37,9 @@ export class ConnectionMonitor {
           }
         });
 
-        // Calculate bandwidth (bytes per second)
+        // Calculate bandwidth (bytes per second) based on previous bytesSent snapshot
         const bandwidth = Math.max(0, bytesSent - lastBytesSent);
+        lastBytesSent = bytesSent;
 
         // Determine quality based on latency and packet loss
         const quality = this.calculateQuality(latency, packetsLost);
