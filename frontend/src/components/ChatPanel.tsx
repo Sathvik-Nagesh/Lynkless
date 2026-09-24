@@ -146,21 +146,11 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
   const lastMessageCountRef = useRef(messages.length);
 
   /**
-   * Performance optimization: use a State to track the number of messages
-   * already seen by the user. While a Ref is slightly faster, modern linters
-   * prevent Ref access during render. State keeps the component predictable
-   * and fulfills linting requirements.
+   * Performance optimization: track the number of messages seen by the user.
+   * Bolt: Updated directly during expand/collapse user interactions to eliminate
+   * asynchronous useEffect state synchronization and prevent cascading re-renders.
    */
   const [lastReadCount, setLastReadCount] = useState(messages.length);
-
-  // Synchronize lastReadCount when expanded via useEffect
-  useEffect(() => {
-    if (isExpanded) {
-      // Use setTimeout to move the state update out of the render cycle
-      // and satisfy the "no-set-state-in-effect" lint rule while preserving functionality.
-      setTimeout(() => setLastReadCount(messages.length), 0);
-    }
-  }, [isExpanded, messages.length]);
 
   // Derived state for unread count
   const unreadCount = isExpanded ? 0 : Math.max(0, messages.length - lastReadCount);
@@ -198,8 +188,9 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
       setIsExpanded(false);
+      setLastReadCount(messages.length);
     }
-  }, []);
+  }, [messages.length]);
 
   return (
     <div 
@@ -211,10 +202,8 @@ const ChatPanel = memo(function ChatPanel({ messages, onSendMessage, disabled, c
         onClick={() => {
           const nextExpanded = !isExpanded;
           setIsExpanded(nextExpanded);
-          // If we are expanding, mark all messages as read
-          if (nextExpanded) {
-            setLastReadCount(messages.length);
-          }
+          // Bolt: Update lastReadCount directly on toggle to avoid useEffect overhead
+          setLastReadCount(messages.length);
         }}
         className="flex items-center justify-between p-4 sm:p-5 hover:bg-[#1f1f1f] transition-colors duration-150"
       >
