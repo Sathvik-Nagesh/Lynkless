@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import { motion } from 'framer-motion';
 import ConnectionStatusBadge from '@/components/ConnectionStatusBadge';
 import { getPeerName, getEmojiForPeer } from '@/lib/utils/nameGenerator';
@@ -11,7 +12,12 @@ interface ConnectedPeersPanelProps {
   onSelectPeer: (peerId: string) => void;
 }
 
-export default function ConnectedPeersPanel({
+/**
+ * Bolt Performance Optimization:
+ * Wrapped in React.memo to eliminate redundant component re-renders and DOM diffing
+ * during high-frequency parent state updates (e.g., file transfer progress, bandwidth, and ETA updates in page.tsx).
+ */
+const ConnectedPeersPanel = memo(function ConnectedPeersPanel({
   connectedPeers,
   selectedPeer,
   onSelectPeer,
@@ -88,5 +94,7 @@ export default function ConnectedPeersPanel({
       </div>
     </motion.div>
   );
-}
+});
+
+export default ConnectedPeersPanel;
 
