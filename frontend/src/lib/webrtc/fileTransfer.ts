@@ -57,25 +57,32 @@ function stopAudioAnchor() {
 
 // Bolt: Fast UUID conversion lookup tables
 const byteToHex: string[] = [];
-const hexToByte: Record<string, number> = {};
+const charToNibble = new Uint8Array(128);
 
 for (let i = 0; i < 256; i++) {
-  const hex = i.toString(16).padStart(2, '0');
-  byteToHex[i] = hex;
-  hexToByte[hex] = i;
+  byteToHex[i] = i.toString(16).padStart(2, '0');
+}
+for (let i = 0; i < 10; i++) charToNibble[48 + i] = i; // '0'-'9'
+for (let i = 0; i < 6; i++) {
+  charToNibble[65 + i] = 10 + i; // 'A'-'F'
+  charToNibble[97 + i] = 10 + i; // 'a'-'f'
 }
 
 /**
  * Text-to-Binary UUID compaction (36 chars -> 16 bytes)
- * Optimized to skip hyphens and use lookup tables instead of regex/parseInt.
+ * Optimized for zero-allocation hex parsing using charCodeAt and a charToNibble lookup table.
  */
 function uuidToBytes(uuid: string): Uint8Array {
   const bytes = new Uint8Array(16);
   let j = 0;
-  for (let i = 0; i < uuid.length; i++) {
-    if (uuid[i] === '-') continue;
-    const hexPair = uuid.substring(i, i + 2).toLowerCase();
-    bytes[j++] = hexToByte[hexPair];
+  const len = uuid.length;
+  for (let i = 0; i < len && j < 16; i++) {
+    const code = uuid.charCodeAt(i);
+    if (code === 45) continue; // '-'
+    if (i + 1 >= len) break;
+    const high = charToNibble[code];
+    const low = charToNibble[uuid.charCodeAt(i + 1)];
+    bytes[j++] = (high << 4) | low;
     i++;
   }
   return bytes;
