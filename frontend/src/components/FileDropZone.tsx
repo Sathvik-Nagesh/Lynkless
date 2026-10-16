@@ -40,7 +40,7 @@ const FileDropZone = memo(function FileDropZone({ onFileDrop, disabled }: FileDr
     setIsDragging(false);
 
     if (e.dataTransfer.items) {
-      let files: File[] = [];
+      const files: File[] = [];
       const items = Array.from(e.dataTransfer.items);
       
       for (const item of items) {
@@ -48,7 +48,8 @@ const FileDropZone = memo(function FileDropZone({ onFileDrop, disabled }: FileDr
           const entry = item.webkitGetAsEntry();
           if (entry) {
             const entryFiles = await processEntry(entry);
-            files = files.concat(entryFiles);
+            // Bolt: Use push(...entryFiles) to avoid O(N^2) array re-allocation during drag-and-drop file processing
+            files.push(...entryFiles);
           }
         }
       }
