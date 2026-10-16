@@ -87,7 +87,9 @@ const DEFAULT_FILE_INFO: FileInfo = {
 };
 
 export function getFileInfo(filename: string): FileInfo {
-  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  // Bolt: Use lastIndexOf for zero-allocation extension extraction instead of split('.')
+  const lastDot = filename.lastIndexOf('.');
+  const ext = lastDot !== -1 ? filename.slice(lastDot + 1).toLowerCase() : '';
   return FILE_TYPE_MAP[ext] || DEFAULT_FILE_INFO;
 }
 

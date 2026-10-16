@@ -510,7 +510,8 @@ export default function Home() {
               const entry = item.webkitGetAsEntry();
               if (entry) {
                 const entryFiles = await processEntry(entry);
-                files = files.concat(entryFiles);
+                // Bolt: Use push(...entryFiles) to avoid O(N^2) array re-allocation during file drop processing
+                files.push(...entryFiles);
               }
             }
           }
