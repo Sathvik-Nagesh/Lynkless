@@ -63,10 +63,12 @@ export class E2EEHelper {
       throw new Error("Invalid encrypted file: too small");
     }
 
-    // Bolt: Use slice() to pass a clean ArrayBuffer to crypto.subtle.
+    // Bolt: Pass a zero-copy Uint8Array view to crypto.subtle.decrypt instead of arrayBuffer.slice(28).
+    // ArrayBufferView (Uint8Array) is a valid BufferSource for WebCrypto and avoids duplicating
+    // ArrayBuffer memory allocations (saving up to 512MB RAM) while eliminating O(N) byte copying.
     const salt = new Uint8Array(arrayBuffer, 0, 16);
     const iv = new Uint8Array(arrayBuffer, 16, 12);
-    const encryptedData = arrayBuffer.slice(28); // Real offset
+    const encryptedData = new Uint8Array(arrayBuffer, this.METADATA_SIZE);
 
     const key = await this.deriveKey(password, salt, ["decrypt"]);
     
