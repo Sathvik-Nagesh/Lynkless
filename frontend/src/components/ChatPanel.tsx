@@ -26,11 +26,16 @@ interface ChatMessageItemProps {
 }
 
 const renderMessageContent = (content: string) => {
+  // Fast-path: avoid regex execution and array allocations for messages without code blocks (~99% of chat)
+  if (!content.includes('```')) {
+    return <span className="whitespace-pre-wrap">{content}</span>;
+  }
+
   const codeBlockRegex = /```([\s\S]*?)```/g;
   const parts = [];
   let lastIndex = 0;
   let match;
-  
+
   while ((match = codeBlockRegex.exec(content)) !== null) {
     if (match.index > lastIndex) {
       parts.push(<span key={lastIndex}>{content.slice(lastIndex, match.index)}</span>);
