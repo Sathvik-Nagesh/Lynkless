@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback, memo } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ConnectionStats } from '@/lib/webrtc/connectionQuality';
+import { ConnectionStats, ConnectionQualityManager } from '@/lib/webrtc/connectionQuality';
 import { useEngine } from '@/context/EngineContext';
 
 interface ConnectionQualityDashboardProps {
@@ -48,18 +48,9 @@ export const ConnectionQualityDashboard = memo(function ConnectionQualityDashboa
     };
   }, [peerId, engine]);
 
-  const formatBandwidth = useCallback((bps: number): string => {
-    if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`;
-    if (bps >= 1_000) return `${(bps / 1_000).toFixed(0)} Kbps`;
-    return `${bps.toFixed(0)} bps`;
-  }, []);
-
-  const formatBytes = useCallback((bytes: number): string => {
-    if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(2)} GB`;
-    if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(2)} MB`;
-    if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(1)} KB`;
-    return `${bytes} B`;
-  }, []);
+  // Bolt: Use static ConnectionQualityManager formatting methods directly instead of
+  // instantiating redundant useCallback hooks inside the render loop, eliminating closure and
+  // dependency array allocations on every 2-second stats update.
 
   if (!stats) {
     return (
@@ -150,7 +141,7 @@ export const ConnectionQualityDashboard = memo(function ConnectionQualityDashboa
                 <div>
                   <span className="text-[#71717a] block">Bandwidth</span>
                   <span className="text-[#ededed] font-mono font-medium">
-                    {formatBandwidth(stats.bandwidth)}
+                    {ConnectionQualityManager.formatBandwidth(stats.bandwidth)}
                   </span>
                 </div>
               </div>
@@ -177,14 +168,14 @@ export const ConnectionQualityDashboard = memo(function ConnectionQualityDashboa
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4" />
                     </svg>
                     <span className="text-[#71717a]">Sent:</span>
-                    <span className="text-[#ededed] font-mono">{formatBytes(stats.bytesSent)}</span>
+                    <span className="text-[#ededed] font-mono">{ConnectionQualityManager.formatBytes(stats.bytesSent)}</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <svg className="w-3 h-3 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8V20m0 0l4-4m-4 4l-4-4" />
                     </svg>
                     <span className="text-[#71717a]">Received:</span>
-                    <span className="text-[#ededed] font-mono">{formatBytes(stats.bytesReceived)}</span>
+                    <span className="text-[#ededed] font-mono">{ConnectionQualityManager.formatBytes(stats.bytesReceived)}</span>
                   </div>
                 </div>
               </div>
