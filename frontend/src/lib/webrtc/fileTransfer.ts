@@ -1127,18 +1127,17 @@ export class FileTransferManager {
         // Create a view containing only the valid data length for this chunk
         const validChunkView = new Uint8Array(transferBuffer, 0, HEADER_SIZE + rawChunk.length);
 
-        // Dynamic High-Speed Backpressure
-        const sendPromises = [this.webrtc.sendToPeer(peerId, validChunkView)];
-
         // 100% Polish: Tail Redundancy Strategy
-        // If we are in the final lap (last 2 chunks), broadcast them down all channels 
-        // to kill tail latency from a single slow SCTP stream.
-        const isFinalLap = (chunkIndex >= metadata.totalChunks - 2);
-        if (isFinalLap) {
-           sendPromises.push(this.webrtc.sendToPeer(peerId, validChunkView)); 
+        // Send directly for standard chunks to avoid per-chunk array allocations;
+        // use Promise.all only for the final lap redundancy segments.
+        if (chunkIndex >= metadata.totalChunks - 2) {
+          await Promise.all([
+            this.webrtc.sendToPeer(peerId, validChunkView),
+            this.webrtc.sendToPeer(peerId, validChunkView),
+          ]);
+        } else {
+          await this.webrtc.sendToPeer(peerId, validChunkView);
         }
-
-        await Promise.all(sendPromises);
 
         // LEAK-2 FIX: Return buffer to pool. WebRTC send() synchronously copies the ArrayBuffer 
         // into its internal queue before returning, so it's safe to reuse it now.
