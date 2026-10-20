@@ -86,8 +86,14 @@ const DEFAULT_FILE_INFO: FileInfo = {
   category: 'unknown',
 };
 
+/**
+ * Bolt: Zero-allocation file extension parsing.
+ * Uses lastIndexOf('.') and slice() instead of split('.').pop() to avoid
+ * creating intermediate Array instances and temporary string arrays on every lookup.
+ */
 export function getFileInfo(filename: string): FileInfo {
-  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  const lastDot = filename.lastIndexOf('.');
+  const ext = lastDot !== -1 ? filename.slice(lastDot + 1).toLowerCase() : '';
   return FILE_TYPE_MAP[ext] || DEFAULT_FILE_INFO;
 }
 
