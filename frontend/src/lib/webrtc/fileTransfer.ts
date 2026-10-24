@@ -1309,6 +1309,16 @@ export class FileTransferManager {
       this.webrtc.sendToPeer(peerId, JSON.stringify({ type: 'direct-file-meta', fileId, metadata }));
     });
 
+    // Bolt: Pre-resolve transfer target keys and state references outside hot loops to avoid per-chunk string/Map allocations
+    const targets = peerIds.map(peerId => {
+      const key = `${fileId}-${peerId}`;
+      return {
+        peerId,
+        key,
+        tx: this.outgoingTransfers.get(key)!
+      };
+    });
+
     const reader = file.stream().getReader();
     let chunkIndex = 0;
     let transferredSize = 0;
@@ -1317,12 +1327,9 @@ export class FileTransferManager {
     (async () => {
       try {
         while (true) {
-          const activePeers = peerIds.filter(peerId => {
-            const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
-            return tx && !tx.cancelled && !tx.paused;
-          });
+          const activeTargets = targets.filter(t => t.tx && !t.tx.cancelled && !t.tx.paused);
 
-          if (activePeers.length === 0) break; // All cancelled or paused
+          if (activeTargets.length === 0) break; // All cancelled or paused
 
           const { done, value } = await reader.read();
           if (done) break;
@@ -1349,13 +1356,11 @@ export class FileTransferManager {
 
             const validChunkView = new Uint8Array(transferBuffer, 0, HEADER_SIZE + rawChunk.length);
 
-            // Bolt: Parallelize transmission to all active peers in the mesh
-            // This prevents a single slow connection from bottlenecking the entire broadcast.
-            await Promise.all(activePeers.map(async (peerId) => {
-              const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
-              if (tx && !tx.cancelled && !tx.paused) {
-                await this.webrtc.sendToPeer(peerId, validChunkView);
-                tx.lastChunkIndex = chunkIndex;
+            // Bolt: Parallelize transmission to all active peers using pre-resolved targets without per-chunk string/Map allocations
+            await Promise.all(activeTargets.map(async (target) => {
+              if (target.tx && !target.tx.cancelled && !target.tx.paused) {
+                await this.webrtc.sendToPeer(target.peerId, validChunkView);
+                target.tx.lastChunkIndex = chunkIndex;
               }
             }));
 
@@ -1365,12 +1370,13 @@ export class FileTransferManager {
             chunkIndex++;
             transferredSize += rawChunk.length;
 
-            activePeers.forEach(peerId => {
-              this.notifyProgress(`${fileId}-${peerId}`, 'transferring', {
+            for (let i = 0; i < activeTargets.length; i++) {
+              const target = activeTargets[i];
+              this.notifyProgress(target.key, 'transferring', {
                 transferredSize,
                 resumable: true,
               });
-            });
+            }
 
             // Bolt: Yield the event loop every 16 chunks to keep UI responsive without killing performance
             if (chunkIndex % 16 === 0) {
@@ -1379,16 +1385,16 @@ export class FileTransferManager {
           }
         }
 
-        peerIds.forEach(peerId => {
-          const tx = this.outgoingTransfers.get(`${fileId}-${peerId}`);
-          if (tx && !tx.cancelled && !tx.paused) {
-            this.webrtc.sendToPeer(peerId, JSON.stringify({ type: 'file-complete', fileId }));
-            this.notifyProgress(`${fileId}-${peerId}`, 'completed', {
+        for (let i = 0; i < targets.length; i++) {
+          const target = targets[i];
+          if (target.tx && !target.tx.cancelled && !target.tx.paused) {
+            this.webrtc.sendToPeer(target.peerId, JSON.stringify({ type: 'file-complete', fileId }));
+            this.notifyProgress(target.key, 'completed', {
               transferredSize: file.size,
             });
-            this.outgoingTransfers.delete(`${fileId}-${peerId}`);
+            this.outgoingTransfers.delete(target.key);
           }
-        });
+        }
       } catch (error) {
         console.error('[FileTransfer] Error in mesh broadcast:', error);
         peerIds.forEach(peerId => {
